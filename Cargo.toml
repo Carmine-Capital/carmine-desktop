@@ -18,6 +18,7 @@ rust-version = "1.85"
 [workspace.dependencies]
 # Async runtime
 tokio = { version = "1.50", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 
 # HTTP
 reqwest = { version = "0.12", features = ["json", "stream"] }
@@ -67,6 +68,23 @@ filesync-auth = { path = "crates/filesync-auth" }
 filesync-graph = { path = "crates/filesync-graph" }
 filesync-cache = { path = "crates/filesync-cache" }
 filesync-vfs = { path = "crates/filesync-vfs" }
+
+# Crypto (token storage fallback)
+aes-gcm = { version = "0.10.3", features = ["zeroize"] }
+argon2 = { version = "0.5.3", default-features = false, features = ["alloc", "zeroize"] }
+zeroize = { version = "1.8.2", features = ["derive"] }
+
+# Windows Cloud Files API (virtual filesystem)
+cloud-filter = "0.0.6"
+nt-time = "0.8"
+
+# Tauri v2 (desktop GUI)
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-build = "2"
+tauri-plugin-notification = "2"
+
+# URL encoding
+urlencoding = "2.1"
 
 # Testing
 wiremock = "0.6"
