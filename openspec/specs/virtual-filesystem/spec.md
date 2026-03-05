@@ -11,7 +11,7 @@ The system SHALL mount a OneDrive or SharePoint drive as a native filesystem acc
 
 #### Scenario: Mount on Windows
 - **WHEN** the user enables a mount on Windows
-- **THEN** the system registers a Cloud Files API sync root at the configured folder path (default: `%USERPROFILE%\FileSync\<mount-name>`), populates the directory with placeholder files showing file names, sizes, and modification times, and the sync root appears as a first-class entry in File Explorer's navigation pane with cloud sync status icons
+- **THEN** the system registers a Cloud Files API sync root at the configured folder path (default: `%USERPROFILE%\CloudMount\<mount-name>`), populates the directory with placeholder files showing file names, sizes, and modification times, and the sync root appears as a first-class entry in File Explorer's navigation pane with cloud sync status icons
 
 ### Requirement: Directory listing (readdir)
 The system SHALL return directory contents when the operating system requests a directory listing.

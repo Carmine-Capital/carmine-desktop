@@ -72,7 +72,7 @@ The system SHALL display the packaged branding throughout the UI when a custom a
 
 #### Scenario: Tray tooltip with custom name
 - **WHEN** the packaged defaults define `app_name = "Contoso Drive"`
-- **THEN** the system tray icon tooltip displays "Contoso Drive" instead of "FileSync"
+- **THEN** the system tray icon tooltip displays "Contoso Drive" instead of "CloudMount"
 
 #### Scenario: Window titles with custom name
 - **WHEN** the packaged defaults define a custom app name
@@ -80,7 +80,7 @@ The system SHALL display the packaged branding throughout the UI when a custom a
 
 #### Scenario: Default branding
 - **WHEN** no custom app name is packaged
-- **THEN** all UI elements display "FileSync"
+- **THEN** all UI elements display "CloudMount"
 
 ### Requirement: Notifications
 The system SHALL display OS-native notifications for important events.

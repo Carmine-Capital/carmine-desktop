@@ -1,6 +1,6 @@
 # Builder Guide
 
-Build and distribute pre-configured FileSync installers for your organization.
+Build and distribute pre-configured CloudMount installers for your organization.
 
 ## Quick Start (GitHub Actions)
 

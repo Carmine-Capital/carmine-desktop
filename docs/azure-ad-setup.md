@@ -11,7 +11,7 @@
 
 1. Navigate to **Azure Active Directory** → **App registrations** → **New registration**
 2. Set the fields:
-   - **Name**: `FileSync` (or your branded name)
+   - **Name**: `CloudMount` (or your branded name)
    - **Supported account types**: Accounts in this organizational directory only (Single tenant)
    - **Redirect URI**: Select **Public client/native (mobile & desktop)** and enter `http://localhost:8400/callback`
 3. Click **Register**
@@ -33,7 +33,7 @@
 2. Under **Advanced settings**, set **Allow public client flows** to **Yes**
 3. Save
 
-### 4. Use in FileSync
+### 4. Use in CloudMount
 
 Add the tenant ID and client ID to `build/defaults.toml`:
 

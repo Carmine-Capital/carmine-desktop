@@ -3,7 +3,7 @@ The system SHALL store user-specific configuration (overrides and additions) in 
 
 #### Scenario: Configuration file location
 - **WHEN** the application reads or writes configuration
-- **THEN** it uses `~/.config/filesync/config.toml` on Linux, `~/Library/Application Support/filesync/config.toml` on macOS, and `%APPDATA%\FileSync\config.toml` on Windows
+- **THEN** it uses `~/.config/cloudmount/config.toml` on Linux, `~/Library/Application Support/cloudmount/config.toml` on macOS, and `%APPDATA%\CloudMount\config.toml` on Windows
 
 #### Scenario: Configuration created on first run
 - **WHEN** the application starts and no configuration file exists
@@ -44,11 +44,11 @@ The system SHALL configure itself to start automatically on user login when the 
 
 #### Scenario: Enable auto-start on Linux
 - **WHEN** auto_start is set to true on Linux
-- **THEN** the system creates a systemd user service file at `~/.config/systemd/user/filesync.service` and enables it
+- **THEN** the system creates a systemd user service file at `~/.config/systemd/user/cloudmount.service` and enables it
 
 #### Scenario: Enable auto-start on macOS
 - **WHEN** auto_start is set to true on macOS
-- **THEN** the system creates a LaunchAgent plist at `~/Library/LaunchAgents/com.filesync.agent.plist` with RunAtLoad=true
+- **THEN** the system creates a LaunchAgent plist at `~/Library/LaunchAgents/com.cloudmount.agent.plist` with RunAtLoad=true
 
 #### Scenario: Enable auto-start on Windows
 - **WHEN** auto_start is set to true on Windows
