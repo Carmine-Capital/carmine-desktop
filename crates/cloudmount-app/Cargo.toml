@@ -1,0 +1,36 @@
+[package]
+name = "cloudmount-app"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+desktop = ["tauri", "tauri-plugin-notification"]
+
+[dependencies]
+cloudmount-core = { workspace = true }
+cloudmount-auth = { workspace = true }
+cloudmount-graph = { workspace = true }
+cloudmount-cache = { workspace = true }
+cloudmount-vfs = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dirs = { workspace = true }
+chrono = { workspace = true }
+open = { workspace = true }
+uuid = { workspace = true }
+tauri = { workspace = true, optional = true }
+tauri-plugin-notification = { workspace = true, optional = true }
+
+[build-dependencies]
+tauri-build = { workspace = true, optional = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+bytes = { workspace = true }
