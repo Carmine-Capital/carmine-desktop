@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FileSync Settings</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #1a1a1a; }
+    .tabs { display: flex; background: white; border-bottom: 1px solid #ddd; }
+    .tab { padding: 0.75rem 1.5rem; cursor: pointer; border-bottom: 2px solid transparent; }
+    .tab.active { border-bottom-color: #0078d4; color: #0078d4; }
+    .panel { display: none; padding: 1.5rem; }
+    .panel.active { display: block; }
+    .field { margin-bottom: 1rem; }
+    .field label { display: block; font-size: 0.875rem; color: #666; margin-bottom: 0.25rem; }
+    .field input, .field select { width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.875rem; }
+    .field input[type="checkbox"] { width: auto; }
+    .mount-list { list-style: none; }
+    .mount-item { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background: white; border-radius: 4px; margin-bottom: 0.5rem; border: 1px solid #e0e0e0; }
+    .mount-name { font-weight: 500; }
+    .mount-path { font-size: 0.8rem; color: #666; }
+    button { background: #0078d4; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-size: 0.875rem; }
+    button:hover { background: #106ebe; }
+    button.danger { background: #d13438; }
+    button.danger:hover { background: #a4262c; }
+    .actions { margin-top: 1rem; display: flex; gap: 0.5rem; }
+    #account-email { font-size: 1rem; margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+  <div class="tabs">
+    <div class="tab active" data-panel="general">General</div>
+    <div class="tab" data-panel="mounts">Mounts</div>
+    <div class="tab" data-panel="account">Account</div>
+    <div class="tab" data-panel="advanced">Advanced</div>
+  </div>
+
+  <div id="general" class="panel active">
+    <div class="field">
+      <label><input type="checkbox" id="auto-start"> Start on login</label>
+    </div>
+    <div class="field">
+      <label><input type="checkbox" id="notifications"> Notifications</label>
+    </div>
+    <div class="field">
+      <label>Sync interval</label>
+      <select id="sync-interval">
+        <option value="30">30 seconds</option>
+        <option value="60">1 minute</option>
+        <option value="300">5 minutes</option>
+        <option value="900">15 minutes</option>
+      </select>
+    </div>
+    <div class="actions">
+      <button onclick="saveGeneral()">Save</button>
+    </div>
+  </div>
+
+  <div id="mounts" class="panel">
+    <ul class="mount-list" id="mount-list"></ul>
+    <div class="actions">
+      <button onclick="addMount()">Add Mount</button>
+    </div>
+  </div>
+
+  <div id="account" class="panel">
+    <p id="account-email">Not signed in</p>
+    <div class="actions">
+      <button class="danger" onclick="signOut()">Sign Out</button>
+    </div>
+  </div>
+
+  <div id="advanced" class="panel">
+    <div class="field">
+      <label>Cache directory</label>
+      <input type="text" id="cache-dir" placeholder="Default">
+    </div>
+    <div class="field">
+      <label>Maximum cache size</label>
+      <input type="text" id="cache-max-size" placeholder="5GB">
+    </div>
+    <div class="field">
+      <label>Metadata TTL (seconds)</label>
+      <input type="number" id="metadata-ttl" placeholder="60">
+    </div>
+    <div class="field">
+      <label>Log level</label>
+      <select id="log-level">
+        <option value="error">Error</option>
+        <option value="warn">Warning</option>
+        <option value="info">Info</option>
+        <option value="debug">Debug</option>
+        <option value="trace">Trace</option>
+      </select>
+    </div>
+    <div class="actions">
+      <button onclick="saveAdvanced()">Save</button>
+      <button class="danger" onclick="clearCache()">Clear Cache</button>
+    </div>
+  </div>
+
+  <script>
+    const { invoke } = window.__TAURI__.core;
+
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(tab.dataset.panel).classList.add('active');
+      });
+    });
+
+    async function loadSettings() {
+      try {
+        const s = await invoke('get_settings');
+        document.title = s.app_name + ' Settings';
+        document.getElementById('auto-start').checked = s.auto_start;
+        document.getElementById('notifications').checked = s.notifications;
+        document.getElementById('sync-interval').value = String(s.sync_interval_secs);
+        document.getElementById('cache-dir').value = s.cache_dir || '';
+        document.getElementById('cache-max-size').value = s.cache_max_size;
+        document.getElementById('metadata-ttl').value = String(s.metadata_ttl_secs);
+        document.getElementById('log-level').value = s.log_level;
+      } catch (e) { console.error(e); }
+    }
+
+    async function loadMounts() {
+      try {
+        const mounts = await invoke('list_mounts');
+        const list = document.getElementById('mount-list');
+        list.innerHTML = '';
+        mounts.forEach(m => {
+          const li = document.createElement('li');
+          li.className = 'mount-item';
+          li.innerHTML = '<div><div class="mount-name">' + m.name + '</div><div class="mount-path">' + m.mount_point + '</div></div>' +
+            '<div><button onclick="toggleMount(\'' + m.id + '\')">' + (m.enabled ? 'Disable' : 'Enable') + '</button> ' +
+            '<button class="danger" onclick="removeMount(\'' + m.id + '\')">Remove</button></div>';
+          list.appendChild(li);
+        });
+      } catch (e) { console.error(e); }
+    }
+
+    async function saveGeneral() {
+      try {
+        await invoke('save_settings', {
+          autoStart: document.getElementById('auto-start').checked,
+          notifications: document.getElementById('notifications').checked,
+          syncIntervalSecs: parseInt(document.getElementById('sync-interval').value),
+        });
+      } catch (e) { console.error(e); }
+    }
+
+    async function saveAdvanced() {
+      try {
+        await invoke('save_settings', {
+          cacheDir: document.getElementById('cache-dir').value || null,
+          cacheMaxSize: document.getElementById('cache-max-size').value,
+          metadataTtlSecs: parseInt(document.getElementById('metadata-ttl').value),
+          logLevel: document.getElementById('log-level').value,
+        });
+      } catch (e) { console.error(e); }
+    }
+
+    async function toggleMount(id) {
+      try { await invoke('toggle_mount', { id }); loadMounts(); } catch (e) { console.error(e); }
+    }
+
+    async function removeMount(id) {
+      try { await invoke('remove_mount', { id }); loadMounts(); } catch (e) { console.error(e); }
+    }
+
+    function addMount() { /* opens add-mount flow */ }
+    async function signOut() {
+      try { await invoke('sign_out'); } catch (e) { console.error(e); }
+    }
+    function clearCache() { /* TODO: wire cache clear command */ }
+
+    loadSettings();
+    loadMounts();
+  </script>
+</body>
+</html>

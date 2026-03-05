@@ -1,0 +1,36 @@
+[package]
+name = "filesync-app"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+desktop = ["tauri", "tauri-plugin-notification"]
+
+[dependencies]
+filesync-core = { workspace = true }
+filesync-auth = { workspace = true }
+filesync-graph = { workspace = true }
+filesync-cache = { workspace = true }
+filesync-vfs = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dirs = { workspace = true }
+chrono = { workspace = true }
+open = { workspace = true }
+uuid = { workspace = true }
+tauri = { workspace = true, optional = true }
+tauri-plugin-notification = { workspace = true, optional = true }
+
+[build-dependencies]
+tauri-build = { workspace = true, optional = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+bytes = { workspace = true }

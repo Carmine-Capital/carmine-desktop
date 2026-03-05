@@ -1,0 +1,116 @@
+### Requirement: Build-time defaults file
+The system SHALL support an optional `build/defaults.toml` file that is embedded into the binary at compile time via `include_str!`. This file defines the packaged configuration layer.
+
+#### Scenario: Build with defaults present
+- **WHEN** the builder runs `cargo tauri build` and `build/defaults.toml` exists in the project root
+- **THEN** the binary contains the full contents of the file as an embedded string constant, and the build succeeds
+
+#### Scenario: Build without defaults
+- **WHEN** the builder runs `cargo tauri build` and `build/defaults.toml` does not exist or is empty
+- **THEN** the binary contains no packaged defaults, the application behaves as a generic self-service build, and the full first-run wizard is presented
+
+#### Scenario: Defaults file format
+- **WHEN** the builder creates `build/defaults.toml`
+- **THEN** the file supports these sections: `[tenant]` (id, client_id), `[branding]` (app_name), `[defaults]` (auto_start, cache_max_size, sync_interval_secs), and `[[mounts]]` (id, name, type, mount_point, and type-specific fields: drive_id, site_id, library_name)
+
+### Requirement: Packaged mount definitions
+The system SHALL support pre-configured mount definitions in `build/defaults.toml` that are automatically activated on first run.
+
+#### Scenario: Packaged OneDrive mount
+- **WHEN** `build/defaults.toml` contains a `[[mounts]]` entry with `type = "onedrive"`
+- **THEN** after the user signs in for the first time, the system automatically mounts the user's OneDrive at the specified mount point without requiring site selection
+
+#### Scenario: Packaged SharePoint mount
+- **WHEN** `build/defaults.toml` contains a `[[mounts]]` entry with `type = "sharepoint"`, `site_id`, `drive_id`, and `library_name`
+- **THEN** after the user signs in for the first time, the system automatically mounts the specified SharePoint document library at the specified mount point without requiring site browsing
+
+#### Scenario: Mount point template expansion
+- **WHEN** a packaged mount's `mount_point` contains `{home}`
+- **THEN** the system expands `{home}` to the user's home directory at runtime (e.g., `/home/alice`, `C:\Users\Alice`, `/Users/alice`)
+
+#### Scenario: Stable mount IDs
+- **WHEN** packaged mounts are defined
+- **THEN** each mount MUST have a unique `id` field (string) that remains stable across application versions to enable tracking across updates
+
+### Requirement: Two-layer configuration merge
+The system SHALL resolve the effective configuration by merging the packaged defaults layer with the user config layer, where user values take precedence.
+
+#### Scenario: Setting exists only in packaged defaults
+- **WHEN** a setting has a value in packaged defaults but the user has not set it
+- **THEN** the effective value is the packaged default
+
+#### Scenario: Setting exists in both layers
+- **WHEN** a setting has a value in packaged defaults and the user has explicitly set a different value
+- **THEN** the effective value is the user's value
+
+#### Scenario: Setting exists only in user config
+- **WHEN** a setting has a value in user config but not in packaged defaults (e.g., a user-added mount)
+- **THEN** the effective value is the user's value
+
+#### Scenario: Mount union merge
+- **WHEN** both packaged defaults and user config contain mount definitions
+- **THEN** the effective mount list is the union: all packaged mounts plus all user-added mounts. If a user mount has the same `id` as a packaged mount, the user's values for that mount override the packaged values field by field.
+
+### Requirement: Update behavior for packaged defaults
+The system SHALL automatically apply new packaged defaults from updated app versions without overwriting user changes.
+
+#### Scenario: Packaged default updated, user never changed it
+- **WHEN** the app is updated and a packaged default value changes (e.g., a SharePoint site_id migrated to a new URL), and the user never overrode that value
+- **THEN** the new packaged value takes effect immediately after the update
+
+#### Scenario: Packaged default updated, user has an override
+- **WHEN** the app is updated and a packaged default value changes, but the user has explicitly set a different value for that setting
+- **THEN** the user's override is preserved; the new packaged value is ignored for that setting
+
+#### Scenario: New packaged mount added in update
+- **WHEN** the app is updated and the new version's packaged defaults contain a mount ID that did not exist in the previous version
+- **THEN** the new packaged mount appears automatically after the update (user is notified via notification)
+
+#### Scenario: Packaged mount removed in update
+- **WHEN** the app is updated and a previously packaged mount ID is no longer in the new version's defaults
+- **THEN** the mount is removed from the effective config unless the user has made modifications to it, in which case it becomes a user-owned mount
+
+### Requirement: User can dismiss packaged mounts
+The system SHALL allow users to dismiss (hide) pre-configured mounts they do not want.
+
+#### Scenario: User dismisses a packaged mount
+- **WHEN** the user removes a packaged mount from the settings UI
+- **THEN** the system records the mount ID as dismissed in user config, and the mount no longer appears in the effective mount list
+
+#### Scenario: Dismissed mount reappears after significant change
+- **WHEN** the user has dismissed a packaged mount, and a new app version changes that mount's `id`
+- **THEN** the mount is treated as a new mount and appears again (since the old dismissal was for a different ID)
+
+#### Scenario: User un-dismisses a mount
+- **WHEN** the user wants to restore a dismissed packaged mount
+- **THEN** the settings UI provides a "Restore default mounts" option that clears all dismissals
+
+### Requirement: Reset to packaged defaults
+The system SHALL allow users to reset individual settings or all settings back to packaged defaults.
+
+#### Scenario: Reset single setting
+- **WHEN** the user clicks "Reset to Default" for a specific setting in the settings UI
+- **THEN** the user's override for that setting is removed from user config, and the effective value reverts to the packaged default
+
+#### Scenario: Reset all settings
+- **WHEN** the user clicks "Reset All to Defaults" in the settings UI
+- **THEN** the user config is cleared entirely (except authentication tokens), and all effective values revert to packaged defaults. User-added mounts are removed after confirmation.
+
+### Requirement: Packaged tenant and branding
+The system SHALL use the packaged tenant and branding information to customize the authentication flow and UI.
+
+#### Scenario: Pre-configured tenant ID
+- **WHEN** `build/defaults.toml` contains a `[tenant]` section with `id`
+- **THEN** the OAuth2 authorization URL includes `&domain_hint={tenant_id}` so the Microsoft login page skips organization selection and goes directly to the correct tenant login
+
+#### Scenario: Pre-configured client ID
+- **WHEN** `build/defaults.toml` contains a `[tenant]` section with `client_id`
+- **THEN** the OAuth2 flow uses this client ID instead of the generic FileSync app registration
+
+#### Scenario: Custom app name
+- **WHEN** `build/defaults.toml` contains `[branding]` with `app_name`
+- **THEN** the system tray tooltip, window titles, notification titles, and wizard header all display the custom app name instead of "FileSync"
+
+#### Scenario: No branding configured
+- **WHEN** `build/defaults.toml` does not contain a `[branding]` section
+- **THEN** the application uses "FileSync" as the default app name everywhere

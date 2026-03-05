@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FileSync Setup</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #1a1a1a; display: flex; flex-direction: column; min-height: 100vh; }
+    .container { max-width: 480px; margin: auto; padding: 2rem; text-align: center; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    p { color: #666; margin-bottom: 1.5rem; }
+    button { background: #0078d4; color: white; border: none; padding: 0.75rem 2rem; border-radius: 6px; font-size: 1rem; cursor: pointer; }
+    button:hover { background: #106ebe; }
+    .step { display: none; }
+    .step.active { display: block; }
+    .mount-list { text-align: left; margin: 1rem 0; }
+    .mount-item { padding: 0.5rem; background: white; border-radius: 4px; margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div id="step-welcome" class="step active">
+      <h1 id="app-title">FileSync</h1>
+      <p>Mount your OneDrive and SharePoint files as local folders.</p>
+      <div id="preconfigured-mounts" class="mount-list" style="display:none"></div>
+      <button onclick="startSignIn()">Sign in with Microsoft</button>
+    </div>
+    <div id="step-source" class="step">
+      <h1>Select Source</h1>
+      <p>What would you like to mount?</p>
+      <button onclick="selectSource('drive')">OneDrive</button>
+      <button onclick="selectSource('sharepoint')">SharePoint Site</button>
+    </div>
+    <div id="step-done" class="step">
+      <h1>All Set</h1>
+      <p>Your drives are mounted and ready to use.</p>
+      <button onclick="window.close()">Close</button>
+    </div>
+  </div>
+  <script>
+    const { invoke } = window.__TAURI__.core;
+
+    async function startSignIn() {
+      try {
+        await invoke('sign_in');
+        const settings = await invoke('get_settings');
+        const mounts = await invoke('list_mounts');
+        if (mounts.length > 0) {
+          showStep('step-done');
+        } else {
+          showStep('step-source');
+        }
+      } catch (e) { console.error(e); }
+    }
+
+    function selectSource(type) {
+      showStep('step-done');
+    }
+
+    function showStep(id) {
+      document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+    }
+
+    async function init() {
+      try {
+        const settings = await invoke('get_settings');
+        document.getElementById('app-title').textContent = settings.app_name;
+        document.title = settings.app_name + ' Setup';
+
+        const mounts = await invoke('list_mounts');
+        if (mounts.length > 0) {
+          const list = document.getElementById('preconfigured-mounts');
+          list.style.display = 'block';
+          mounts.forEach(m => {
+            const div = document.createElement('div');
+            div.className = 'mount-item';
+            div.textContent = m.name + ' → ' + m.mount_point;
+            list.appendChild(div);
+          });
+        }
+      } catch (e) { console.error(e); }
+    }
+    init();
+  </script>
+</body>
+</html>
