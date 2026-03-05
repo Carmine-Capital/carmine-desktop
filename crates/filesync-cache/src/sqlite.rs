@@ -1,0 +1,271 @@
+use std::sync::Mutex;
+
+use rusqlite::{Connection, params};
+
+use filesync_core::types::DriveItem;
+
+pub struct SqliteStore {
+    conn: Mutex<Connection>,
+}
+
+impl SqliteStore {
+    pub fn open(path: &std::path::Path) -> filesync_core::Result<Self> {
+        let conn = Connection::open(path)
+            .map_err(|e| filesync_core::Error::Cache(format!("failed to open SQLite: {e}")))?;
+
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+            .map_err(|e| filesync_core::Error::Cache(format!("failed to set pragmas: {e}")))?;
+
+        let store = Self {
+            conn: Mutex::new(conn),
+        };
+        store.create_tables()?;
+        Ok(store)
+    }
+
+    fn create_tables(&self) -> filesync_core::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS items (
+                inode INTEGER PRIMARY KEY,
+                item_id TEXT NOT NULL UNIQUE,
+                parent_inode INTEGER,
+                drive_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                size INTEGER NOT NULL DEFAULT 0,
+                is_folder INTEGER NOT NULL DEFAULT 0,
+                etag TEXT,
+                mtime TEXT,
+                ctime TEXT,
+                json_data TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_items_parent ON items(parent_inode);
+            CREATE INDEX IF NOT EXISTS idx_items_item_id ON items(item_id);
+
+            CREATE TABLE IF NOT EXISTS delta_tokens (
+                drive_id TEXT PRIMARY KEY,
+                token TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS sync_state (
+                item_id TEXT PRIMARY KEY,
+                local_etag TEXT,
+                remote_etag TEXT,
+                pending_upload INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS cache_entries (
+                drive_id TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                etag TEXT,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                cache_path TEXT NOT NULL,
+                last_access TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (drive_id, item_id)
+            );",
+        )
+        .map_err(|e| filesync_core::Error::Cache(format!("failed to create tables: {e}")))?;
+
+        Ok(())
+    }
+
+    pub fn upsert_item(
+        &self,
+        inode: u64,
+        drive_id: &str,
+        item: &DriveItem,
+        parent_inode: Option<u64>,
+    ) -> filesync_core::Result<()> {
+        let json = serde_json::to_string(item)
+            .map_err(|e| filesync_core::Error::Cache(format!("serialize failed: {e}")))?;
+
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO items (inode, item_id, parent_inode, drive_id, name, size, is_folder, etag, mtime, ctime, json_data)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(item_id) DO UPDATE SET
+                name = excluded.name,
+                size = excluded.size,
+                is_folder = excluded.is_folder,
+                etag = excluded.etag,
+                mtime = excluded.mtime,
+                ctime = excluded.ctime,
+                json_data = excluded.json_data",
+            params![
+                inode as i64,
+                item.id,
+                parent_inode.map(|i| i as i64),
+                drive_id,
+                item.name,
+                item.size,
+                item.is_folder() as i32,
+                item.etag,
+                item.last_modified.map(|d| d.to_rfc3339()),
+                item.created.map(|d| d.to_rfc3339()),
+                json,
+            ],
+        )
+        .map_err(|e| filesync_core::Error::Cache(format!("upsert failed: {e}")))?;
+
+        Ok(())
+    }
+
+    pub fn get_item_by_id(&self, item_id: &str) -> filesync_core::Result<Option<(u64, DriveItem)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT inode, json_data FROM items WHERE item_id = ?1")
+            .map_err(|e| filesync_core::Error::Cache(format!("prepare failed: {e}")))?;
+
+        let result = stmt
+            .query_row(params![item_id], |row| {
+                let inode: i64 = row.get(0)?;
+                let json: String = row.get(1)?;
+                Ok((inode as u64, json))
+            })
+            .optional()
+            .map_err(|e| filesync_core::Error::Cache(format!("query failed: {e}")))?;
+
+        match result {
+            Some((inode, json)) => {
+                let item: DriveItem = serde_json::from_str(&json)
+                    .map_err(|e| filesync_core::Error::Cache(format!("deserialize failed: {e}")))?;
+                Ok(Some((inode, item)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_children(&self, parent_inode: u64) -> filesync_core::Result<Vec<(u64, DriveItem)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT inode, json_data FROM items WHERE parent_inode = ?1")
+            .map_err(|e| filesync_core::Error::Cache(format!("prepare failed: {e}")))?;
+
+        let rows = stmt
+            .query_map(params![parent_inode as i64], |row| {
+                let inode: i64 = row.get(0)?;
+                let json: String = row.get(1)?;
+                Ok((inode as u64, json))
+            })
+            .map_err(|e| filesync_core::Error::Cache(format!("query failed: {e}")))?;
+
+        let mut children = Vec::new();
+        for row in rows {
+            let (inode, json) =
+                row.map_err(|e| filesync_core::Error::Cache(format!("row read failed: {e}")))?;
+            let item: DriveItem = serde_json::from_str(&json)
+                .map_err(|e| filesync_core::Error::Cache(format!("deserialize failed: {e}")))?;
+            children.push((inode, item));
+        }
+
+        Ok(children)
+    }
+
+    pub fn delete_item(&self, item_id: &str) -> filesync_core::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM items WHERE item_id = ?1", params![item_id])
+            .map_err(|e| filesync_core::Error::Cache(format!("delete failed: {e}")))?;
+        Ok(())
+    }
+
+    pub fn get_delta_token(&self, drive_id: &str) -> filesync_core::Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT token FROM delta_tokens WHERE drive_id = ?1")
+            .map_err(|e| filesync_core::Error::Cache(format!("prepare failed: {e}")))?;
+
+        stmt.query_row(params![drive_id], |row| row.get(0))
+            .optional()
+            .map_err(|e| filesync_core::Error::Cache(format!("query failed: {e}")))
+    }
+
+    pub fn set_delta_token(&self, drive_id: &str, token: &str) -> filesync_core::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO delta_tokens (drive_id, token) VALUES (?1, ?2)
+             ON CONFLICT(drive_id) DO UPDATE SET token = excluded.token, updated_at = datetime('now')",
+            params![drive_id, token],
+        )
+        .map_err(|e| filesync_core::Error::Cache(format!("set delta token failed: {e}")))?;
+        Ok(())
+    }
+
+    pub fn apply_delta(
+        &self,
+        drive_id: &str,
+        items: &[(u64, DriveItem, Option<u64>)],
+        deleted_ids: &[String],
+        new_delta_token: &str,
+    ) -> filesync_core::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| filesync_core::Error::Cache(format!("transaction failed: {e}")))?;
+
+        for (inode, item, parent_inode) in items {
+            let json = serde_json::to_string(item)
+                .map_err(|e| filesync_core::Error::Cache(format!("serialize failed: {e}")))?;
+
+            tx.execute(
+                "INSERT INTO items (inode, item_id, parent_inode, drive_id, name, size, is_folder, etag, mtime, ctime, json_data)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(item_id) DO UPDATE SET
+                    name = excluded.name,
+                    size = excluded.size,
+                    is_folder = excluded.is_folder,
+                    etag = excluded.etag,
+                    mtime = excluded.mtime,
+                    ctime = excluded.ctime,
+                    json_data = excluded.json_data",
+                params![
+                    *inode as i64,
+                    item.id,
+                    parent_inode.map(|i| i as i64),
+                    drive_id,
+                    item.name,
+                    item.size,
+                    item.is_folder() as i32,
+                    item.etag,
+                    item.last_modified.map(|d| d.to_rfc3339()),
+                    item.created.map(|d| d.to_rfc3339()),
+                    json,
+                ],
+            )
+            .map_err(|e| filesync_core::Error::Cache(format!("upsert in delta failed: {e}")))?;
+        }
+
+        for id in deleted_ids {
+            tx.execute("DELETE FROM items WHERE item_id = ?1", params![id])
+                .map_err(|e| filesync_core::Error::Cache(format!("delete in delta failed: {e}")))?;
+        }
+
+        tx.execute(
+            "INSERT INTO delta_tokens (drive_id, token) VALUES (?1, ?2)
+             ON CONFLICT(drive_id) DO UPDATE SET token = excluded.token, updated_at = datetime('now')",
+            params![drive_id, new_delta_token],
+        )
+        .map_err(|e| filesync_core::Error::Cache(format!("set delta token failed: {e}")))?;
+
+        tx.commit()
+            .map_err(|e| filesync_core::Error::Cache(format!("commit failed: {e}")))?;
+
+        Ok(())
+    }
+}
+
+trait OptionalExt<T> {
+    fn optional(self) -> std::result::Result<Option<T>, rusqlite::Error>;
+}
+
+impl<T> OptionalExt<T> for std::result::Result<T, rusqlite::Error> {
+    fn optional(self) -> std::result::Result<Option<T>, rusqlite::Error> {
+        match self {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}

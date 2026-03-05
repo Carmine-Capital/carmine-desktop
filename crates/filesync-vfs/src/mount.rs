@@ -1,0 +1,164 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::runtime::Handle;
+
+use crate::fuse_fs::FileSyncFs;
+use crate::inode::InodeTable;
+use filesync_cache::CacheManager;
+use filesync_graph::GraphClient;
+
+const UNMOUNT_FLUSH_TIMEOUT: Duration = Duration::from_secs(30);
+
+pub struct MountHandle {
+    session: fuser::BackgroundSession,
+    cache: Arc<CacheManager>,
+    graph: Arc<GraphClient>,
+    drive_id: String,
+    rt: Handle,
+    mountpoint: String,
+}
+
+impl MountHandle {
+    pub fn mount(
+        graph: Arc<GraphClient>,
+        cache: Arc<CacheManager>,
+        inodes: Arc<InodeTable>,
+        drive_id: String,
+        mountpoint: &str,
+        rt: Handle,
+    ) -> filesync_core::Result<Self> {
+        let fs = FileSyncFs::new(
+            graph.clone(),
+            cache.clone(),
+            inodes,
+            drive_id.clone(),
+            rt.clone(),
+        );
+
+        let session = fs.mount(mountpoint)?;
+
+        tracing::info!("mounted drive {drive_id} at {mountpoint}");
+
+        Ok(Self {
+            session,
+            cache,
+            graph,
+            drive_id,
+            rt,
+            mountpoint: mountpoint.to_string(),
+        })
+    }
+
+    pub fn mountpoint(&self) -> &str {
+        &self.mountpoint
+    }
+
+    pub fn drive_id(&self) -> &str {
+        &self.drive_id
+    }
+
+    pub fn unmount(self) -> filesync_core::Result<()> {
+        self.flush_pending();
+        drop(self.session);
+        tracing::info!("unmounted {}", self.mountpoint);
+        Ok(())
+    }
+
+    fn flush_pending(&self) {
+        let pending = match self.rt.block_on(self.cache.writeback.list_pending()) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("failed to list pending writes on unmount: {e}");
+                return;
+            }
+        };
+
+        let drive_pending: Vec<_> = pending
+            .into_iter()
+            .filter(|(d, _)| d == &self.drive_id)
+            .collect();
+
+        if drive_pending.is_empty() {
+            return;
+        }
+
+        tracing::info!(
+            "flushing {} pending writes for drive {}",
+            drive_pending.len(),
+            self.drive_id
+        );
+
+        let graph = self.graph.clone();
+        let cache = self.cache.clone();
+        let drive_id = self.drive_id.clone();
+
+        let flush_result = self.rt.block_on(async {
+            tokio::time::timeout(UNMOUNT_FLUSH_TIMEOUT, async {
+                for (_, item_id) in &drive_pending {
+                    if let Some(content) = cache.writeback.read(&drive_id, item_id).await {
+                        match graph
+                            .upload(
+                                &drive_id,
+                                "",
+                                Some(item_id),
+                                item_id,
+                                bytes::Bytes::from(content),
+                            )
+                            .await
+                        {
+                            Ok(_) => {
+                                let _ = cache.writeback.remove(&drive_id, item_id).await;
+                            }
+                            Err(e) => {
+                                tracing::error!("flush upload failed for {item_id}: {e}");
+                            }
+                        }
+                    }
+                }
+            })
+            .await
+        });
+
+        if flush_result.is_err() {
+            tracing::warn!(
+                "unmount flush timed out after {}s, {} writes may be pending",
+                UNMOUNT_FLUSH_TIMEOUT.as_secs(),
+                drive_pending.len()
+            );
+        }
+    }
+}
+
+pub async fn shutdown_on_signal(mounts: Arc<std::sync::Mutex<Vec<MountHandle>>>) {
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
+        let ctrl_c = tokio::signal::ctrl_c();
+
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = async {
+                if let Some(ref mut s) = sigterm {
+                    s.recv().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {},
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+
+    tracing::info!("shutdown signal received, unmounting all drives");
+    let mut handles = mounts.lock().unwrap();
+    while let Some(handle) = handles.pop() {
+        if let Err(e) = handle.unmount() {
+            tracing::error!("unmount failed: {e}");
+        }
+    }
+}
