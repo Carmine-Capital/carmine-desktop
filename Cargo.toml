@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/filesync-core",
-    "crates/filesync-auth",
-    "crates/filesync-graph",
-    "crates/filesync-cache",
-    "crates/filesync-vfs",
-    "crates/filesync-app",
+    "crates/cloudmount-core",
+    "crates/cloudmount-auth",
+    "crates/cloudmount-graph",
+    "crates/cloudmount-cache",
+    "crates/cloudmount-vfs",
+    "crates/cloudmount-app",
 ]
 
 [workspace.package]
@@ -63,11 +63,11 @@ url = "2.5"
 bytes = "1.11"
 
 # Workspace crate inter-dependencies
-filesync-core = { path = "crates/filesync-core" }
-filesync-auth = { path = "crates/filesync-auth" }
-filesync-graph = { path = "crates/filesync-graph" }
-filesync-cache = { path = "crates/filesync-cache" }
-filesync-vfs = { path = "crates/filesync-vfs" }
+cloudmount-core = { path = "crates/cloudmount-core" }
+cloudmount-auth = { path = "crates/cloudmount-auth" }
+cloudmount-graph = { path = "crates/cloudmount-graph" }
+cloudmount-cache = { path = "crates/cloudmount-cache" }
+cloudmount-vfs = { path = "crates/cloudmount-vfs" }
 
 # Crypto (token storage fallback)
 aes-gcm = { version = "0.10.3", features = ["zeroize"] }

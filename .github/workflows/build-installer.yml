@@ -6,7 +6,7 @@ on:
       app_name:
         description: 'Application name (e.g. "Contoso Drive")'
         required: false
-        default: 'FileSync'
+        default: 'CloudMount'
       tenant_id:
         description: 'Azure AD tenant ID'
         required: false
@@ -83,7 +83,7 @@ jobs:
 
       - name: Build installer
         run: cargo tauri build --features desktop
-        working-directory: crates/filesync-app
+        working-directory: crates/cloudmount-app
 
       - name: Upload artifacts (Linux)
         if: runner.os == 'Linux'

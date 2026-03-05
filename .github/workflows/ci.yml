@@ -58,11 +58,11 @@ jobs:
 
       - name: Build VFS crate (Windows CfApi)
         if: runner.os == 'Windows'
-        run: cargo build -p filesync-vfs --all-targets
+        run: cargo build -p cloudmount-vfs --all-targets
 
       - name: Test
         run: cargo test --all-targets
 
       - name: Test CfApi integration (Windows)
         if: runner.os == 'Windows'
-        run: cargo test -p filesync-vfs --test cfapi_integration -- --ignored
+        run: cargo test -p cloudmount-vfs --test cfapi_integration -- --ignored

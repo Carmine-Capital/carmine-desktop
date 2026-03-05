@@ -1,4 +1,4 @@
-# FileSync Build-Time Defaults
+# CloudMount Build-Time Defaults
 #
 # This file is embedded into the binary at compile time via `include_str!`.
 # Edit the sections below to create a pre-configured build for your organization.

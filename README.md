@@ -1,4 +1,4 @@
-# FileSync
+# CloudMount
 
 Mount Microsoft OneDrive and SharePoint document libraries as local folders on Linux, macOS, and Windows.
 
@@ -37,7 +37,7 @@ Download the latest release for your platform from the [Releases](../../releases
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Build headless (no GUI)
-cargo build --release -p filesync-app
+cargo build --release -p cloudmount-app
 
 # Build with desktop GUI (requires Tauri CLI + system deps)
 cargo install tauri-cli --version "^2"
@@ -53,22 +53,22 @@ sudo apt-get install -y libfuse3-dev pkg-config \
 
 ## First Run
 
-1. Launch FileSync — a setup wizard appears
+1. Launch CloudMount — a setup wizard appears
 2. Click **Sign in with Microsoft** — your browser opens for authentication
 3. Choose **OneDrive** or **SharePoint** as your source
 4. For SharePoint: search for a site, select a document library
 5. Choose a local mount point (e.g., `~/OneDrive`)
 6. Done — your files appear as a local folder
 
-FileSync minimizes to the system tray. Right-click the tray icon for options.
+CloudMount minimizes to the system tray. Right-click the tray icon for options.
 
 ## Configuration
 
 User settings are stored at:
 
-- **Linux**: `~/.config/filesync/config.toml`
-- **macOS**: `~/Library/Application Support/filesync/config.toml`
-- **Windows**: `%APPDATA%\FileSync\config.toml`
+- **Linux**: `~/.config/cloudmount/config.toml`
+- **macOS**: `~/Library/Application Support/cloudmount/config.toml`
+- **Windows**: `%APPDATA%\CloudMount\config.toml`
 
 Settings are also accessible from the tray icon → **Settings**.
 
