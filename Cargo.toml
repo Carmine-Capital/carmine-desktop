@@ -1,0 +1,72 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/filesync-core",
+    "crates/filesync-auth",
+    "crates/filesync-graph",
+    "crates/filesync-cache",
+    "crates/filesync-vfs",
+    "crates/filesync-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.50", features = ["full"] }
+
+# HTTP
+reqwest = { version = "0.12", features = ["json", "stream"] }
+hyper = { version = "1.8", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# SQLite
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# FUSE filesystem (Linux/macOS)
+fuser = "0.17"
+
+# OS integration
+keyring = "3.6"
+open = "5.3"
+dirs = "6.0"
+
+# Concurrent data structures
+dashmap = "6.1"
+
+# Utilities
+uuid = { version = "1.21", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+sha2 = "0.10"
+rand = "0.9"
+url = "2.5"
+bytes = "1.11"
+
+# Workspace crate inter-dependencies
+filesync-core = { path = "crates/filesync-core" }
+filesync-auth = { path = "crates/filesync-auth" }
+filesync-graph = { path = "crates/filesync-graph" }
+filesync-cache = { path = "crates/filesync-cache" }
+filesync-vfs = { path = "crates/filesync-vfs" }
+
+# Testing
+wiremock = "0.6"
