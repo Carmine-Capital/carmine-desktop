@@ -13,12 +13,21 @@ pub struct TrayState(pub Mutex<tauri::tray::TrayIcon>);
 pub fn setup(app: &AppHandle, app_name: &str) -> tauri::Result<()> {
     let open_item = MenuItemBuilder::with_id("open_folder", "Open Mount Folder").build(app)?;
     let settings_item = MenuItemBuilder::with_id("settings", "Settings\u{2026}").build(app)?;
+    let update_item =
+        MenuItemBuilder::with_id("check_for_updates", "Check for Updates").build(app)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let signout_item = MenuItemBuilder::with_id("sign_out", "Sign Out").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", format!("Quit {app_name}")).build(app)?;
 
     let menu = MenuBuilder::new(app)
-        .items(&[&open_item, &settings_item, &sep, &signout_item, &quit_item])
+        .items(&[
+            &open_item,
+            &settings_item,
+            &update_item,
+            &sep,
+            &signout_item,
+            &quit_item,
+        ])
         .build()?;
 
     let tray = TrayIconBuilder::with_id("cloudmount-tray")
@@ -64,6 +73,18 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
         "settings" => {
             open_or_focus_window(app, "settings", "Settings", "settings.html");
         }
+        "check_for_updates" => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                crate::update::handle_manual_check(&app).await;
+            });
+        }
+        "restart_to_update" => {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                crate::update::install_and_relaunch(&app);
+            });
+        }
         "sign_out" => {
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
@@ -100,6 +121,10 @@ pub fn update_tray_menu(app: &AppHandle) {
     let Some(tray_state) = app.try_state::<TrayState>() else {
         return;
     };
+
+    let pending_update_version = app
+        .try_state::<crate::update::UpdateState>()
+        .and_then(|s| s.pending_version.lock().unwrap().clone());
 
     let (mount_entries, app_name, auth_degraded) = {
         let config = app_state.effective_config.lock().unwrap();
@@ -161,6 +186,19 @@ pub fn update_tray_menu(app: &AppHandle) {
         let add_mount = MenuItemBuilder::with_id("add_mount", "Add Mount\u{2026}").build(app)?;
         let settings = MenuItemBuilder::with_id("settings", "Settings\u{2026}").build(app)?;
         builder = builder.item(&add_mount).item(&settings);
+
+        if let Some(ref version) = pending_update_version {
+            let update_item = MenuItemBuilder::with_id(
+                "restart_to_update",
+                format!("Restart to Update (v{version})"),
+            )
+            .build(app)?;
+            builder = builder.item(&update_item);
+        } else {
+            let update_item =
+                MenuItemBuilder::with_id("check_for_updates", "Check for Updates").build(app)?;
+            builder = builder.item(&update_item);
+        }
 
         let sep2 = PredefinedMenuItem::separator(app)?;
         builder = builder.item(&sep2);

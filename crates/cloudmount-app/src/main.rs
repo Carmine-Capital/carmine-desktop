@@ -9,6 +9,8 @@ mod commands;
 mod notify;
 #[cfg(feature = "desktop")]
 mod tray;
+#[cfg(feature = "desktop")]
+mod update;
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
@@ -331,6 +333,9 @@ fn run_desktop(
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .manage(update::UpdateState::new())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             commands::sign_in,
@@ -383,6 +388,7 @@ fn run_desktop(
 async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
     use std::sync::atomic::Ordering;
     use tauri::Manager;
+    use tauri_plugin_updater::UpdaterExt;
 
     let state = app.state::<AppState>();
 
@@ -415,6 +421,10 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
         run_crash_recovery(app);
         start_all_mounts(app);
         start_delta_sync(app);
+        // Only spawn periodic update checker if the updater endpoint is configured
+        if app.updater().is_ok() {
+            update::spawn_update_checker(app.clone());
+        }
         tray::update_tray_menu(app);
     } else if first_run {
         tray::open_or_focus_window(app, "wizard", "Setup", "wizard.html");
@@ -710,10 +720,12 @@ fn run_crash_recovery(app: &tauri::AppHandle) {
 }
 
 #[cfg(feature = "desktop")]
-pub fn graceful_shutdown(app: &tauri::AppHandle) {
+pub fn graceful_shutdown_without_exit(app: &tauri::AppHandle) {
     use tauri::Manager;
 
     tracing::info!("graceful shutdown initiated");
+
+    update::cancel_checker(app);
 
     let state = app.state::<AppState>();
 
@@ -724,6 +736,11 @@ pub fn graceful_shutdown(app: &tauri::AppHandle) {
     stop_all_mounts(app);
 
     tracing::info!("shutdown complete");
+}
+
+#[cfg(feature = "desktop")]
+pub fn graceful_shutdown(app: &tauri::AppHandle) {
+    graceful_shutdown_without_exit(app);
     app.exit(0);
 }
 

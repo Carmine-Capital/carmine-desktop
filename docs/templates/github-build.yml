@@ -1,18 +1,37 @@
 # CloudMount Org Build — GitHub Actions Template
 #
 # Multi-platform build workflow that clones the public CloudMount repo,
-# injects your org's defaults.toml, and builds branded desktop binaries.
+# injects your org's defaults.toml and tauri.conf.patch.json, and builds
+# signed branded desktop installers with auto-update support.
 #
 # SETUP:
 #   1. Copy this file to .github/workflows/build.yml in your private config repo
-#   2. Place your defaults.toml in the repo root
+#   2. Place your defaults.toml and tauri.conf.patch.json in the repo root
 #   3. Configure repository settings:
 #      Secrets (Settings > Secrets and variables > Actions > Secrets):
-#        - CLOUDMOUNT_CLIENT_ID — Azure AD application client ID (masked)
+#        - CLOUDMOUNT_CLIENT_ID            — Azure AD application client ID (masked)
+#        - TAURI_SIGNING_PRIVATE_KEY        — Ed25519 private key (from `cargo tauri signer generate`)
+#        - TAURI_SIGNING_PRIVATE_KEY_PASSWORD — Password for the signing key
+#        - RELEASES_PAT                     — Fine-grained PAT with contents:write on your release repo
 #      Variables (Settings > Secrets and variables > Actions > Variables):
 #        - CLOUDMOUNT_TENANT_ID — Azure AD tenant ID
 #        - CLOUDMOUNT_APP_NAME  — Branded app name (e.g., "Contoso Drive")
 #        - CLOUDMOUNT_VERSION   — (Optional) Override version tag
+#        - RELEASES_REPO        — Release repo (e.g., "contoso/contoso-drive-releases")
+#
+# tauri.conf.patch.json:
+#   Patches tauri.conf.json before build. Use it to set productName, identifier,
+#   and updater config (endpoints + pubkey). Example:
+#   {
+#     "productName": "Contoso Drive",
+#     "identifier": "com.contoso.drive",
+#     "plugins": {
+#       "updater": {
+#         "endpoints": ["https://github.com/contoso/contoso-drive-releases/releases/latest/download/update.json"],
+#         "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6..."
+#       }
+#     }
+#   }
 #
 # Remove any platform from the matrix you don't need.
 
@@ -28,6 +47,8 @@ env:
   CLOUDMOUNT_CLIENT_ID: ${{ secrets.CLOUDMOUNT_CLIENT_ID }}
   CLOUDMOUNT_TENANT_ID: ${{ vars.CLOUDMOUNT_TENANT_ID }}
   CLOUDMOUNT_APP_NAME: ${{ vars.CLOUDMOUNT_APP_NAME }}
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
 jobs:
   build:
@@ -35,14 +56,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact-name: cloudmount-linux
-            artifact-path: cloudmount-src/target/release/cloudmount-app
+            target: linux
           - os: macos-latest
-            artifact-name: cloudmount-macos
-            artifact-path: cloudmount-src/target/release/cloudmount-app
+            target: macos
           - os: windows-latest
-            artifact-name: cloudmount-windows
-            artifact-path: cloudmount-src/target/release/cloudmount-app.exe
+            target: windows
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -52,13 +70,34 @@ jobs:
 
       - name: Inject org config
         shell: bash
-        run: cp defaults.toml cloudmount-src/build/defaults.toml
+        run: |
+          cp defaults.toml cloudmount-src/build/defaults.toml
+          # Patch tauri.conf.json with branded overrides (productName, identifier, updater)
+          if [ -f tauri.conf.patch.json ]; then
+            cd cloudmount-src/crates/cloudmount-app
+            python3 -c "
+          import json, sys
+          with open('tauri.conf.json') as f: base = json.load(f)
+          with open('../../../tauri.conf.patch.json') as f: patch = json.load(f)
+          def merge(b, p):
+              for k, v in p.items():
+                  if isinstance(v, dict) and isinstance(b.get(k), dict):
+                      merge(b[k], v)
+                  else:
+                      b[k] = v
+          merge(base, patch)
+          with open('tauri.conf.json', 'w') as f: json.dump(base, f, indent=2)
+          "
+          fi
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: cloudmount-src
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version "^2"
 
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
@@ -75,12 +114,122 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install macfuse
 
-      - name: Build
+      - name: Build signed installers
         working-directory: cloudmount-src
-        run: cargo build --release -p cloudmount-app --features desktop
+        run: cargo tauri build
 
-      - name: Upload artifact
+      - name: Generate update.json
+        shell: bash
+        working-directory: cloudmount-src
+        run: |
+          VERSION="${{ env.CLOUDMOUNT_VERSION }}"
+          VERSION="${VERSION#v}"  # strip leading 'v'
+          RELEASES_REPO="${{ vars.RELEASES_REPO }}"
+          BASE_URL="https://github.com/${RELEASES_REPO}/releases/download/v${VERSION}"
+
+          # Collect platform-specific bundle paths and signatures
+          BUNDLE_DIR="target/release/bundle"
+
+          generate_platform_entry() {
+            local url="$1" sig_file="$2"
+            local sig=""
+            if [ -f "$sig_file" ]; then
+              sig=$(cat "$sig_file")
+            fi
+            echo "{\"url\":\"${url}\",\"signature\":\"${sig}\"}"
+          }
+
+          # Build platform entries
+          LINUX_APPIMAGE=""
+          MACOS_DMG=""
+          WINDOWS_MSI=""
+
+          if [ -d "$BUNDLE_DIR/appimage" ]; then
+            for f in "$BUNDLE_DIR"/appimage/*.AppImage; do
+              [ -f "$f" ] || continue
+              FNAME=$(basename "$f")
+              LINUX_APPIMAGE=$(generate_platform_entry "${BASE_URL}/${FNAME}" "${f}.sig")
+            done
+          fi
+
+          if [ -d "$BUNDLE_DIR/dmg" ]; then
+            for f in "$BUNDLE_DIR"/dmg/*.dmg; do
+              [ -f "$f" ] || continue
+              FNAME=$(basename "$f")
+              MACOS_DMG=$(generate_platform_entry "${BASE_URL}/${FNAME}" "${f}.sig")
+            done
+          fi
+
+          if [ -d "$BUNDLE_DIR/msi" ]; then
+            for f in "$BUNDLE_DIR"/msi/*.msi; do
+              [ -f "$f" ] || continue
+              FNAME=$(basename "$f")
+              WINDOWS_MSI=$(generate_platform_entry "${BASE_URL}/${FNAME}" "${f}.sig")
+            done
+          fi
+
+          if [ -d "$BUNDLE_DIR/nsis" ]; then
+            for f in "$BUNDLE_DIR"/nsis/*.exe; do
+              [ -f "$f" ] || continue
+              FNAME=$(basename "$f")
+              WINDOWS_MSI=$(generate_platform_entry "${BASE_URL}/${FNAME}" "${f}.sig")
+            done
+          fi
+
+          # Write update.json
+          cat > update.json <<MANIFEST
+          {
+            "version": "v${VERSION}",
+            "platforms": {
+              "linux-x86_64": ${LINUX_APPIMAGE:-null},
+              "darwin-x86_64": ${MACOS_DMG:-null},
+              "darwin-aarch64": ${MACOS_DMG:-null},
+              "windows-x86_64": ${WINDOWS_MSI:-null}
+            }
+          }
+          MANIFEST
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact-name }}
-          path: ${{ matrix.artifact-path }}
+          name: cloudmount-${{ matrix.target }}
+          path: |
+            cloudmount-src/target/release/bundle/**/*
+            cloudmount-src/update.json
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish release to release repo
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
+        run: |
+          VERSION="${{ env.CLOUDMOUNT_VERSION }}"
+          RELEASES_REPO="${{ vars.RELEASES_REPO }}"
+
+          # Collect all release files
+          FILES=()
+          for f in artifacts/cloudmount-*/**/*; do
+            [ -f "$f" ] || continue
+            FILES+=("$f")
+          done
+
+          # Create or update release on the public release repo
+          gh release create "${VERSION}" \
+            --repo "${RELEASES_REPO}" \
+            --title "${VERSION}" \
+            --notes "Automated release ${VERSION}" \
+            --latest \
+            "${FILES[@]}" || \
+          gh release upload "${VERSION}" \
+            --repo "${RELEASES_REPO}" \
+            --clobber \
+            "${FILES[@]}"

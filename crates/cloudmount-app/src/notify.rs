@@ -19,6 +19,35 @@ pub fn auth_expired(app: &AppHandle) {
     );
 }
 
+pub fn update_ready(app: &AppHandle, version: &str) {
+    let app_name = app_display_name(app);
+    send(
+        app,
+        "Update Available",
+        &format!("{app_name} v{version} is ready \u{2014} restart to update"),
+    );
+}
+
+pub fn up_to_date(app: &AppHandle) {
+    let app_name = app_display_name(app);
+    send(app, "Up to Date", &format!("{app_name} is up to date"));
+}
+
+pub fn update_not_configured(app: &AppHandle) {
+    send(
+        app,
+        "Updates",
+        "Update checking is not configured for this build",
+    );
+}
+
+fn app_display_name(app: &AppHandle) -> String {
+    use tauri::Manager;
+    app.try_state::<crate::AppState>()
+        .map(|s| s.packaged.app_name().to_string())
+        .unwrap_or_else(|| "CloudMount".to_string())
+}
+
 fn send(app: &AppHandle, title: &str, body: &str) {
     if let Err(e) = app.notification().builder().title(title).body(body).show() {
         let _ = e;

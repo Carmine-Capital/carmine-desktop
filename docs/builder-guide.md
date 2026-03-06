@@ -85,6 +85,49 @@ When using the GitHub Actions workflow, pass mounts as a JSON array:
 ]
 ```
 
+## Auto-Updater (Signing Key Setup)
+
+To enable automatic updates, generate a signing key pair and configure the updater endpoint.
+
+### Generate signing keys
+
+```bash
+cargo tauri signer generate -w ~/.tauri/cloudmount.key
+```
+
+Save the password securely. The output shows your public key.
+
+### Build with signing
+
+Set the signing environment variables before building:
+
+```bash
+export TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/cloudmount.key)
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="your-password"
+cargo tauri build --features desktop
+```
+
+This produces signed installers with `.sig` signature files alongside each bundle in `target/release/bundle/`.
+
+### Configure the updater endpoint
+
+Create a `tauri.conf.patch.json` in the project root to override the updater config:
+
+```json
+{
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://your-server.com/updates/update.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6..."
+    }
+  }
+}
+```
+
+The `pubkey` value is the public key string output by `cargo tauri signer generate`. The endpoint URL should point to a JSON file following the [Tauri update manifest format](https://v2.tauri.app/plugin/updater/).
+
 ## What Happens at Runtime
 
 1. **Generic build** (no `build/defaults.toml` config): User sees a full setup wizard — sign in → choose source → configure mount point

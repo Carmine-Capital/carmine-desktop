@@ -13,6 +13,21 @@ The system SHALL support an optional `build/defaults.toml` file that is embedded
 - **WHEN** the builder creates `build/defaults.toml`
 - **THEN** the file supports these sections: `[tenant]` (id, client_id), `[branding]` (app_name), `[defaults]` (auto_start, cache_max_size, sync_interval_secs), and `[[mounts]]` (id, name, type, mount_point, and type-specific fields: drive_id, site_id, library_name)
 
+### Requirement: Updater endpoint configuration for branded builds
+The system SHALL support branded build configuration of the auto-updater endpoint and signing public key via `tauri.conf.json` patching.
+
+#### Scenario: Main repo placeholder configuration
+- **WHEN** the main repo's `tauri.conf.json` is used without modification (generic/dev build)
+- **THEN** the updater plugin is registered but the endpoints list is empty, disabling update checks
+
+#### Scenario: Branded build patches updater endpoint
+- **WHEN** a branded build repo patches `tauri.conf.json` before building to set `plugins.updater.endpoints` and `plugins.updater.pubkey`
+- **THEN** the built binary checks the specified endpoint for updates and verifies signatures against the specified public key
+
+#### Scenario: Branded build patches product identity
+- **WHEN** a branded build repo patches `tauri.conf.json` to set `productName` and `identifier`
+- **THEN** the built installers use the branded product name and identifier for the installed application
+
 ### Requirement: Packaged mount definitions
 The system SHALL support pre-configured mount definitions in `build/defaults.toml` that are automatically activated on first run.
 

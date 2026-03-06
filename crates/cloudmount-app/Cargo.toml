@@ -5,7 +5,7 @@ edition.workspace = true
 
 [features]
 default = []
-desktop = ["tauri", "tauri-plugin-notification", "tauri-build"]
+desktop = ["tauri", "tauri-plugin-notification", "tauri-plugin-updater", "tauri-plugin-process", "tauri-build"]
 
 [dependencies]
 cloudmount-core = { workspace = true }
@@ -30,6 +30,8 @@ clap = { workspace = true }
 dotenvy = { workspace = true }
 tauri = { workspace = true, optional = true }
 tauri-plugin-notification = { workspace = true, optional = true }
+tauri-plugin-updater = { workspace = true, optional = true }
+tauri-plugin-process = { workspace = true, optional = true }
 
 [build-dependencies]
 tauri-build = { workspace = true, optional = true }

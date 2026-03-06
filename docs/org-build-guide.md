@@ -93,6 +93,56 @@ CLOUDMOUNT_VERSION: "v0.2.0"
 
 That's it. No source code changes, no merge conflicts.
 
+## Auto-Updater Configuration
+
+To enable automatic updates for your branded build, you need three things: a signing key pair, a public release repo, and workflow changes.
+
+### 1. Generate a signing key pair
+
+```bash
+cargo install tauri-cli --version "^2"
+cargo tauri signer generate -w ~/.tauri/myapp.key
+```
+
+This creates a key pair. The private key goes into GitHub Secrets; the public key goes into your `tauri.conf.patch.json`.
+
+### 2. Create a public release repo
+
+Create a public GitHub repo (e.g., `myapp-releases`) to host installers and the `update.json` manifest. Lock it down — disable Issues, Wiki, and direct pushes. Only the CI workflow publishes releases.
+
+### 3. Add secrets to your build repo
+
+In **Settings > Secrets and variables > Actions**:
+
+- **Secret**: `TAURI_SIGNING_PRIVATE_KEY` (contents of `~/.tauri/myapp.key`)
+- **Secret**: `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (the password you chose during key generation)
+- **Secret**: `RELEASES_PAT` (fine-grained PAT with `contents: write` on your release repo)
+
+### 4. Create `tauri.conf.patch.json`
+
+In your build repo root, create `tauri.conf.patch.json`:
+
+```json
+{
+  "productName": "Contoso Drive",
+  "identifier": "com.contoso.drive",
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/contoso/contoso-drive-releases/releases/latest/download/update.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbm..."
+    }
+  }
+}
+```
+
+The `pubkey` is the public key string from step 1. The endpoint URL points at your release repo's latest release.
+
+### 5. Update your workflow
+
+See the updated `docs/templates/github-build.yml` template, which uses `cargo tauri build` instead of `cargo build --release`, handles signing, generates `update.json`, and publishes to your release repo.
+
 ## How It Works
 
 CloudMount resolves configuration in this order (highest priority first):
