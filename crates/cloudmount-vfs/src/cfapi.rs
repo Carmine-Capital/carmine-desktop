@@ -370,12 +370,13 @@ fn block_on_compat<F: std::future::Future>(rt: &Handle, f: F) -> F::Output {
     }
 }
 
-fn build_sync_root_id() -> cloudmount_core::Result<SyncRootId> {
+fn build_sync_root_id(account_name: &str) -> cloudmount_core::Result<SyncRootId> {
     let sid = SecurityId::current_user().map_err(|e| {
         cloudmount_core::Error::Filesystem(format!("failed to get user SID: {e:?}"))
     })?;
     Ok(SyncRootIdBuilder::new(PROVIDER_NAME)
         .user_security_id(sid)
+        .account_name(account_name)
         .build())
 }
 
@@ -420,6 +421,7 @@ pub struct CfMountHandle {
     cache: Arc<CacheManager>,
     graph: Arc<GraphClient>,
     drive_id: String,
+    account_name: String,
     rt: Handle,
     mount_path: PathBuf,
 }
@@ -432,8 +434,9 @@ impl CfMountHandle {
         drive_id: String,
         mount_path: &Path,
         rt: Handle,
+        account_name: String,
     ) -> cloudmount_core::Result<Self> {
-        let sync_root_id = build_sync_root_id()?;
+        let sync_root_id = build_sync_root_id(&account_name)?;
 
         ensure_mount_dir(mount_path)?;
 
@@ -480,6 +483,7 @@ impl CfMountHandle {
             cache,
             graph,
             drive_id,
+            account_name,
             rt,
             mount_path: mount_path.to_path_buf(),
         })

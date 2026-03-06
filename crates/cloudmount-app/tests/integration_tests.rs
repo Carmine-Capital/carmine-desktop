@@ -1433,7 +1433,15 @@ async fn test_smoke_windows_cfapi_mount_list_read_write_unmount() -> cloudmount_
         .await;
 
     let rt = tokio::runtime::Handle::current();
-    let mount = CfMountHandle::mount(graph, cache, inodes, drive_id.to_string(), &sync_root, rt)?;
+    let mount = CfMountHandle::mount(
+        graph,
+        cache,
+        inodes,
+        drive_id.to_string(),
+        &sync_root,
+        rt,
+        drive_id.to_string(),
+    )?;
 
     sleep(Duration::from_millis(500)).await;
 

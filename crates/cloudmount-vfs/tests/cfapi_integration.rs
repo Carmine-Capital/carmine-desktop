@@ -68,9 +68,16 @@ impl CfTestFixture {
         let inodes = Arc::new(InodeTable::new());
 
         let rt = tokio::runtime::Handle::current();
-        let mount =
-            CfMountHandle::mount(graph, cache, inodes, DRIVE_ID.to_string(), &mount_path, rt)
-                .expect("CfApi mount failed — is this Windows 10 1709+?");
+        let mount = CfMountHandle::mount(
+            graph,
+            cache,
+            inodes,
+            DRIVE_ID.to_string(),
+            &mount_path,
+            rt,
+            test_id.to_string(),
+        )
+        .expect("CfApi mount failed — is this Windows 10 1709+?");
 
         // Allow time for sync root to initialize
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -100,6 +107,30 @@ impl Drop for CfTestFixture {
         if let Some(m) = self.mount.take() {
             let _ = m.unmount();
         }
+    }
+}
+
+/// Poll the mount directory until at least `min_entries` placeholders appear.
+/// Retries every 100ms, times out after 2s.
+async fn wait_for_placeholders(dir: &std::path::Path, min_entries: usize) -> Vec<String> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            let entries: Vec<String> = rd
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+            if entries.len() >= min_entries {
+                return entries;
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "timed out waiting for {min_entries} placeholders in {}",
+                dir.display()
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
 
@@ -166,12 +197,8 @@ async fn cfapi_browse_populates_placeholders() {
 
     let fixture = CfTestFixture::setup(&server).await;
 
-    // Browsing the sync root triggers fetch_placeholders callback
-    let entries: Vec<String> = std::fs::read_dir(&fixture.mount_path)
-        .expect("read_dir on sync root failed")
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .collect();
+    // Browsing the sync root triggers fetch_placeholders callback; poll until populated
+    let entries = wait_for_placeholders(&fixture.mount_path, 2).await;
 
     assert!(
         entries.contains(&"hello.txt".to_string()),
@@ -194,11 +221,8 @@ async fn cfapi_hydrate_file_on_read() {
 
     let fixture = CfTestFixture::setup(&server).await;
 
-    // Browse to trigger placeholder creation
-    let _ = std::fs::read_dir(&fixture.mount_path);
-
-    // Allow placeholders to populate
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // Poll until placeholders are populated
+    wait_for_placeholders(&fixture.mount_path, 2).await;
 
     // Reading the file triggers fetch_data callback (hydration)
     let content =
@@ -243,9 +267,8 @@ async fn cfapi_edit_and_sync_file() {
 
     let fixture = CfTestFixture::setup(&server).await;
 
-    // Browse + hydrate
-    let _ = std::fs::read_dir(&fixture.mount_path);
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // Wait for placeholders then hydrate
+    wait_for_placeholders(&fixture.mount_path, 2).await;
     let _ = std::fs::read_to_string(fixture.path("hello.txt"));
 
     // Edit the file — CfApi detects local change via `closed` callback
@@ -277,8 +300,7 @@ async fn cfapi_rename_file() {
 
     let fixture = CfTestFixture::setup(&server).await;
 
-    let _ = std::fs::read_dir(&fixture.mount_path);
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    wait_for_placeholders(&fixture.mount_path, 2).await;
 
     std::fs::rename(fixture.path("hello.txt"), fixture.path("renamed.txt")).expect("rename failed");
 
@@ -307,8 +329,7 @@ async fn cfapi_delete_file() {
 
     let fixture = CfTestFixture::setup(&server).await;
 
-    let _ = std::fs::read_dir(&fixture.mount_path);
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    wait_for_placeholders(&fixture.mount_path, 2).await;
 
     std::fs::remove_file(fixture.path("hello.txt")).expect("delete failed");
 

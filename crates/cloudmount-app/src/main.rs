@@ -529,6 +529,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         drive_id.to_string(),
         std::path::Path::new(&mountpoint),
         rt,
+        drive_id.to_string(),
     )
     .map_err(|e| e.to_string())?;
 
