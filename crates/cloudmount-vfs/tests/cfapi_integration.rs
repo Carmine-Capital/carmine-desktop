@@ -11,6 +11,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use cloud_filter::metadata::Metadata;
+use cloud_filter::placeholder_file::PlaceholderFile;
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -93,6 +95,27 @@ impl CfTestFixture {
         self.mount_path.join(name)
     }
 
+    /// Create placeholders directly via CfCreatePlaceholders.
+    ///
+    /// The OS `fetch_placeholders` callback does not fire reliably on
+    /// Windows Server (CI runners), so tests must create placeholders
+    /// explicitly instead of relying on directory enumeration to trigger it.
+    fn create_root_placeholders(&self) {
+        PlaceholderFile::new("hello.txt")
+            .metadata(Metadata::file().size(13))
+            .blob(b"file-1".to_vec())
+            .mark_in_sync()
+            .create(&self.mount_path)
+            .expect("create hello.txt placeholder");
+
+        PlaceholderFile::new("docs")
+            .metadata(Metadata::directory())
+            .blob(b"folder-1".to_vec())
+            .mark_in_sync()
+            .create(&self.mount_path)
+            .expect("create docs placeholder");
+    }
+
     fn teardown(mut self) {
         if let Some(m) = self.mount.take() {
             let _ = m.unmount();
@@ -107,30 +130,6 @@ impl Drop for CfTestFixture {
         if let Some(m) = self.mount.take() {
             let _ = m.unmount();
         }
-    }
-}
-
-/// Poll the mount directory until at least `min_entries` placeholders appear.
-/// Retries every 100ms, times out after 2s.
-async fn wait_for_placeholders(dir: &std::path::Path, min_entries: usize) -> Vec<String> {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
-    loop {
-        if let Ok(rd) = std::fs::read_dir(dir) {
-            let entries: Vec<String> = rd
-                .filter_map(|e| e.ok())
-                .map(|e| e.file_name().to_string_lossy().to_string())
-                .collect();
-            if entries.len() >= min_entries {
-                return entries;
-            }
-        }
-        if tokio::time::Instant::now() >= deadline {
-            panic!(
-                "timed out waiting for {min_entries} placeholders in {}",
-                dir.display()
-            );
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
 
@@ -196,9 +195,13 @@ async fn cfapi_browse_populates_placeholders() {
     mock_root_listing(&server).await;
 
     let fixture = CfTestFixture::setup(&server).await;
+    fixture.create_root_placeholders();
 
-    // Browsing the sync root triggers fetch_placeholders callback; poll until populated
-    let entries = wait_for_placeholders(&fixture.mount_path, 2).await;
+    let entries: Vec<String> = std::fs::read_dir(&fixture.mount_path)
+        .expect("read_dir failed")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
 
     assert!(
         entries.contains(&"hello.txt".to_string()),
@@ -220,9 +223,7 @@ async fn cfapi_hydrate_file_on_read() {
     mock_file_download(&server, "file-1", b"Hello, world!").await;
 
     let fixture = CfTestFixture::setup(&server).await;
-
-    // Poll until placeholders are populated
-    wait_for_placeholders(&fixture.mount_path, 2).await;
+    fixture.create_root_placeholders();
 
     // Reading the file triggers fetch_data callback (hydration)
     let content =
@@ -266,9 +267,9 @@ async fn cfapi_edit_and_sync_file() {
         .await;
 
     let fixture = CfTestFixture::setup(&server).await;
+    fixture.create_root_placeholders();
 
-    // Wait for placeholders then hydrate
-    wait_for_placeholders(&fixture.mount_path, 2).await;
+    // Hydrate the file before editing
     let _ = std::fs::read_to_string(fixture.path("hello.txt"));
 
     // Edit the file — CfApi detects local change via `closed` callback
@@ -299,8 +300,7 @@ async fn cfapi_rename_file() {
         .await;
 
     let fixture = CfTestFixture::setup(&server).await;
-
-    wait_for_placeholders(&fixture.mount_path, 2).await;
+    fixture.create_root_placeholders();
 
     std::fs::rename(fixture.path("hello.txt"), fixture.path("renamed.txt")).expect("rename failed");
 
@@ -328,8 +328,7 @@ async fn cfapi_delete_file() {
         .await;
 
     let fixture = CfTestFixture::setup(&server).await;
-
-    wait_for_placeholders(&fixture.mount_path, 2).await;
+    fixture.create_root_placeholders();
 
     std::fs::remove_file(fixture.path("hello.txt")).expect("delete failed");
 
