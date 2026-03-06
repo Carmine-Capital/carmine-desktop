@@ -246,6 +246,41 @@ impl CoreOps {
         }
     }
 
+    /// Truncate or extend a file to the given size.
+    pub fn truncate(&self, ino: u64, new_size: u64) -> VfsResult<()> {
+        let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
+        let new_size = new_size as usize;
+
+        let mut content = if new_size == 0 {
+            Vec::new()
+        } else {
+            self.rt
+                .block_on(self.cache.writeback.read(&self.drive_id, &item_id))
+                .or_else(|| {
+                    self.rt
+                        .block_on(self.cache.disk.get(&self.drive_id, &item_id))
+                })
+                .unwrap_or_default()
+        };
+
+        content.resize(new_size, 0);
+
+        self.rt
+            .block_on(
+                self.cache
+                    .writeback
+                    .write(&self.drive_id, &item_id, &content),
+            )
+            .map_err(|e| VfsError::IoError(format!("truncate writeback failed: {e}")))?;
+
+        if let Some(mut item) = self.lookup_item(ino) {
+            item.size = new_size as i64;
+            self.cache.memory.insert(ino, item);
+        }
+
+        Ok(())
+    }
+
     /// Write data to the writeback buffer at the given offset, returning bytes written.
     pub fn write_to_buffer(&self, ino: u64, offset: usize, data: &[u8]) -> VfsResult<u32> {
         let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;

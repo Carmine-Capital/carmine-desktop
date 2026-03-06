@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriveItem {
     pub id: String,
+    #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub size: i64,

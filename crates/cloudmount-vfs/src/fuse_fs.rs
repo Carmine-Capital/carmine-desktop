@@ -1,11 +1,12 @@
 use std::ffi::OsStr;
 use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fuser::{
-    Config, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo,
-    LockOwner, MountOption, OpenFlags, RenameFlags, ReplyAttr, ReplyCreate, ReplyData,
-    ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, WriteFlags,
+    BsdFileFlags, Config, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags,
+    Generation, INodeNo, LockOwner, MountOption, OpenFlags, RenameFlags, ReplyAttr, ReplyCreate,
+    ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow,
+    WriteFlags,
 };
 use tokio::runtime::Handle;
 
@@ -120,6 +121,40 @@ impl Filesystem for CloudMountFs {
             Some((inode, item)) => {
                 let attr = self.item_to_attr(inode, &item);
                 reply.entry(&TTL, &attr, Generation(0));
+            }
+            None => reply.error(Errno::ENOENT),
+        }
+    }
+
+    fn setattr(
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _mode: Option<u32>,
+        _uid: Option<u32>,
+        _gid: Option<u32>,
+        size: Option<u64>,
+        _atime: Option<TimeOrNow>,
+        _mtime: Option<TimeOrNow>,
+        _ctime: Option<SystemTime>,
+        _fh: Option<FileHandle>,
+        _crtime: Option<SystemTime>,
+        _chgtime: Option<SystemTime>,
+        _bkuptime: Option<SystemTime>,
+        _flags: Option<BsdFileFlags>,
+        reply: ReplyAttr,
+    ) {
+        if let Some(new_size) = size
+            && let Err(e) = self.ops.truncate(ino.0, new_size)
+        {
+            reply.error(Self::vfs_err_to_errno(e));
+            return;
+        }
+
+        match self.ops.lookup_item(ino.0) {
+            Some(item) => {
+                let attr = self.item_to_attr(ino.0, &item);
+                reply.attr(&TTL, &attr);
             }
             None => reply.error(Errno::ENOENT),
         }

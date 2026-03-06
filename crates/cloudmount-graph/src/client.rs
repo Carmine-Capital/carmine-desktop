@@ -232,11 +232,13 @@ impl GraphClient {
         let token = self.token().await?;
         let encoded_name = urlencoding::encode(name);
         let url = format!("{base_url}/drives/{drive_id}/items/{parent_id}:/{encoded_name}:/content");
+        let content_len = content.len();
         let resp = self
             .http
             .put(&url)
             .header(AUTHORIZATION, format!("Bearer {token}"))
             .header(CONTENT_TYPE, "application/octet-stream")
+            .header(reqwest::header::CONTENT_LENGTH, content_len)
             .body(content)
             .send()
             .await
