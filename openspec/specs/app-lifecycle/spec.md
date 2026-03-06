@@ -52,7 +52,11 @@ The system SHALL manage the lifecycle of filesystem mounts — starting, stoppin
 
 #### Scenario: Start mount
 - **WHEN** the system needs to mount a drive (after sign-in, on startup with valid tokens, or when a new mount is added)
-- **THEN** it creates the mount point directory if it does not exist, starts a FUSE or CfApi session for the drive, adds the drive to the delta sync timer's drive list, and sends a "Mount Ready" notification
+- **THEN** it resolves the drive root item from the Graph API, creates the mount point directory if it does not exist, starts a FUSE or CfApi session for the drive with the root inode pre-seeded, adds the drive to the delta sync timer's drive list, and sends a "Mount Ready" notification
+
+#### Scenario: Start mount failure — root resolution
+- **WHEN** the system attempts to start a mount but the drive root item cannot be fetched from the Graph API
+- **THEN** the mount is skipped, an error is logged with the drive name and reason, no notification is sent, and other mounts continue unaffected
 
 #### Scenario: Stop mount
 - **WHEN** the system needs to unmount a drive (on sign-out, mount removal, or application quit)
@@ -60,7 +64,7 @@ The system SHALL manage the lifecycle of filesystem mounts — starting, stoppin
 
 #### Scenario: Start all mounts after authentication
 - **WHEN** the user successfully authenticates or tokens are restored on startup
-- **THEN** the system starts mounts for all enabled mount configurations in order, skipping any with errors (invalid mount point, missing drive_id), and logs skipped mounts with the reason
+- **THEN** the system starts mounts for all enabled mount configurations in order, skipping any with errors (invalid mount point, missing drive_id, root resolution failure), and logs skipped mounts with the reason
 
 #### Scenario: Stop all mounts on sign-out
 - **WHEN** the user signs out

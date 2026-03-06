@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 
 use crate::fuse_fs::CloudMountFs;
-use crate::inode::InodeTable;
+use crate::inode::{InodeTable, ROOT_INODE};
 use cloudmount_cache::CacheManager;
 use cloudmount_graph::GraphClient;
 
@@ -28,6 +28,20 @@ impl MountHandle {
         mountpoint: &str,
         rt: Handle,
     ) -> cloudmount_core::Result<Self> {
+        let root_item = rt
+            .block_on(graph.get_item(&drive_id, "root"))
+            .map_err(|e| {
+                cloudmount_core::Error::Filesystem(format!(
+                    "failed to fetch root item for drive {drive_id}: {e}"
+                ))
+            })?;
+
+        inodes.set_root(&root_item.id);
+        cache.memory.insert(ROOT_INODE, root_item.clone());
+        cache
+            .sqlite
+            .upsert_item(ROOT_INODE, &drive_id, &root_item, None)?;
+
         let fs = CloudMountFs::new(
             graph.clone(),
             cache.clone(),

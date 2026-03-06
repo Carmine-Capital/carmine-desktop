@@ -66,7 +66,6 @@ impl CfTestFixture {
             Arc::new(CacheManager::new(cache_dir, db_path, 100_000_000, Some(300)).unwrap());
 
         let inodes = Arc::new(InodeTable::new());
-        inodes.set_root(ROOT_ITEM_ID);
 
         let rt = tokio::runtime::Handle::current();
         let mount =
@@ -104,7 +103,21 @@ impl Drop for CfTestFixture {
     }
 }
 
+async fn mock_root_item(server: &MockServer) {
+    Mock::given(method("GET"))
+        .and(path(format!("/drives/{DRIVE_ID}/items/root")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": ROOT_ITEM_ID,
+            "name": "root",
+            "size": 0,
+            "folder": { "childCount": 0 },
+        })))
+        .mount(server)
+        .await;
+}
+
 async fn mock_root_listing(server: &MockServer) {
+    mock_root_item(server).await;
     let children_path = format!("/drives/{DRIVE_ID}/items/{ROOT_ITEM_ID}/children");
 
     Mock::given(method("GET"))

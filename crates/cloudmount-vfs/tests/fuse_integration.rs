@@ -67,7 +67,6 @@ impl TestFixture {
             Arc::new(CacheManager::new(cache_dir, db_path, 100_000_000, Some(300)).unwrap());
 
         let inodes = Arc::new(InodeTable::new());
-        inodes.set_root(ROOT_ITEM_ID);
 
         let rt = tokio::runtime::Handle::current();
         let mount = MountHandle::mount(
@@ -110,7 +109,21 @@ impl Drop for TestFixture {
     }
 }
 
+async fn mock_root_item(server: &MockServer) {
+    Mock::given(method("GET"))
+        .and(path(format!("/drives/{DRIVE_ID}/items/root")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": ROOT_ITEM_ID,
+            "name": "root",
+            "size": 0,
+            "folder": { "childCount": 0 },
+        })))
+        .mount(server)
+        .await;
+}
+
 async fn mock_root_listing(server: &MockServer) {
+    mock_root_item(server).await;
     let children_path = format!("/drives/{DRIVE_ID}/items/{ROOT_ITEM_ID}/children");
 
     Mock::given(method("GET"))
@@ -135,6 +148,74 @@ async fn mock_file_download(server: &MockServer, item_id: &str, content: &[u8]) 
         )
         .mount(server)
         .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires FUSE"]
+async fn mount_initializes_root_inode_from_graph() {
+    let server = MockServer::start().await;
+    mock_root_item(&server).await;
+
+    let fixture = TestFixture::setup(&server).await;
+
+    // getattr on the mountpoint root should succeed (ROOT_INODE is initialized)
+    let meta = std::fs::metadata(&fixture.mountpoint).expect("getattr on root inode failed");
+    assert!(meta.is_dir());
+
+    fixture.teardown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires FUSE"]
+async fn mount_fails_when_root_fetch_returns_error() {
+    let server = MockServer::start().await;
+
+    // Mock root fetch to return 500
+    Mock::given(method("GET"))
+        .and(path(format!("/drives/{DRIVE_ID}/items/root")))
+        .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+            "error": { "code": "internalServerError", "message": "server error" }
+        })))
+        .mount(&server)
+        .await;
+
+    let base = std::env::temp_dir().join(format!(
+        "cloudmount-vfs-fail-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let cache_dir = base.join("cache");
+    let db_path = base.join("metadata.db");
+    let mountpoint = base.join("mnt");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    std::fs::create_dir_all(&mountpoint).unwrap();
+
+    let graph = Arc::new(cloudmount_graph::GraphClient::with_base_url(
+        server.uri(),
+        || async { Ok("test-token".to_string()) },
+    ));
+    let cache = Arc::new(cloudmount_cache::CacheManager::new(
+        cache_dir,
+        db_path,
+        100_000_000,
+        Some(300),
+    ).unwrap());
+    let inodes = Arc::new(InodeTable::new());
+    let rt = tokio::runtime::Handle::current();
+
+    let result = cloudmount_vfs::MountHandle::mount(
+        graph,
+        cache,
+        inodes,
+        DRIVE_ID.to_string(),
+        mountpoint.to_str().unwrap(),
+        rt,
+    );
+
+    assert!(result.is_err(), "mount should fail when root fetch fails");
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 #[tokio::test(flavor = "multi_thread")]

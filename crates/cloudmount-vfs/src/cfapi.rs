@@ -18,7 +18,7 @@ use nt_time::FileTime;
 use tokio::runtime::Handle;
 
 use crate::core_ops::CoreOps;
-use crate::inode::InodeTable;
+use crate::inode::{InodeTable, ROOT_INODE};
 use cloudmount_cache::CacheManager;
 use cloudmount_core::types::DriveItem;
 use cloudmount_graph::GraphClient;
@@ -435,6 +435,20 @@ impl CfMountHandle {
         if !is_registered {
             register_sync_root(&sync_root_id, mount_path)?;
         }
+
+        let root_item = rt
+            .block_on(graph.get_item(&drive_id, "root"))
+            .map_err(|e| {
+                cloudmount_core::Error::Filesystem(format!(
+                    "failed to fetch root item for drive {drive_id}: {e}"
+                ))
+            })?;
+
+        inodes.set_root(&root_item.id);
+        cache.memory.insert(ROOT_INODE, root_item.clone());
+        cache
+            .sqlite
+            .upsert_item(ROOT_INODE, &drive_id, &root_item, None)?;
 
         let filter = CloudMountCfFilter::new(
             graph.clone(),

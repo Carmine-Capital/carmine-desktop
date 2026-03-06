@@ -235,6 +235,28 @@ async fn search_sites_returns_results() {
 }
 
 #[tokio::test]
+async fn get_item_root_alias_hits_correct_endpoint() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/drives/d1/items/root"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "actual-root-id",
+            "name": "root",
+            "size": 0,
+            "folder": { "childCount": 5 },
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let item = client.get_item("d1", "root").await.unwrap();
+
+    assert_eq!(item.id, "actual-root-id");
+    assert!(item.is_folder());
+}
+
+#[tokio::test]
 async fn error_404_returns_graph_api_error() {
     let server = MockServer::start().await;
 
