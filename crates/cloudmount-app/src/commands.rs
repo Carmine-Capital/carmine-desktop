@@ -238,16 +238,16 @@ pub fn toggle_mount(app: AppHandle, id: String) -> Result<Option<bool>, String> 
 
     rebuild_effective_config(&app)?;
 
-    if state.authenticated.load(Ordering::Relaxed) {
-        if let Some(enabled) = result {
-            if enabled {
-                let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-                if let Some(mount_config) = config.mounts.iter().find(|m| m.id == id) {
-                    let _ = crate::start_mount(&app, mount_config);
-                }
-            } else {
-                let _ = crate::stop_mount(&app, &id);
+    if state.authenticated.load(Ordering::Relaxed)
+        && let Some(enabled) = result
+    {
+        if enabled {
+            let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+            if let Some(mount_config) = config.mounts.iter().find(|m| m.id == id) {
+                let _ = crate::start_mount(&app, mount_config);
             }
+        } else {
+            let _ = crate::stop_mount(&app, &id);
         }
     }
 
@@ -273,6 +273,7 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsInfo, String> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn save_settings(
     app: AppHandle,
     auto_start: Option<bool>,

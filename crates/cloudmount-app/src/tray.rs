@@ -15,7 +15,7 @@ pub fn setup(app: &AppHandle, app_name: &str) -> tauri::Result<()> {
     let settings_item = MenuItemBuilder::with_id("settings", "Settings\u{2026}").build(app)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let signout_item = MenuItemBuilder::with_id("sign_out", "Sign Out").build(app)?;
-    let quit_item = MenuItemBuilder::with_id("quit", &format!("Quit {app_name}")).build(app)?;
+    let quit_item = MenuItemBuilder::with_id("quit", format!("Quit {app_name}")).build(app)?;
 
     let menu = MenuBuilder::new(app)
         .items(&[&open_item, &settings_item, &sep, &signout_item, &quit_item])
@@ -166,7 +166,7 @@ pub fn update_tray_menu(app: &AppHandle) {
         builder = builder.item(&sep2);
 
         let sign_out = MenuItemBuilder::with_id("sign_out", "Sign Out").build(app)?;
-        let quit = MenuItemBuilder::with_id("quit", &format!("Quit {app_name}")).build(app)?;
+        let quit = MenuItemBuilder::with_id("quit", format!("Quit {app_name}")).build(app)?;
         builder = builder.item(&sign_out).item(&quit);
 
         let menu = builder.build()?;

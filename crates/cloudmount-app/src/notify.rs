@@ -20,9 +20,8 @@ pub fn auth_expired(app: &AppHandle) {
 }
 
 fn send(app: &AppHandle, title: &str, body: &str) {
-    if let Ok(notification) = app.notification().builder().title(title).body(body).show() {
-        let _ = notification;
-    } else {
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+        let _ = e;
         tracing::warn!("failed to send notification: {title}");
     }
 }
