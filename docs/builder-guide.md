@@ -26,6 +26,12 @@ Build and distribute pre-configured CloudMount installers for your organization.
 
 ### Configure defaults
 
+Copy the template and edit it:
+
+```bash
+cp build/defaults.toml.example build/defaults.toml
+```
+
 Edit `build/defaults.toml`:
 
 ```toml
@@ -85,3 +91,9 @@ When using the GitHub Actions workflow, pass mounts as a JSON array:
 2. **Pre-configured build**: User sees a simplified wizard — branded welcome → sign in → all mounts auto-activated → done
 
 Users can always add more mounts or change settings after the initial setup.
+
+## Config Overlay Pattern
+
+For automated CI builds without forking, see the [Org Build Guide](org-build-guide.md). This pattern uses a small private repo with just your `defaults.toml` and CI config — no source code to maintain.
+
+Build-time environment variables (`CLOUDMOUNT_CLIENT_ID`, `CLOUDMOUNT_TENANT_ID`, `CLOUDMOUNT_APP_NAME`) can also inject values directly via `option_env!()`, useful for CI pipelines that manage secrets natively.
