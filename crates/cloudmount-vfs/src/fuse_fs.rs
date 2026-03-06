@@ -5,8 +5,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use fuser::{
     BsdFileFlags, Config, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags,
     Generation, INodeNo, LockOwner, MountOption, OpenFlags, RenameFlags, ReplyAttr, ReplyCreate,
-    ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow,
-    WriteFlags,
+    ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request,
+    TimeOrNow, WriteFlags,
 };
 use tokio::runtime::Handle;
 
@@ -343,6 +343,14 @@ impl Filesystem for CloudMountFs {
             Ok(()) => reply.ok(),
             Err(e) => reply.error(Self::vfs_err_to_errno(e)),
         }
+    }
+
+    fn statfs(&self, _req: &Request, _ino: INodeNo, reply: ReplyStatfs) {
+        // Report large free space; real quota could be fetched from Drive.quota in the future
+        let blocks = 1 << 30; // ~1 PB at 1K blocks
+        let bfree = blocks;
+        let bavail = blocks;
+        reply.statfs(blocks, bfree, bavail, 0, 0, BLOCK_SIZE, 255, BLOCK_SIZE);
     }
 
     fn rename(
