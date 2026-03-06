@@ -230,7 +230,8 @@ impl GraphClient {
     ) -> cloudmount_core::Result<DriveItem> {
         let base_url = &self.base_url;
         let token = self.token().await?;
-        let url = format!("{base_url}/drives/{drive_id}/items/{parent_id}:/{name}:/content");
+        let encoded_name = urlencoding::encode(name);
+        let url = format!("{base_url}/drives/{drive_id}/items/{parent_id}:/{encoded_name}:/content");
         let resp = self
             .http
             .put(&url)
