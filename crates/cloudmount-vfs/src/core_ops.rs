@@ -581,7 +581,7 @@ impl CoreOps {
         }
 
         self.cache.memory.invalidate(child_ino);
-        self.cache.memory.invalidate(parent_ino);
+        self.invalidate_parent(parent_ino);
         self.inodes.remove_by_item_id(&item_id);
         let _ = self.cache.sqlite.delete_item(&item_id);
 
@@ -610,6 +610,19 @@ impl CoreOps {
             )
         };
 
+        // POSIX rename replaces destination if it exists
+        if let Some((existing_ino, existing_item)) = self.find_child(new_parent_ino, new_name)
+            && existing_item.id != item_id
+        {
+            if !existing_item.id.starts_with("local:") {
+                let _ = self.rt.block_on(
+                    self.graph
+                        .delete_item(&self.drive_id, &existing_item.id),
+                );
+            }
+            self.cleanup_deleted_item(&existing_item.id, existing_ino, new_parent_ino);
+        }
+
         if !item_id.starts_with("local:") {
             let updated_item = self
                 .rt
@@ -633,17 +646,24 @@ impl CoreOps {
             self.cache.memory.insert(child_ino, updated);
         }
 
-        self.cache.memory.invalidate(parent_ino);
+        self.invalidate_parent(parent_ino);
         if parent_ino != new_parent_ino {
-            self.cache.memory.invalidate(new_parent_ino);
+            self.invalidate_parent(new_parent_ino);
         }
 
         Ok(())
     }
 
+    /// Invalidate a parent directory's children in both memory and SQLite caches,
+    /// forcing the next listing to refresh from the Graph API.
+    fn invalidate_parent(&self, parent_ino: u64) {
+        self.cache.memory.invalidate(parent_ino);
+        let _ = self.cache.sqlite.delete_children(parent_ino);
+    }
+
     fn cleanup_deleted_item(&self, item_id: &str, ino: u64, parent_ino: u64) {
         self.cache.memory.invalidate(ino);
-        self.cache.memory.invalidate(parent_ino);
+        self.invalidate_parent(parent_ino);
         self.inodes.remove_by_item_id(item_id);
         let _ = self.cache.sqlite.delete_item(item_id);
         let _ = self

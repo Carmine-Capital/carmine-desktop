@@ -171,6 +171,16 @@ impl SqliteStore {
         Ok(children)
     }
 
+    pub fn delete_children(&self, parent_inode: u64) -> cloudmount_core::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM items WHERE parent_inode = ?1",
+            params![parent_inode as i64],
+        )
+        .map_err(|e| cloudmount_core::Error::Cache(format!("delete children failed: {e}")))?;
+        Ok(())
+    }
+
     pub fn delete_item(&self, item_id: &str) -> cloudmount_core::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM items WHERE item_id = ?1", params![item_id])
