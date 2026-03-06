@@ -867,7 +867,10 @@ fn run_headless(
         });
 
         // Start mounts
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let mut drive_ids: Vec<String> = Vec::new();
+        #[cfg(target_os = "windows")]
+        let drive_ids: Vec<String> = Vec::new();
 
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let mut mount_handles: Vec<MountHandle> = Vec::new();
@@ -879,16 +882,17 @@ fn run_headless(
             .cloned()
             .collect();
 
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let rt_handle = tokio::runtime::Handle::current();
 
         for mount_config in &mounts_config {
-            let drive_id = match mount_config.drive_id.as_deref() {
-                Some(d) => d,
-                None => {
-                    tracing::error!("mount '{}' has no drive_id, skipping", mount_config.name);
-                    continue;
-                }
-            };
+            if mount_config.drive_id.is_none() {
+                tracing::error!("mount '{}' has no drive_id, skipping", mount_config.name);
+                continue;
+            }
+
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let drive_id = mount_config.drive_id.as_deref().unwrap();
 
             let mountpoint = expand_mount_point(&mount_config.mount_point);
             if let Err(e) = std::fs::create_dir_all(&mountpoint) {
