@@ -29,10 +29,10 @@ pub async fn check_for_update(app: &AppHandle) -> Result<Option<String>, String>
     use tauri::Manager;
 
     // If an update is already pending, skip
-    if let Some(state) = app.try_state::<UpdateState>() {
-        if state.pending_version.lock().unwrap().is_some() {
-            return Ok(None);
-        }
+    if let Some(state) = app.try_state::<UpdateState>()
+        && state.pending_version.lock().unwrap().is_some()
+    {
+        return Ok(None);
     }
 
     let updater = app.updater().map_err(|e| e.to_string())?;
@@ -122,10 +122,10 @@ pub async fn handle_manual_check(app: &AppHandle) {
     use tauri::Manager;
 
     // If already pending, do nothing — tray already shows "Restart to Update"
-    if let Some(state) = app.try_state::<UpdateState>() {
-        if state.pending_version.lock().unwrap().is_some() {
-            return;
-        }
+    if let Some(state) = app.try_state::<UpdateState>()
+        && state.pending_version.lock().unwrap().is_some()
+    {
+        return;
     }
 
     // Try to create the updater — fails if endpoints/pubkey are not configured
@@ -153,9 +153,9 @@ pub async fn handle_manual_check(app: &AppHandle) {
 pub fn cancel_checker(app: &AppHandle) {
     use tauri::Manager;
 
-    if let Some(state) = app.try_state::<UpdateState>() {
-        if let Some(cancel) = state.cancel.lock().unwrap().take() {
-            cancel.cancel();
-        }
+    if let Some(state) = app.try_state::<UpdateState>()
+        && let Some(cancel) = state.cancel.lock().unwrap().take()
+    {
+        cancel.cancel();
     }
 }
