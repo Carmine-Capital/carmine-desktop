@@ -360,6 +360,7 @@ fn run_desktop(
             Ok(())
         })
         .on_window_event(|window, event| {
+            use tauri::Manager;
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "wizard" {
                     if let Some(state) = window.app_handle().try_state::<AppState>() {

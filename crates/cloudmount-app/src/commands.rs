@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager};
 
 use cloudmount_cache::sync::run_delta_sync;
 use cloudmount_core::config::{
-    AccountMetadata, EffectiveConfig, MountConfig, PackagedDefaults, UserConfig, config_file_path,
+    AccountMetadata, EffectiveConfig, config_file_path,
     derive_mount_point, expand_mount_point,
 };
 
@@ -93,7 +93,7 @@ pub async fn sign_in(app: AppHandle) -> Result<(), String> {
 
     rebuild_effective_config(&app)?;
     crate::start_all_mounts(&app);
-    crate::run_crash_recovery(&app).await;
+    crate::run_crash_recovery(&app);
     crate::start_delta_sync(&app);
 
     state.authenticated.store(true, Ordering::Relaxed);
@@ -154,7 +154,7 @@ pub fn list_mounts(app: AppHandle) -> Result<Vec<MountInfo>, String> {
 #[tauri::command]
 pub fn add_mount(
     app: AppHandle,
-    name: String,
+    _name: String,
     mount_type: String,
     mount_point: String,
     drive_id: Option<String>,
