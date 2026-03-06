@@ -2,13 +2,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use cloud_filter::CResult;
-use cloud_filter::error::CloudErrorKind;
-use cloud_filter::filter::{SyncFilter, info, ticket};
+use cloud_filter::error::{CResult, CloudErrorKind};
+use cloud_filter::filter::{Request, SyncFilter, info, ticket};
 use cloud_filter::metadata::Metadata;
 use cloud_filter::placeholder::{Placeholder, UpdateOptions};
 use cloud_filter::placeholder_file::PlaceholderFile;
-use cloud_filter::request::Request;
 use cloud_filter::root::{
     Connection, HydrationType, PopulationType, SecurityId, Session, SyncRootId, SyncRootIdBuilder,
     SyncRootInfo,
