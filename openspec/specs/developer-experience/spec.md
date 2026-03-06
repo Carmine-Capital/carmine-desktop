@@ -140,13 +140,9 @@ The repository SHALL track `build/defaults.toml.example` as a template and gitig
 ### Requirement: Org build guide
 The repository SHALL include `docs/org-build-guide.md` with instructions for setting up a private config overlay repo that builds org-branded CloudMount binaries.
 
-#### Scenario: Setting up a GitLab org build
-- **WHEN** an org admin reads `docs/org-build-guide.md`
-- **THEN** they find step-by-step instructions for: creating a private GitLab repo with `defaults.toml` and `.gitlab-ci.yml`, configuring CI variables (CLIENT_ID masked, TENANT_ID, APP_NAME), and the CI pipeline that clones the public repo at a pinned version, injects config, and builds
-
 #### Scenario: Setting up a GitHub org build
 - **WHEN** an org admin reads `docs/org-build-guide.md`
-- **THEN** they find equivalent instructions using a private GitHub repo with `.github/workflows/build.yml` and GitHub Secrets/Variables
+- **THEN** they find step-by-step instructions for: creating a private GitHub repo with `defaults.toml` and `.github/workflows/build.yml`, configuring Secrets (CLIENT_ID) and Variables (TENANT_ID, APP_NAME, VERSION), and the workflow that clones the public repo at a pinned version, injects config, and builds
 
 #### Scenario: Updating to a new CloudMount version
 - **WHEN** the org admin wants to update to a new CloudMount release
