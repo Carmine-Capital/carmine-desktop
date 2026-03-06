@@ -214,6 +214,14 @@ impl CoreOps {
     pub fn read_content(&self, ino: u64) -> VfsResult<Vec<u8>> {
         let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
 
+        // Check writeback buffer first (pending local writes)
+        if let Some(content) = self
+            .rt
+            .block_on(self.cache.writeback.read(&self.drive_id, &item_id))
+        {
+            return Ok(content);
+        }
+
         if let Some(content) = self
             .rt
             .block_on(self.cache.disk.get(&self.drive_id, &item_id))
