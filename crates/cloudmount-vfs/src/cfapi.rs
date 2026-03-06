@@ -73,15 +73,15 @@ impl CloudMountCfFilter {
 
         let mut meta = base.size(item.size as u64);
 
-        if let Some(mtime) = item.last_modified {
-            if let Ok(ft) = FileTime::try_from(mtime) {
-                meta = meta.written(ft).changed(ft);
-            }
+        if let Some(mtime) = item.last_modified
+            && let Ok(ft) = FileTime::try_from(mtime)
+        {
+            meta = meta.written(ft).changed(ft);
         }
-        if let Some(ctime) = item.created {
-            if let Ok(ft) = FileTime::try_from(ctime) {
-                meta = meta.created(ft);
-            }
+        if let Some(ctime) = item.created
+            && let Ok(ft) = FileTime::try_from(ctime)
+        {
+            meta = meta.created(ft);
         }
 
         meta
