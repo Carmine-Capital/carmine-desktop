@@ -421,7 +421,6 @@ pub struct CfMountHandle {
     cache: Arc<CacheManager>,
     graph: Arc<GraphClient>,
     drive_id: String,
-    account_name: String,
     rt: Handle,
     mount_path: PathBuf,
 }
@@ -483,7 +482,6 @@ impl CfMountHandle {
             cache,
             graph,
             drive_id,
-            account_name,
             rt,
             mount_path: mount_path.to_path_buf(),
         })
