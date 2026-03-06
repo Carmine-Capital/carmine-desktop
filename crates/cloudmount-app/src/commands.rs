@@ -153,7 +153,6 @@ pub fn list_mounts(app: AppHandle) -> Result<Vec<MountInfo>, String> {
 #[tauri::command]
 pub fn add_mount(
     app: AppHandle,
-    _name: String,
     mount_type: String,
     mount_point: String,
     drive_id: Option<String>,
@@ -194,14 +193,14 @@ pub fn add_mount(
 
     rebuild_effective_config(&app)?;
 
-    if state.authenticated.load(Ordering::Relaxed) {
-        if let Some(id) = &mount_id {
-            let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-            if let Some(mount_config) = config.mounts.iter().find(|m| &m.id == id) {
-                if let Err(e) = crate::start_mount(&app, mount_config) {
-                    tracing::error!("failed to start new mount: {e}");
-                }
-            }
+    if state.authenticated.load(Ordering::Relaxed)
+        && let Some(id) = &mount_id
+    {
+        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+        if let Some(mount_config) = config.mounts.iter().find(|m| &m.id == id)
+            && let Err(e) = crate::start_mount(&app, mount_config)
+        {
+            tracing::error!("failed to start new mount: {e}");
         }
     }
 
