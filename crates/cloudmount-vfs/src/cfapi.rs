@@ -448,10 +448,10 @@ impl CfMountHandle {
         }
 
         let root_item = block_on_compat(&rt, graph.get_item(&drive_id, "root")).map_err(|e| {
-                cloudmount_core::Error::Filesystem(format!(
-                    "failed to fetch root item for drive {drive_id}: {e}"
-                ))
-            })?;
+            cloudmount_core::Error::Filesystem(format!(
+                "failed to fetch root item for drive {drive_id}: {e}"
+            ))
+        })?;
 
         inodes.set_root(&root_item.id);
         cache.memory.insert(ROOT_INODE, root_item.clone());
