@@ -14,6 +14,7 @@ use cloud_filter::root::{
 use cloud_filter::utility::WriteAt;
 use nt_time::FileTime;
 use tokio::runtime::Handle;
+use tokio::task::block_in_place;
 
 use crate::core_ops::CoreOps;
 use crate::inode::{InodeTable, ROOT_INODE};
@@ -357,6 +358,18 @@ impl SyncFilter for CloudMountCfFilter {
     }
 }
 
+/// Bridge async code from a context that may or may not already be inside a Tokio runtime.
+///
+/// - Inside an async context (e.g. tests): uses [`block_in_place`] + [`Handle::block_on`]
+///   to avoid the "cannot start a runtime from within a runtime" panic.
+/// - Outside a runtime (e.g. OS CfApi worker threads): uses plain [`Handle::block_on`].
+fn block_on_compat<F: std::future::Future>(rt: &Handle, f: F) -> F::Output {
+    match Handle::try_current() {
+        Ok(_) => block_in_place(|| rt.block_on(f)),
+        Err(_) => rt.block_on(f),
+    }
+}
+
 fn build_sync_root_id() -> cloudmount_core::Result<SyncRootId> {
     let sid = SecurityId::current_user().map_err(|e| {
         cloudmount_core::Error::Filesystem(format!("failed to get user SID: {e:?}"))
@@ -434,9 +447,7 @@ impl CfMountHandle {
             register_sync_root(&sync_root_id, mount_path)?;
         }
 
-        let root_item = rt
-            .block_on(graph.get_item(&drive_id, "root"))
-            .map_err(|e| {
+        let root_item = block_on_compat(&rt, graph.get_item(&drive_id, "root")).map_err(|e| {
                 cloudmount_core::Error::Filesystem(format!(
                     "failed to fetch root item for drive {drive_id}: {e}"
                 ))
@@ -498,7 +509,7 @@ impl CfMountHandle {
     }
 
     fn flush_pending(&self) {
-        let pending = match self.rt.block_on(self.cache.writeback.list_pending()) {
+        let pending = match block_on_compat(&self.rt, self.cache.writeback.list_pending()) {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!("failed to list pending writes on unmount: {e}");
@@ -525,7 +536,7 @@ impl CfMountHandle {
         let cache = self.cache.clone();
         let drive_id = self.drive_id.clone();
 
-        let flush_result = self.rt.block_on(async {
+        let flush_result = block_on_compat(&self.rt, async {
             tokio::time::timeout(UNMOUNT_FLUSH_TIMEOUT, async {
                 for (_, item_id) in &drive_pending {
                     if let Some(content) = cache.writeback.read(&drive_id, item_id).await {
