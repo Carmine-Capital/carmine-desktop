@@ -7,8 +7,7 @@ use tauri::{AppHandle, Manager};
 
 use cloudmount_cache::sync::run_delta_sync;
 use cloudmount_core::config::{
-    AccountMetadata, EffectiveConfig, config_file_path,
-    derive_mount_point, expand_mount_point,
+    AccountMetadata, EffectiveConfig, config_file_path, derive_mount_point, expand_mount_point,
 };
 
 use crate::AppState;
