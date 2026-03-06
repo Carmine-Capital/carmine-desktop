@@ -30,11 +30,12 @@ fn generate_pkce() -> (String, String) {
     (verifier, challenge)
 }
 
+/// Returns `(code, verifier, actual_port)`.
 pub async fn run_pkce_flow(
     client_id: &str,
     tenant_id: Option<&str>,
     port: u16,
-) -> cloudmount_core::Result<(String, String)> {
+) -> cloudmount_core::Result<(String, String, u16)> {
     let (verifier, challenge) = generate_pkce();
 
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
@@ -81,7 +82,7 @@ pub async fn run_pkce_flow(
 
     let code = wait_for_callback(listener).await?;
 
-    Ok((code, verifier))
+    Ok((code, verifier, actual_port))
 }
 
 async fn wait_for_callback(listener: tokio::net::TcpListener) -> cloudmount_core::Result<String> {

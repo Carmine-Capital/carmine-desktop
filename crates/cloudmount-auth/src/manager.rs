@@ -70,8 +70,8 @@ impl AuthManager {
     }
 
     pub async fn sign_in(&self) -> cloudmount_core::Result<()> {
-        let (code, _verifier) = self.authorize().await?;
-        self.exchange_code(&code, &_verifier).await
+        let (code, verifier, actual_port) = self.authorize().await?;
+        self.exchange_code(&code, &verifier, actual_port).await
     }
 
     pub async fn sign_out(&self) -> cloudmount_core::Result<()> {
@@ -87,7 +87,7 @@ impl AuthManager {
         Ok(())
     }
 
-    async fn authorize(&self) -> cloudmount_core::Result<(String, String)> {
+    async fn authorize(&self) -> cloudmount_core::Result<(String, String, u16)> {
         crate::oauth::run_pkce_flow(
             &self.client_id,
             self.tenant_id.as_deref(),
@@ -96,13 +96,18 @@ impl AuthManager {
         .await
     }
 
-    async fn exchange_code(&self, code: &str, verifier: &str) -> cloudmount_core::Result<()> {
+    async fn exchange_code(
+        &self,
+        code: &str,
+        verifier: &str,
+        actual_port: u16,
+    ) -> cloudmount_core::Result<()> {
         let tokens = crate::oauth::exchange_code(
             &self.client_id,
             self.tenant_id.as_deref(),
             code,
             verifier,
-            self.redirect_port,
+            actual_port,
         )
         .await?;
 
