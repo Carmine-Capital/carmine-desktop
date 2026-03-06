@@ -200,6 +200,14 @@ impl SqliteStore {
         Ok(())
     }
 
+    pub fn max_inode(&self) -> cloudmount_core::Result<u64> {
+        let conn = self.conn.lock().unwrap();
+        let max: Option<i64> = conn
+            .query_row("SELECT MAX(inode) FROM items", [], |row| row.get(0))
+            .map_err(|e| cloudmount_core::Error::Cache(format!("max inode query failed: {e}")))?;
+        Ok(max.unwrap_or(0) as u64)
+    }
+
     pub fn clear(&self) -> cloudmount_core::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch("DELETE FROM items; DELETE FROM delta_tokens; DELETE FROM sync_state;")

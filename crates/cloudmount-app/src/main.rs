@@ -212,7 +212,8 @@ fn init_components(
             }),
     );
 
-    let inodes = Arc::new(InodeTable::new());
+    let max_inode = cache.sqlite.max_inode().unwrap_or(0);
+    let inodes = Arc::new(InodeTable::new_starting_after(max_inode));
 
     Components {
         auth,
@@ -692,6 +693,13 @@ fn run_crash_recovery(app: &tauri::AppHandle) {
         tracing::info!("crash recovery: {} pending writes found", pending.len());
 
         for (drive_id, item_id) in &pending {
+            // local:* files have no server-side metadata — unrecoverable after restart
+            if item_id.starts_with("local:") {
+                let _ = cache.writeback.remove(drive_id, item_id).await;
+                tracing::warn!("crash recovery: discarded unrecoverable local file {drive_id}/{item_id}");
+                continue;
+            }
+
             let content = match cache.writeback.read(drive_id, item_id).await {
                 Some(c) => c,
                 None => continue,
@@ -847,6 +855,12 @@ fn run_headless(
                 Ok(pending) if !pending.is_empty() => {
                     tracing::info!("crash recovery: {} pending writes found", pending.len());
                     for (drive_id, item_id) in &pending {
+                        // local:* files have no server-side metadata — unrecoverable after restart
+                        if item_id.starts_with("local:") {
+                            let _ = recovery_cache.writeback.remove(drive_id, item_id).await;
+                            tracing::warn!("crash recovery: discarded unrecoverable local file {drive_id}/{item_id}");
+                            continue;
+                        }
                         if let Some(content) =
                             recovery_cache.writeback.read(drive_id, item_id).await
                         {
@@ -1029,6 +1043,10 @@ fn run_headless(
                                             pending.len()
                                         );
                                         for (drive_id, item_id) in &pending {
+                                            if item_id.starts_with("local:") {
+                                                let _ = rc.writeback.remove(drive_id, item_id).await;
+                                                continue;
+                                            }
                                             if let Some(content) =
                                                 rc.writeback.read(drive_id, item_id).await
                                             {

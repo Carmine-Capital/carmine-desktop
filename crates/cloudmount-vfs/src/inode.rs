@@ -19,6 +19,18 @@ impl InodeTable {
         }
     }
 
+    /// Create a new InodeTable with the counter starting after `max_existing`.
+    /// Use this when resuming from persistent storage (e.g. SQLite) to avoid
+    /// inode collisions with previously persisted entries.
+    pub fn new_starting_after(max_existing: u64) -> Self {
+        let start = max_existing.max(ROOT_INODE) + 1;
+        Self {
+            next_inode: AtomicU64::new(start),
+            inode_to_item: RwLock::new(HashMap::new()),
+            item_to_inode: RwLock::new(HashMap::new()),
+        }
+    }
+
     pub fn allocate(&self, item_id: &str) -> u64 {
         if let Some(&inode) = self.item_to_inode.read().unwrap().get(item_id) {
             return inode;
