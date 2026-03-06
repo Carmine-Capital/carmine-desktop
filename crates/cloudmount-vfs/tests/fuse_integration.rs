@@ -196,12 +196,9 @@ async fn mount_fails_when_root_fetch_returns_error() {
         server.uri(),
         || async { Ok("test-token".to_string()) },
     ));
-    let cache = Arc::new(cloudmount_cache::CacheManager::new(
-        cache_dir,
-        db_path,
-        100_000_000,
-        Some(300),
-    ).unwrap());
+    let cache = Arc::new(
+        cloudmount_cache::CacheManager::new(cache_dir, db_path, 100_000_000, Some(300)).unwrap(),
+    );
     let inodes = Arc::new(InodeTable::new());
     let rt = tokio::runtime::Handle::current();
 
