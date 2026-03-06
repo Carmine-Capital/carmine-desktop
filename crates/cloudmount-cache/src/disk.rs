@@ -176,12 +176,7 @@ impl DiskCache {
                     cloudmount_core::Error::Cache(format!("eviction query failed: {e}"))
                 })?;
 
-            let mut entries = Vec::new();
-            for row in rows {
-                if let Ok(entry) = row {
-                    entries.push(entry);
-                }
-            }
+            let entries: Vec<_> = rows.flatten().collect();
             entries
         };
 

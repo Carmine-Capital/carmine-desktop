@@ -9,15 +9,13 @@ const GRAPH_BASE: &str = "https://graph.microsoft.com/v1.0";
 const UPLOAD_CHUNK_SIZE: usize = 10 * 1024 * 1024;
 const SMALL_FILE_LIMIT: usize = 4 * 1024 * 1024;
 
+type TokenFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = cloudmount_core::Result<String>> + Send>>;
+
 pub struct GraphClient {
     http: Client,
     base_url: String,
-    token_fn: Box<
-        dyn Fn() -> std::pin::Pin<
-                Box<dyn std::future::Future<Output = cloudmount_core::Result<String>> + Send>,
-            > + Send
-            + Sync,
-    >,
+    token_fn: Box<dyn Fn() -> TokenFuture + Send + Sync>,
 }
 
 impl GraphClient {

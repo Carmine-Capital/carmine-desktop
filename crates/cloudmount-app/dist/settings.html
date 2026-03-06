@@ -175,7 +175,14 @@
     async function signOut() {
       try { await invoke('sign_out'); } catch (e) { console.error(e); }
     }
-    function clearCache() { /* TODO: wire cache clear command */ }
+    async function clearCache() {
+      try {
+        await invoke('clear_cache');
+        alert('Cache cleared successfully.');
+      } catch (e) {
+        alert('Failed to clear cache: ' + e);
+      }
+    }
 
     loadSettings();
     loadMounts();

@@ -17,7 +17,25 @@ pub fn store_tokens(account_id: &str, tokens: &TokenResponse) -> cloudmount_core
 
     match keyring::Entry::new(SERVICE_NAME, account_id) {
         Ok(entry) => match entry.set_password(&serialized) {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                // Verify with a fresh entry to catch backends that cache in-memory
+                // but don't actually persist (e.g., kernel keyutils, locked collections)
+                let verified =
+                    keyring::Entry::new(SERVICE_NAME, account_id).and_then(|e| e.get_password());
+                match verified {
+                    Ok(ref readback) if readback == &serialized => return Ok(()),
+                    Ok(_) => {
+                        tracing::warn!(
+                            "keychain verify failed (data mismatch), using encrypted file fallback"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "keychain verify failed ({e}), using encrypted file fallback"
+                        );
+                    }
+                }
+            }
             Err(e) => {
                 tracing::warn!("keychain unavailable ({e}), using encrypted file fallback");
             }

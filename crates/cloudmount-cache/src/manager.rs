@@ -34,4 +34,11 @@ impl CacheManager {
             writeback,
         })
     }
+
+    pub async fn clear(&self) -> cloudmount_core::Result<()> {
+        self.memory.clear();
+        self.sqlite.clear()?;
+        self.disk.clear().await?;
+        Ok(())
+    }
 }

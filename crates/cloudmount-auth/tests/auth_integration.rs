@@ -65,14 +65,14 @@ fn token_expiry_detection() {
     // given: token expires in 3min (within 5min buffer)
     let expires_soon = now + Duration::minutes(3);
     assert!(
-        !(now + buffer < expires_soon),
+        now + buffer >= expires_soon,
         "token expiring in 3min should be considered near-expiry"
     );
 
     // given: token expires in exactly 5min (boundary)
     let expires_at_boundary = now + Duration::minutes(5);
     assert!(
-        !(now + buffer < expires_at_boundary),
+        now + buffer >= expires_at_boundary,
         "token expiring in exactly 5min should be considered near-expiry"
     );
 
@@ -86,7 +86,7 @@ fn token_expiry_detection() {
     // given: token already expired
     let already_expired = now - Duration::minutes(1);
     assert!(
-        !(now + buffer < already_expired),
+        now + buffer >= already_expired,
         "already-expired token should be detected"
     );
 
@@ -134,4 +134,27 @@ fn pkce_verifier_challenge_validity() {
         challenge, recomputed,
         "challenge must equal SHA256(verifier)"
     );
+}
+
+#[test]
+fn test_display_detection() {
+    use cloudmount_auth::oauth::has_display;
+
+    let result = has_display();
+
+    // On non-Linux platforms, always true
+    #[cfg(not(target_os = "linux"))]
+    assert!(result, "non-Linux platforms should always detect display");
+
+    // On Linux, result depends on $DISPLAY / $WAYLAND_DISPLAY
+    #[cfg(target_os = "linux")]
+    {
+        let has_x11 = std::env::var("DISPLAY").is_ok();
+        let has_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+        assert_eq!(
+            result,
+            has_x11 || has_wayland,
+            "has_display should reflect DISPLAY/WAYLAND_DISPLAY env vars"
+        );
+    }
 }

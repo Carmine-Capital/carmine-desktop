@@ -200,6 +200,13 @@ impl SqliteStore {
         Ok(())
     }
 
+    pub fn clear(&self) -> cloudmount_core::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch("DELETE FROM items; DELETE FROM delta_tokens; DELETE FROM sync_state;")
+            .map_err(|e| cloudmount_core::Error::Cache(format!("clear failed: {e}")))?;
+        Ok(())
+    }
+
     pub fn apply_delta(
         &self,
         drive_id: &str,
