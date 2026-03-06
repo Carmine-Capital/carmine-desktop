@@ -27,20 +27,20 @@ impl AuthManager {
 
     pub async fn access_token(&self) -> cloudmount_core::Result<String> {
         let state = self.state.read().await;
-        if let Some(ref token) = state.access_token {
-            if let Some(expires_at) = state.expires_at {
-                let buffer = chrono::Duration::minutes(5);
-                if Utc::now() + buffer < expires_at {
-                    return Ok(token.clone());
-                }
+        if let Some(ref token) = state.access_token
+            && let Some(expires_at) = state.expires_at
+        {
+            let buffer = chrono::Duration::minutes(5);
+            if Utc::now() + buffer < expires_at {
+                return Ok(token.clone());
             }
         }
         drop(state);
         self.refresh().await
     }
 
-    pub async fn try_restore(&self, account_id: &str) -> cloudmount_core::Result<bool> {
-        let tokens = match crate::storage::load_tokens(account_id)? {
+    pub async fn try_restore(&self, _account_id: &str) -> cloudmount_core::Result<bool> {
+        let tokens = match crate::storage::load_tokens(&self.client_id)? {
             Some(t) => t,
             None => return Ok(false),
         };

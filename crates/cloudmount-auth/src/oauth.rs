@@ -66,9 +66,18 @@ pub async fn run_pkce_flow(
         auth_url.query_pairs_mut().append_pair("domain_hint", tid);
     }
 
-    tracing::info!("opening browser for authentication");
-    open::that(auth_url.as_str())
-        .map_err(|e| cloudmount_core::Error::Auth(format!("failed to open browser: {e}")))?;
+    if has_display() {
+        tracing::info!("opening browser for authentication");
+        match open::that(auth_url.as_str()) {
+            Ok(()) => {}
+            Err(e) => {
+                tracing::warn!("failed to open browser: {e}");
+                print_auth_url(auth_url.as_str());
+            }
+        }
+    } else {
+        print_auth_url(auth_url.as_str());
+    }
 
     let code = wait_for_callback(listener).await?;
 
@@ -254,4 +263,22 @@ fn parse_token_response(body: &serde_json::Value) -> cloudmount_core::Result<Tok
         refresh_token: refresh,
         expires_at,
     })
+}
+
+/// Detect whether a display server is available for opening a browser.
+pub fn has_display() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}
+
+fn print_auth_url(url: &str) {
+    eprintln!(
+        "\nOpen this URL in your browser to sign in:\n\n  {url}\n\nWaiting for authentication...\n"
+    );
 }
