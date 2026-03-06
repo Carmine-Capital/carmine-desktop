@@ -28,13 +28,14 @@ impl MountHandle {
         mountpoint: &str,
         rt: Handle,
     ) -> cloudmount_core::Result<Self> {
-        let root_item = rt
-            .block_on(graph.get_item(&drive_id, "root"))
-            .map_err(|e| {
-                cloudmount_core::Error::Filesystem(format!(
-                    "failed to fetch root item for drive {drive_id}: {e}"
-                ))
-            })?;
+        let root_item = tokio::task::block_in_place(|| {
+            rt.block_on(graph.get_item(&drive_id, "root"))
+        })
+        .map_err(|e| {
+            cloudmount_core::Error::Filesystem(format!(
+                "failed to fetch root item for drive {drive_id}: {e}"
+            ))
+        })?;
 
         inodes.set_root(&root_item.id);
         cache.memory.insert(ROOT_INODE, root_item.clone());
@@ -42,15 +43,30 @@ impl MountHandle {
             .sqlite
             .upsert_item(ROOT_INODE, &drive_id, &root_item, None)?;
 
+        // Try with auto_unmount first (crash safety net), fall back without it
+        // since it requires fusermount3 + non-Owner ACL which isn't always available.
         let fs = CloudMountFs::new(
             graph.clone(),
             cache.clone(),
-            inodes,
+            inodes.clone(),
             drive_id.clone(),
             rt.clone(),
         );
 
-        let session = fs.mount(mountpoint)?;
+        let session = match fs.mount(mountpoint, true) {
+            Ok(session) => session,
+            Err(_) => {
+                tracing::warn!("auto_unmount not supported, mounting without it");
+                let fs = CloudMountFs::new(
+                    graph.clone(),
+                    cache.clone(),
+                    inodes,
+                    drive_id.clone(),
+                    rt.clone(),
+                );
+                fs.mount(mountpoint, false)?
+            }
+        };
 
         tracing::info!("mounted drive {drive_id} at {mountpoint}");
 

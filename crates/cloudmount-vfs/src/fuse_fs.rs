@@ -41,13 +41,19 @@ impl CloudMountFs {
         }
     }
 
-    pub fn mount(self, mountpoint: &str) -> cloudmount_core::Result<fuser::BackgroundSession> {
+    pub fn mount(
+        self,
+        mountpoint: &str,
+        auto_unmount: bool,
+    ) -> cloudmount_core::Result<fuser::BackgroundSession> {
         let mut config = Config::default();
         config.mount_options = vec![
             MountOption::RW,
             MountOption::FSName("cloudmount".to_string()),
-            MountOption::AutoUnmount,
         ];
+        if auto_unmount {
+            config.mount_options.push(MountOption::AutoUnmount);
+        }
 
         fuser::spawn_mount2(self, mountpoint, &config)
             .map_err(|e| cloudmount_core::Error::Filesystem(format!("mount failed: {e}")))
