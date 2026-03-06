@@ -383,6 +383,23 @@ pub async fn refresh_mount(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub async fn clear_cache(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+
+    crate::stop_all_mounts(&app);
+
+    state.cache.clear().await.map_err(|e| e.to_string())?;
+    tracing::info!("cache cleared");
+
+    if state.authenticated.load(Ordering::Relaxed) {
+        crate::start_all_mounts(&app);
+    }
+
+    crate::tray::update_tray_menu(&app);
+    Ok(())
+}
+
 fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let user_config = state.user_config.lock().map_err(|e| e.to_string())?;
