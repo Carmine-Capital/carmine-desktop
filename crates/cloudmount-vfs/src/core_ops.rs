@@ -134,10 +134,11 @@ impl CoreOps {
         }
 
         if let Ok(children) = self.cache.sqlite.get_children(parent_ino) {
-            for (child_inode, item) in children {
+            for (_, item) in children {
                 if item.name == name {
-                    self.cache.memory.insert(child_inode, item.clone());
-                    return Some((child_inode, item));
+                    let resolved_ino = self.inodes.allocate(&item.id);
+                    self.cache.memory.insert(resolved_ino, item.clone());
+                    return Some((resolved_ino, item));
                 }
             }
         }
@@ -184,10 +185,14 @@ impl CoreOps {
         if let Ok(children) = self.cache.sqlite.get_children(parent_ino)
             && !children.is_empty()
         {
-            for (ino, item) in &children {
-                self.cache.memory.insert(*ino, item.clone());
-            }
-            return children;
+            return children
+                .into_iter()
+                .map(|(_, item)| {
+                    let resolved_ino = self.inodes.allocate(&item.id);
+                    self.cache.memory.insert(resolved_ino, item.clone());
+                    (resolved_ino, item)
+                })
+                .collect();
         }
 
         let Some(item_id) = self.inodes.get_item_id(parent_ino) else {
