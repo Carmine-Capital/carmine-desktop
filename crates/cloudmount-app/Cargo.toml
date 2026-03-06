@@ -5,7 +5,7 @@ edition.workspace = true
 
 [features]
 default = []
-desktop = ["tauri", "tauri-plugin-notification"]
+desktop = ["tauri", "tauri-plugin-notification", "tauri-build"]
 
 [dependencies]
 cloudmount-core = { workspace = true }
@@ -25,6 +25,9 @@ dirs = { workspace = true }
 chrono = { workspace = true }
 open = { workspace = true }
 uuid = { workspace = true }
+bytes = { workspace = true }
+clap = { workspace = true }
+dotenvy = { workspace = true }
 tauri = { workspace = true, optional = true }
 tauri-plugin-notification = { workspace = true, optional = true }
 
@@ -33,4 +36,3 @@ tauri-build = { workspace = true, optional = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }
-bytes = { workspace = true }

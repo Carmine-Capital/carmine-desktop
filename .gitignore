@@ -2,3 +2,5 @@
 .opencode/
 AGENTS.md
 crates/*/AGENTS.md
+.env
+build/defaults.toml

@@ -86,5 +86,9 @@ tauri-plugin-notification = "2"
 # URL encoding
 urlencoding = "2.1"
 
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+dotenvy = "0.15"
+
 # Testing
 wiremock = "0.6"
