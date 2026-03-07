@@ -72,7 +72,7 @@ The system SHALL manage the lifecycle of filesystem mounts — starting, stoppin
 
 #### Scenario: Stop all mounts on sign-out
 - **WHEN** the user signs out
-- **THEN** the system stops all active mounts, clears authentication tokens from secure storage, removes account metadata from user config, and reverts to the unauthenticated state (showing the wizard on next interaction)
+- **THEN** the system stops all active mounts, clears authentication tokens from secure storage, removes account metadata from user config, saves the config, reloads the wizard window to step-welcome (if the window exists), hides any open settings window, and transitions to the unauthenticated tray state (showing "Sign In…" in the tray menu and the wizard window)
 
 #### Scenario: Mount config change
 - **WHEN** the user adds, removes, toggles, or changes the mount point of a mount in settings

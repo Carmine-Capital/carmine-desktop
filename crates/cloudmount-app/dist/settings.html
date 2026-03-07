@@ -123,6 +123,7 @@
         document.getElementById('cache-max-size').value = s.cache_max_size;
         document.getElementById('metadata-ttl').value = String(s.metadata_ttl_secs);
         document.getElementById('log-level').value = s.log_level;
+        document.getElementById('account-email').textContent = s.account_display || 'Not signed in';
       } catch (e) { console.error(e); }
     }
 
@@ -173,7 +174,10 @@
 
     function addMount() { /* opens add-mount flow */ }
     async function signOut() {
-      try { await invoke('sign_out'); } catch (e) { console.error(e); }
+      try {
+        await invoke('sign_out');
+        await window.__TAURI__.window.getCurrentWindow().hide();
+      } catch (e) { console.error(e); }
     }
     async function clearCache() {
       try {

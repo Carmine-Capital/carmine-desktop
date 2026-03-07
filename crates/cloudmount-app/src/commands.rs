@@ -32,6 +32,7 @@ pub struct SettingsInfo {
     pub log_level: String,
     pub notifications: bool,
     pub root_dir: String,
+    pub account_display: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -165,7 +166,15 @@ pub async fn sign_out(app: AppHandle) -> Result<(), String> {
     state.auth_degraded.store(false, Ordering::Relaxed);
     crate::tray::update_tray_menu(&app);
 
-    crate::tray::open_or_focus_window(&app, "wizard", "Setup", "wizard.html");
+    app.get_webview_window("settings").map(|w| w.hide());
+
+    if let Some(win) = app.get_webview_window("wizard") {
+        let _ = win.reload();
+        let _ = win.show();
+        let _ = win.set_focus();
+    } else {
+        crate::tray::open_or_focus_window(&app, "wizard", "Setup", "wizard.html");
+    }
 
     Ok(())
 }
@@ -296,6 +305,10 @@ pub fn toggle_mount(app: AppHandle, id: String) -> Result<Option<bool>, String> 
 pub fn get_settings(app: AppHandle) -> Result<SettingsInfo, String> {
     let state = app.state::<AppState>();
     let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+    let account_display = config
+        .accounts
+        .first()
+        .and_then(|a| a.email.clone().or_else(|| a.display_name.clone()));
     Ok(SettingsInfo {
         app_name: config.app_name.clone(),
         auto_start: config.auto_start,
@@ -306,6 +319,7 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsInfo, String> {
         log_level: config.log_level.clone(),
         notifications: config.notifications,
         root_dir: config.root_dir.clone(),
+        account_display,
     })
 }
 

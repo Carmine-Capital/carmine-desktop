@@ -1,17 +1,4 @@
-### Requirement: System tray presence
-The system SHALL run as a background application with a system tray icon on all supported platforms.
-
-#### Scenario: Tray icon on startup
-- **WHEN** the application starts
-- **THEN** a system tray icon appears in the OS notification area (Windows taskbar, macOS menu bar, Linux system tray)
-
-#### Scenario: Tray icon states
-- **WHEN** all mounts are synced and healthy
-- **THEN** the tray icon displays a green/normal state indicator
-- **WHEN** any mount is actively syncing
-- **THEN** the tray icon displays a syncing animation/indicator
-- **WHEN** any mount has an error (auth failure, network, conflict)
-- **THEN** the tray icon displays a warning/error indicator
+## MODIFIED Requirements
 
 ### Requirement: Tray context menu
 The system SHALL provide a context menu when the user right-clicks (or clicks on macOS) the tray icon.
@@ -94,40 +81,6 @@ The system SHALL present a setup wizard on first launch to guide the user throug
 #### Scenario: Sign-in waiting state cancelled
 - **WHEN** the user clicks "Cancel" in the sign-in waiting state (before the 120s timeout)
 - **THEN** the wizard returns to the initial sign-in screen and the PKCE listener is abandoned
-
-### Requirement: Branded UI elements
-The system SHALL display the packaged branding throughout the UI when a custom app name is configured.
-
-#### Scenario: Tray tooltip with custom name
-- **WHEN** the packaged defaults define `app_name = "Contoso Drive"`
-- **THEN** the system tray icon tooltip displays "Contoso Drive" instead of "CloudMount"
-
-#### Scenario: Window titles with custom name
-- **WHEN** the packaged defaults define a custom app name
-- **THEN** the wizard window title, settings window title, and notification titles all use the custom name
-
-#### Scenario: Default branding
-- **WHEN** no custom app name is packaged
-- **THEN** all UI elements display "CloudMount"
-
-### Requirement: Notifications
-The system SHALL display OS-native notifications for important events.
-
-#### Scenario: Mount successful
-- **WHEN** a drive is successfully mounted
-- **THEN** the system displays a notification "{mountName} is now available at {path}"
-
-#### Scenario: Sync conflict
-- **WHEN** a file conflict is detected during sync
-- **THEN** the system displays a notification "Conflict detected: {fileName}. A .conflict copy has been created."
-
-#### Scenario: Authentication expired
-- **WHEN** the authentication token cannot be refreshed
-- **THEN** the system displays a notification "Sign-in expired. Click to re-authenticate." that opens the login flow when clicked
-
-#### Scenario: Network error
-- **WHEN** the network becomes unavailable for more than 30 seconds
-- **THEN** the system displays a notification "Offline — cached files remain accessible. Changes will sync when connectivity returns."
 
 ### Requirement: Settings window
 The system SHALL provide a settings window accessible from the tray menu.

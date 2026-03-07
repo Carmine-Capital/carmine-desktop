@@ -67,6 +67,9 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
     }
 
     match id {
+        "sign_in" => {
+            open_or_focus_window(app, "wizard", "Setup", "wizard.html");
+        }
         "add_mount" => {
             open_or_focus_window(app, "wizard", "Setup", "wizard.html");
         }
@@ -126,7 +129,7 @@ pub fn update_tray_menu(app: &AppHandle) {
         .try_state::<crate::update::UpdateState>()
         .and_then(|s| s.pending_version.lock().unwrap().clone());
 
-    let (mount_entries, app_name, auth_degraded) = {
+    let (mount_entries, app_name, auth_degraded, authenticated) = {
         let config = app_state.effective_config.lock().unwrap();
         let active_mounts = app_state.mounts.lock().unwrap();
         let entries: Vec<(String, String, String)> = config
@@ -151,7 +154,10 @@ pub fn update_tray_menu(app: &AppHandle) {
         let degraded = app_state
             .auth_degraded
             .load(std::sync::atomic::Ordering::Relaxed);
-        (entries, name, degraded)
+        let auth = app_state
+            .authenticated
+            .load(std::sync::atomic::Ordering::Relaxed);
+        (entries, name, degraded, auth)
     };
 
     let tooltip = if auth_degraded {
@@ -171,21 +177,26 @@ pub fn update_tray_menu(app: &AppHandle) {
     let result: tauri::Result<()> = (|| {
         let mut builder = MenuBuilder::new(app);
 
-        let mut mount_items = Vec::new();
-        for (item_id, label, _) in &mount_entries {
-            let item = MenuItemBuilder::with_id(item_id, label).build(app)?;
-            mount_items.push(item);
-        }
-        for item in &mount_items {
-            builder = builder.item(item);
+        if authenticated {
+            let mut mount_items = Vec::new();
+            for (item_id, label, _) in &mount_entries {
+                let item = MenuItemBuilder::with_id(item_id, label).build(app)?;
+                mount_items.push(item);
+            }
+            for item in &mount_items {
+                builder = builder.item(item);
+            }
+
+            let sep1 = PredefinedMenuItem::separator(app)?;
+            builder = builder.item(&sep1);
+
+            let add_mount =
+                MenuItemBuilder::with_id("add_mount", "Add Mount\u{2026}").build(app)?;
+            builder = builder.item(&add_mount);
         }
 
-        let sep1 = PredefinedMenuItem::separator(app)?;
-        builder = builder.item(&sep1);
-
-        let add_mount = MenuItemBuilder::with_id("add_mount", "Add Mount\u{2026}").build(app)?;
         let settings = MenuItemBuilder::with_id("settings", "Settings\u{2026}").build(app)?;
-        builder = builder.item(&add_mount).item(&settings);
+        builder = builder.item(&settings);
 
         if let Some(ref version) = pending_update_version {
             let update_item = MenuItemBuilder::with_id(
@@ -203,9 +214,14 @@ pub fn update_tray_menu(app: &AppHandle) {
         let sep2 = PredefinedMenuItem::separator(app)?;
         builder = builder.item(&sep2);
 
-        let sign_out = MenuItemBuilder::with_id("sign_out", "Sign Out").build(app)?;
         let quit = MenuItemBuilder::with_id("quit", format!("Quit {app_name}")).build(app)?;
-        builder = builder.item(&sign_out).item(&quit);
+        if authenticated {
+            let sign_out = MenuItemBuilder::with_id("sign_out", "Sign Out").build(app)?;
+            builder = builder.item(&sign_out).item(&quit);
+        } else {
+            let sign_in = MenuItemBuilder::with_id("sign_in", "Sign In\u{2026}").build(app)?;
+            builder = builder.item(&sign_in).item(&quit);
+        }
 
         let menu = builder.build()?;
 

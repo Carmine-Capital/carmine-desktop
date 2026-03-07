@@ -425,17 +425,7 @@ fn run_desktop(
             Ok(())
         })
         .on_window_event(|window, event| {
-            use tauri::Manager;
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "wizard"
-                    && let Some(state) = window.app_handle().try_state::<AppState>()
-                    && !state
-                        .authenticated
-                        .load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    window.app_handle().exit(0);
-                    return;
-                }
                 let _ = window.hide();
                 api.prevent_close();
             }
