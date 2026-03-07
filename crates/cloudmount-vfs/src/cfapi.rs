@@ -183,8 +183,9 @@ impl SyncFilter for CloudMountCfFilter {
         ticket: ticket::FetchPlaceholders,
         _info: info::FetchPlaceholders,
     ) -> CResult<()> {
+        let dir_path = request.path();
         let rel_path = self
-            .relative_path(&request.path())
+            .relative_path(&dir_path)
             .ok_or(CloudErrorKind::NotUnderSyncRoot)?;
 
         let (parent_ino, _) = self
@@ -194,8 +195,13 @@ impl SyncFilter for CloudMountCfFilter {
 
         let children = self.core.list_children(parent_ino);
 
+        // Filter out items that already have a local placeholder on disk.
+        // CfCreatePlaceholders returns ERROR_CLOUD_FILE_INVALID_REQUEST for
+        // existing entries; if we propagate that error, proxy.rs:97 panics via
+        // unwrap() through the FFI boundary → STATUS_STACK_BUFFER_OVERRUN.
         let mut placeholders: Vec<PlaceholderFile> = children
             .iter()
+            .filter(|(_ino, item)| !dir_path.join(&item.name).exists())
             .map(|(_ino, item)| {
                 PlaceholderFile::new(&item.name)
                     .metadata(Self::item_to_metadata(item))
@@ -203,6 +209,10 @@ impl SyncFilter for CloudMountCfFilter {
                     .mark_in_sync()
             })
             .collect();
+
+        if placeholders.is_empty() {
+            return Ok(());
+        }
 
         ticket
             .pass_with_placeholder(&mut placeholders)
