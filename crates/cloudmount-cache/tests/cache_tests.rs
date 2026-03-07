@@ -355,7 +355,7 @@ async fn test_disk_cache_put_get_roundtrip() -> cloudmount_core::Result<()> {
     let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
     let content = b"test file content";
 
-    cache.put("drive1", "item1", content).await?;
+    cache.put("drive1", "item1", content, None).await?;
     let retrieved = cache.get("drive1", "item1").await;
 
     assert!(retrieved.is_some());
@@ -374,7 +374,7 @@ async fn test_disk_cache_remove() -> cloudmount_core::Result<()> {
     let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
     let content = b"test file content";
 
-    cache.put("drive1", "item1", content).await?;
+    cache.put("drive1", "item1", content, None).await?;
     assert!(cache.get("drive1", "item1").await.is_some());
 
     cache.remove("drive1", "item1").await?;
@@ -392,8 +392,8 @@ async fn test_disk_cache_clear() -> cloudmount_core::Result<()> {
 
     let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
 
-    cache.put("drive1", "item1", b"content1").await?;
-    cache.put("drive1", "item2", b"content2").await?;
+    cache.put("drive1", "item1", b"content1", None).await?;
+    cache.put("drive1", "item2", b"content2", None).await?;
     assert!(cache.get("drive1", "item1").await.is_some());
     assert!(cache.get("drive1", "item2").await.is_some());
 
@@ -413,8 +413,8 @@ async fn test_disk_cache_total_size() -> cloudmount_core::Result<()> {
 
     let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
 
-    cache.put("drive1", "item1", b"12345").await?;
-    cache.put("drive1", "item2", b"1234567890").await?;
+    cache.put("drive1", "item1", b"12345", None).await?;
+    cache.put("drive1", "item2", b"1234567890", None).await?;
 
     let total = cache.total_size();
     assert_eq!(total, 15);
@@ -432,15 +432,15 @@ async fn test_disk_cache_lru_eviction() -> cloudmount_core::Result<()> {
     let cache = DiskCache::new(cache_dir.join("content"), 50, &db_path);
 
     cache
-        .put("drive1", "item1", b"12345678901234567890")
+        .put("drive1", "item1", b"12345678901234567890", None)
         .await?;
     sleep(Duration::from_millis(10)).await;
     cache
-        .put("drive1", "item2", b"12345678901234567890")
+        .put("drive1", "item2", b"12345678901234567890", None)
         .await?;
     sleep(Duration::from_millis(10)).await;
     cache
-        .put("drive1", "item3", b"12345678901234567890")
+        .put("drive1", "item3", b"12345678901234567890", None)
         .await?;
 
     assert!(cache.get("drive1", "item1").await.is_none());
@@ -513,6 +513,169 @@ async fn test_writeback_list_pending() -> cloudmount_core::Result<()> {
     assert!(pending.contains(&("drive2".to_string(), "item3".to_string())));
 
     Ok(())
+}
+
+// ============================================================================
+// DISK CACHE ETAG TRACKING TESTS
+// ============================================================================
+
+#[tokio::test]
+async fn test_disk_cache_put_with_etag_get_with_etag_returns_it() -> cloudmount_core::Result<()> {
+    let cache_dir = std::env::temp_dir().join("test_disk_etag_put_get");
+    let db_path = cache_dir.join("tracker.db");
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    std::fs::create_dir_all(&cache_dir)?;
+
+    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
+    let content = b"test file content";
+
+    cache
+        .put("drive1", "item1", content, Some("etag-abc"))
+        .await?;
+    let result = cache.get_with_etag("drive1", "item1").await;
+
+    assert!(result.is_some());
+    let (data, etag) = result.unwrap();
+    assert_eq!(data, content);
+    assert_eq!(etag, Some("etag-abc".to_string()));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_disk_cache_put_without_etag_get_with_etag_returns_none() -> cloudmount_core::Result<()>
+{
+    let cache_dir = std::env::temp_dir().join("test_disk_etag_none");
+    let db_path = cache_dir.join("tracker.db");
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    std::fs::create_dir_all(&cache_dir)?;
+
+    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
+
+    cache.put("drive1", "item1", b"content", None).await?;
+    let result = cache.get_with_etag("drive1", "item1").await;
+
+    assert!(result.is_some());
+    let (_, etag) = result.unwrap();
+    assert!(etag.is_none());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_disk_cache_etag_updated_on_reput() -> cloudmount_core::Result<()> {
+    let cache_dir = std::env::temp_dir().join("test_disk_etag_update");
+    let db_path = cache_dir.join("tracker.db");
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    std::fs::create_dir_all(&cache_dir)?;
+
+    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
+
+    cache.put("drive1", "item1", b"v1", Some("etag-1")).await?;
+    cache.put("drive1", "item1", b"v2", Some("etag-2")).await?;
+
+    let (data, etag) = cache.get_with_etag("drive1", "item1").await.unwrap();
+    assert_eq!(data, b"v2");
+    assert_eq!(etag, Some("etag-2".to_string()));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_disk_cache_schema_migration_adds_etag_column() -> cloudmount_core::Result<()> {
+    let cache_dir = std::env::temp_dir().join("test_disk_etag_migration");
+    let db_path = cache_dir.join("tracker.db");
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    std::fs::create_dir_all(&cache_dir)?;
+
+    // Simulate old schema without etag column
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+            .unwrap();
+        conn.execute_batch(
+            "CREATE TABLE cache_entries (
+                drive_id TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                last_access TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (drive_id, item_id)
+            );",
+        )
+        .unwrap();
+        // Insert an entry without etag
+        conn.execute(
+            "INSERT INTO cache_entries (drive_id, item_id, file_size) VALUES ('d1', 'i1', 100)",
+            [],
+        )
+        .unwrap();
+    }
+
+    // Open DiskCache which should migrate
+    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
+
+    // Should be able to put with etag and get it back
+    cache
+        .put("drive1", "item2", b"new content", Some("etag-new"))
+        .await?;
+    let result = cache.get_with_etag("drive1", "item2").await;
+    assert!(result.is_some());
+    let (_, etag) = result.unwrap();
+    assert_eq!(etag, Some("etag-new".to_string()));
+
+    Ok(())
+}
+
+// ============================================================================
+// DIRTY INODES SET TESTS
+// ============================================================================
+
+#[test]
+fn test_dirty_inodes_mark_and_check() {
+    let cache_dir = std::env::temp_dir().join("test_dirty_inodes_basic");
+    let db_path = cache_dir.join("metadata.db");
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    std::fs::create_dir_all(&cache_dir).unwrap();
+
+    let cache =
+        cloudmount_cache::CacheManager::new(cache_dir, db_path, 1_000_000, Some(60)).unwrap();
+
+    assert!(!cache.dirty_inodes.contains(&42));
+    cache.dirty_inodes.insert(42);
+    assert!(cache.dirty_inodes.contains(&42));
+    cache.dirty_inodes.remove(&42);
+    assert!(!cache.dirty_inodes.contains(&42));
+}
+
+#[test]
+fn test_dirty_inodes_concurrent_access() {
+    let cache_dir = std::env::temp_dir().join("test_dirty_inodes_concurrent");
+    let db_path = cache_dir.join("metadata.db");
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    std::fs::create_dir_all(&cache_dir).unwrap();
+
+    let cache = std::sync::Arc::new(
+        cloudmount_cache::CacheManager::new(cache_dir, db_path, 1_000_000, Some(60)).unwrap(),
+    );
+
+    let handles: Vec<_> = (0..10)
+        .map(|i| {
+            let cache = cache.clone();
+            std::thread::spawn(move || {
+                for j in 0..100 {
+                    let ino = i * 100 + j;
+                    cache.dirty_inodes.insert(ino);
+                    assert!(cache.dirty_inodes.contains(&ino));
+                }
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    assert_eq!(cache.dirty_inodes.len(), 1000);
 }
 
 // ============================================================================

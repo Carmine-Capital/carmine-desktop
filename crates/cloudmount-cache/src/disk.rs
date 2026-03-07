@@ -16,16 +16,35 @@ impl DiskCache {
         let conn = Connection::open(db_path).expect("failed to open cache tracker db");
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
             .expect("failed to set tracker pragmas");
+
+        // Migrate: if cache_entries was created with incompatible schema (cache_path NOT NULL),
+        // drop and recreate. Tracker data is unreliable from those installs anyway.
+        let has_cache_path: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('cache_entries') WHERE name = 'cache_path'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            > 0;
+        if has_cache_path {
+            let _ = conn.execute_batch("DROP TABLE IF EXISTS cache_entries");
+        }
+
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS cache_entries (
                 drive_id TEXT NOT NULL,
                 item_id TEXT NOT NULL,
+                etag TEXT,
                 file_size INTEGER NOT NULL DEFAULT 0,
                 last_access TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (drive_id, item_id)
             );",
         )
         .expect("failed to create cache_entries table");
+
+        // Migration: add etag column for DBs created with old schema
+        let _ = conn.execute_batch("ALTER TABLE cache_entries ADD COLUMN etag TEXT");
 
         Self {
             base_dir,
@@ -50,11 +69,36 @@ impl DiskCache {
         Some(data)
     }
 
+    pub async fn get_with_etag(
+        &self,
+        drive_id: &str,
+        item_id: &str,
+    ) -> Option<(Vec<u8>, Option<String>)> {
+        let path = self.content_path(drive_id, item_id);
+        let data = fs::read(&path).await.ok()?;
+        let etag = if let Ok(conn) = self.tracker.lock() {
+            let _ = conn.execute(
+                "UPDATE cache_entries SET last_access = datetime('now') WHERE drive_id = ?1 AND item_id = ?2",
+                params![drive_id, item_id],
+            );
+            conn.query_row(
+                "SELECT etag FROM cache_entries WHERE drive_id = ?1 AND item_id = ?2",
+                params![drive_id, item_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .unwrap_or(None)
+        } else {
+            None
+        };
+        Some((data, etag))
+    }
+
     pub async fn put(
         &self,
         drive_id: &str,
         item_id: &str,
         content: &[u8],
+        etag: Option<&str>,
     ) -> cloudmount_core::Result<()> {
         let path = self.content_path(drive_id, item_id);
         if let Some(parent) = path.parent() {
@@ -69,12 +113,13 @@ impl DiskCache {
         let file_size = content.len() as i64;
         if let Ok(conn) = self.tracker.lock() {
             let _ = conn.execute(
-                "INSERT INTO cache_entries (drive_id, item_id, file_size, last_access)
-                 VALUES (?1, ?2, ?3, datetime('now'))
+                "INSERT INTO cache_entries (drive_id, item_id, file_size, etag, last_access)
+                 VALUES (?1, ?2, ?3, ?4, datetime('now'))
                  ON CONFLICT(drive_id, item_id) DO UPDATE SET
                     file_size = excluded.file_size,
+                    etag = excluded.etag,
                     last_access = datetime('now')",
-                params![drive_id, item_id, file_size],
+                params![drive_id, item_id, file_size, etag],
             );
         }
 

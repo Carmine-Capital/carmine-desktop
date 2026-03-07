@@ -1212,3 +1212,126 @@ async fn copy_file_range_fallback_copies_at_offsets() {
 
     cleanup(&base);
 }
+
+// --- Cache freshness validation tests ---
+
+#[tokio::test(flavor = "multi_thread")]
+async fn open_file_with_stale_disk_cache_wrong_size_triggers_redownload() {
+    let server = MockServer::start().await;
+    mock_file_download(&server, b"Hello, world!").await;
+
+    let (cache, base) = make_cache("stale-size");
+    let graph = make_graph(&server.uri());
+    let ops = setup_core_ops(graph, cache.clone());
+
+    // Pre-populate disk cache with wrong-size content (5 bytes vs metadata says 13)
+    cache
+        .disk
+        .put(DRIVE_ID, FILE_ITEM_ID, b"stale", Some("etag-1"))
+        .await
+        .unwrap();
+
+    let ops2 = ops.clone();
+    tokio::task::spawn_blocking(move || {
+        let fh = ops2.open_file(2).unwrap();
+        let data = ops2.read_handle(fh, 0, 100).unwrap();
+        assert_eq!(data, b"Hello, world!");
+        let _ = ops2.release_file(fh);
+    })
+    .await
+    .unwrap();
+
+    cleanup(&base);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn open_file_with_stale_etag_triggers_redownload() {
+    let server = MockServer::start().await;
+    mock_file_download(&server, b"Hello, world!").await;
+
+    let (cache, base) = make_cache("stale-etag");
+    let graph = make_graph(&server.uri());
+    let ops = setup_core_ops(graph, cache.clone());
+
+    // Pre-populate disk cache with matching size but wrong eTag
+    cache
+        .disk
+        .put(DRIVE_ID, FILE_ITEM_ID, b"Hello, world!", Some("etag-old"))
+        .await
+        .unwrap();
+
+    let ops2 = ops.clone();
+    tokio::task::spawn_blocking(move || {
+        let fh = ops2.open_file(2).unwrap();
+        let data = ops2.read_handle(fh, 0, 100).unwrap();
+        assert_eq!(data, b"Hello, world!");
+        let _ = ops2.release_file(fh);
+    })
+    .await
+    .unwrap();
+
+    cleanup(&base);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn open_file_with_dirty_inode_skips_disk_cache() {
+    let server = MockServer::start().await;
+    mock_file_download(&server, b"Hello, world!").await;
+
+    let (cache, base) = make_cache("dirty-inode");
+    let graph = make_graph(&server.uri());
+    let ops = setup_core_ops(graph, cache.clone());
+
+    // Pre-populate disk cache with valid content and matching eTag
+    cache
+        .disk
+        .put(DRIVE_ID, FILE_ITEM_ID, b"Hello, world!", Some("etag-1"))
+        .await
+        .unwrap();
+
+    // Mark the inode as dirty
+    cache.dirty_inodes.insert(2);
+
+    let ops2 = ops.clone();
+    tokio::task::spawn_blocking(move || {
+        let fh = ops2.open_file(2).unwrap();
+        let data = ops2.read_handle(fh, 0, 100).unwrap();
+        assert_eq!(data, b"Hello, world!");
+        // Dirty flag should be cleared after download
+        assert!(!ops2.is_dirty(2));
+        let _ = ops2.release_file(fh);
+    })
+    .await
+    .unwrap();
+
+    cleanup(&base);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn open_file_with_valid_cache_serves_from_disk() {
+    let server = MockServer::start().await;
+    // No download mock — if disk cache is valid, no network call should happen
+
+    let (cache, base) = make_cache("valid-cache");
+    let graph = make_graph(&server.uri());
+    let ops = setup_core_ops(graph, cache.clone());
+
+    // Pre-populate disk cache with correct content, correct eTag, correct size
+    cache
+        .disk
+        .put(DRIVE_ID, FILE_ITEM_ID, b"Hello, world!", Some("etag-1"))
+        .await
+        .unwrap();
+
+    let ops2 = ops.clone();
+    tokio::task::spawn_blocking(move || {
+        let fh = ops2.open_file(2).unwrap();
+        let data = ops2.read_handle(fh, 0, 100).unwrap();
+        assert_eq!(data, b"Hello, world!");
+        let _ = ops2.release_file(fh);
+    })
+    .await
+    .unwrap();
+
+    cleanup(&base);
+}

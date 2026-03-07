@@ -57,15 +57,7 @@ impl SqliteStore {
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
-            CREATE TABLE IF NOT EXISTS cache_entries (
-                drive_id TEXT NOT NULL,
-                item_id TEXT NOT NULL,
-                etag TEXT,
-                file_size INTEGER NOT NULL DEFAULT 0,
-                cache_path TEXT NOT NULL,
-                last_access TEXT NOT NULL DEFAULT (datetime('now')),
-                PRIMARY KEY (drive_id, item_id)
-            );",
+",
         )
         .map_err(|e| cloudmount_core::Error::Cache(format!("failed to create tables: {e}")))?;
 

@@ -297,6 +297,18 @@ impl CoreOps {
         &self.drive_id
     }
 
+    pub fn mark_dirty(&self, ino: u64) {
+        self.cache.dirty_inodes.insert(ino);
+    }
+
+    pub fn is_dirty(&self, ino: u64) -> bool {
+        self.cache.dirty_inodes.contains(&ino)
+    }
+
+    pub fn clear_dirty(&self, ino: u64) {
+        self.cache.dirty_inodes.remove(&ino);
+    }
+
     pub fn rt(&self) -> &Handle {
         &self.rt
     }
@@ -463,6 +475,7 @@ impl CoreOps {
     /// Read file content from disk cache or download from Graph API.
     pub fn read_content(&self, ino: u64) -> VfsResult<Vec<u8>> {
         let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
+        let item = self.lookup_item(ino);
 
         // Check writeback buffer first (pending local writes)
         if let Some(content) = self
@@ -472,21 +485,41 @@ impl CoreOps {
             return Ok(content);
         }
 
-        if let Some(content) = self
-            .rt
-            .block_on(self.cache.disk.get(&self.drive_id, &item_id))
+        // Check disk cache with freshness validation
+        if !self.cache.dirty_inodes.contains(&ino)
+            && let Some((content, disk_etag)) = self
+                .rt
+                .block_on(self.cache.disk.get_with_etag(&self.drive_id, &item_id))
         {
-            return Ok(content);
+            let size_ok = item
+                .as_ref()
+                .map(|i| content.len() == i.size as usize)
+                .unwrap_or(true);
+            let etag_ok = match (&disk_etag, item.as_ref().and_then(|i| i.etag.as_ref())) {
+                (Some(de), Some(ie)) => de == ie,
+                _ => true,
+            };
+            if size_ok && etag_ok {
+                return Ok(content);
+            }
+            let _ = self
+                .rt
+                .block_on(self.cache.disk.remove(&self.drive_id, &item_id));
         }
 
+        let item_etag = item.as_ref().and_then(|i| i.etag.clone());
         match self
             .rt
             .block_on(self.graph.download_content(&self.drive_id, &item_id))
         {
             Ok(content) => {
-                let _ = self
-                    .rt
-                    .block_on(self.cache.disk.put(&self.drive_id, &item_id, &content));
+                self.cache.dirty_inodes.remove(&ino);
+                let _ = self.rt.block_on(self.cache.disk.put(
+                    &self.drive_id,
+                    &item_id,
+                    &content,
+                    item_etag.as_deref(),
+                ));
                 Ok(content.to_vec())
             }
             Err(e) => {
@@ -674,6 +707,7 @@ impl CoreOps {
                     &self.drive_id,
                     &updated_item.id,
                     &content,
+                    updated_item.etag.as_deref(),
                 ));
                 let _ = self
                     .rt
@@ -690,8 +724,10 @@ impl CoreOps {
     /// Open a file, loading its content into the open file table.
     /// Small files (< 4 MB) and cached files load eagerly.
     /// Large uncached files return immediately with a background streaming download.
+    /// Validates disk cache freshness via dirty-inode set, eTag, and size checks.
     pub fn open_file(&self, ino: u64) -> VfsResult<u64> {
         let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
+        let item = self.lookup_item(ino);
 
         // Check writeback buffer first (pending local writes)
         if let Some(content) = self
@@ -703,21 +739,39 @@ impl CoreOps {
                 .insert(ino, DownloadState::Complete(content)));
         }
 
-        // Check disk cache
-        if let Some(content) = self
-            .rt
-            .block_on(self.cache.disk.get(&self.drive_id, &item_id))
+        // Check disk cache with freshness validation
+        if !self.cache.dirty_inodes.contains(&ino)
+            && let Some((content, disk_etag)) = self
+                .rt
+                .block_on(self.cache.disk.get_with_etag(&self.drive_id, &item_id))
         {
-            return Ok(self
-                .open_files
-                .insert(ino, DownloadState::Complete(content)));
+            // Validate: size must match metadata
+            let size_ok = item
+                .as_ref()
+                .map(|i| content.len() == i.size as usize)
+                .unwrap_or(true);
+            // Validate: eTag must match metadata (if both present)
+            let etag_ok = match (&disk_etag, item.as_ref().and_then(|i| i.etag.as_ref())) {
+                (Some(de), Some(ie)) => de == ie,
+                _ => true,
+            };
+            if size_ok && etag_ok {
+                return Ok(self
+                    .open_files
+                    .insert(ino, DownloadState::Complete(content)));
+            }
+            // Stale — remove and fall through to download
+            let _ = self
+                .rt
+                .block_on(self.cache.disk.remove(&self.drive_id, &item_id));
         }
 
-        // Not cached — check file size for streaming decision
-        let file_size = self.lookup_item(ino).map(|i| i.size).unwrap_or(0) as usize;
+        // Not cached or stale — check file size for streaming decision
+        let file_size = item.as_ref().map(|i| i.size).unwrap_or(0) as usize;
+        let item_etag = item.as_ref().and_then(|i| i.etag.clone());
 
         if file_size < SMALL_FILE_LIMIT {
-            // Small file: download fully
+            // Small file: download fully (read_content handles dirty-inode + freshness)
             let content = self.read_content(ino)?;
             Ok(self
                 .open_files
@@ -730,6 +784,7 @@ impl CoreOps {
             let cache = self.cache.clone();
             let drive_id = self.drive_id.clone();
             let item_id_clone = item_id.clone();
+            let dirty_ino = ino;
 
             let task = self.rt.spawn(async move {
                 match graph.download_streaming(&drive_id, &item_id_clone).await {
@@ -744,9 +799,13 @@ impl CoreOps {
                             }
                         }
                         buf_clone.mark_done();
-                        // Populate disk cache with completed download
+                        // Populate disk cache with completed download and eTag
                         let data = buf_clone.read_range(0, buf_clone.total_size as usize).await;
-                        let _ = cache.disk.put(&drive_id, &item_id_clone, &data).await;
+                        let _ = cache
+                            .disk
+                            .put(&drive_id, &item_id_clone, &data, item_etag.as_deref())
+                            .await;
+                        cache.dirty_inodes.remove(&dirty_ino);
                     }
                     Err(e) => {
                         buf_clone.mark_failed(e.to_string());

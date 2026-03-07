@@ -16,7 +16,8 @@ use cloudmount_cache::CacheManager;
 use cloudmount_core::types::DriveItem;
 use cloudmount_graph::GraphClient;
 
-const TTL: Duration = Duration::from_secs(60);
+const FILE_TTL: Duration = Duration::from_secs(5);
+const DIR_TTL: Duration = Duration::from_secs(30);
 const BLOCK_SIZE: u32 = 512;
 
 pub struct CloudMountFs {
@@ -105,6 +106,18 @@ impl CloudMountFs {
         }
     }
 
+    fn ttl_for(item: &DriveItem) -> Duration {
+        if item.is_folder() { DIR_TTL } else { FILE_TTL }
+    }
+
+    fn ttl_for_attr(attr: &FileAttr) -> Duration {
+        if attr.kind == FileType::Directory {
+            DIR_TTL
+        } else {
+            FILE_TTL
+        }
+    }
+
     fn vfs_err_to_errno(e: VfsError) -> Errno {
         match e {
             VfsError::NotFound => Errno::ENOENT,
@@ -137,8 +150,9 @@ impl Filesystem for CloudMountFs {
 
         match self.ops.find_child(parent.0, &name_str) {
             Some((inode, item)) => {
+                let ttl = Self::ttl_for(&item);
                 let attr = self.item_to_attr(inode, &item);
-                reply.entry(&TTL, &attr, Generation(0));
+                reply.entry(&ttl, &attr, Generation(0));
             }
             None => reply.error(Errno::ENOENT),
         }
@@ -171,8 +185,9 @@ impl Filesystem for CloudMountFs {
 
         match self.ops.lookup_item(ino.0) {
             Some(item) => {
+                let ttl = Self::ttl_for(&item);
                 let attr = self.item_to_attr(ino.0, &item);
-                reply.attr(&TTL, &attr);
+                reply.attr(&ttl, &attr);
             }
             None => reply.error(Errno::ENOENT),
         }
@@ -181,8 +196,9 @@ impl Filesystem for CloudMountFs {
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
         match self.ops.lookup_item(ino.0) {
             Some(item) => {
+                let ttl = Self::ttl_for(&item);
                 let attr = self.item_to_attr(ino.0, &item);
-                reply.attr(&TTL, &attr);
+                reply.attr(&ttl, &attr);
             }
             None => reply.error(Errno::ENOENT),
         }
@@ -248,11 +264,12 @@ impl Filesystem for CloudMountFs {
         }
 
         for (i, (inode, attr, name)) in entries.into_iter().enumerate().skip(offset as usize) {
+            let ttl = Self::ttl_for_attr(&attr);
             if reply.add(
                 INodeNo(inode),
                 (i + 1) as u64,
                 &name,
-                &TTL,
+                &ttl,
                 &attr,
                 Generation(0),
             ) {
@@ -364,7 +381,7 @@ impl Filesystem for CloudMountFs {
             Ok((fh, inode, item)) => {
                 let attr = self.item_to_attr(inode, &item);
                 reply.created(
-                    &TTL,
+                    &FILE_TTL,
                     &attr,
                     Generation(0),
                     FileHandle(fh),
@@ -389,7 +406,7 @@ impl Filesystem for CloudMountFs {
         match self.ops.mkdir(parent.0, &name_str) {
             Ok((inode, item)) => {
                 let attr = self.item_to_attr(inode, &item);
-                reply.entry(&TTL, &attr, Generation(0));
+                reply.entry(&DIR_TTL, &attr, Generation(0));
             }
             Err(e) => reply.error(Self::vfs_err_to_errno(e)),
         }

@@ -108,9 +108,12 @@ async fn test_offline_cached_files_readable() -> cloudmount_core::Result<()> {
     cache.sqlite.upsert_item(11, "drive1", &item2, None)?;
     cache
         .disk
-        .put("drive1", "item-a", b"report-content-binary")
+        .put("drive1", "item-a", b"report-content-binary", None)
         .await?;
-    cache.disk.put("drive1", "item-b", b"notes go here").await?;
+    cache
+        .disk
+        .put("drive1", "item-b", b"notes go here", None)
+        .await?;
 
     cache.memory.insert(10, item1.clone());
     cache.memory.insert(11, item2.clone());
@@ -262,11 +265,17 @@ async fn test_cache_eviction_lru() -> cloudmount_core::Result<()> {
     // Max 50 bytes — each file is 20 bytes, so 3rd insert triggers eviction of oldest
     let cache = DiskCache::new(content_dir, 50, &db_path);
 
-    cache.put("d1", "oldest", b"AAAAAAAAAAAAAAAAAAAA").await?; // 20 bytes
+    cache
+        .put("d1", "oldest", b"AAAAAAAAAAAAAAAAAAAA", None)
+        .await?; // 20 bytes
     sleep(Duration::from_millis(10)).await;
-    cache.put("d1", "middle", b"BBBBBBBBBBBBBBBBBBBB").await?; // 20 bytes → 40 total
+    cache
+        .put("d1", "middle", b"BBBBBBBBBBBBBBBBBBBB", None)
+        .await?; // 20 bytes → 40 total
     sleep(Duration::from_millis(10)).await;
-    cache.put("d1", "newest", b"CCCCCCCCCCCCCCCCCCCC").await?; // 20 bytes → 60 → evict oldest
+    cache
+        .put("d1", "newest", b"CCCCCCCCCCCCCCCCCCCC", None)
+        .await?; // 20 bytes → 60 → evict oldest
 
     assert!(
         cache.get("d1", "oldest").await.is_none(),
@@ -287,7 +296,9 @@ async fn test_cache_eviction_lru() -> cloudmount_core::Result<()> {
 
     // Insert another item — should evict "middle" now
     sleep(Duration::from_millis(10)).await;
-    cache.put("d1", "extra", b"DDDDDDDDDDDDDDDDDDDD").await?;
+    cache
+        .put("d1", "extra", b"DDDDDDDDDDDDDDDDDDDD", None)
+        .await?;
 
     assert!(
         cache.get("d1", "middle").await.is_none(),
@@ -866,7 +877,7 @@ async fn test_initialization_sequence() -> cloudmount_core::Result<()> {
         .upsert_item(ino, "test-drive-001", &item, None)?;
     cache
         .disk
-        .put("test-drive-001", "item-init-1", b"init-content")
+        .put("test-drive-001", "item-init-1", b"init-content", None)
         .await?;
 
     assert_eq!(cache.memory.get(ino).unwrap().name, "init-test.txt");

@@ -96,6 +96,32 @@ pub async fn run_delta_sync(
             .and_then(|p| p.id.as_deref())
             .map(|pid| inode_allocator(pid));
 
+        // For file items, check if content changed (eTag mismatch) and invalidate disk cache
+        if item.file.is_some() {
+            let old_etag = cache
+                .sqlite
+                .get_item_by_id(&item.id)
+                .ok()
+                .flatten()
+                .and_then(|(_, old_item)| old_item.etag);
+
+            let new_etag = &item.etag;
+            let etag_changed = match (&old_etag, new_etag) {
+                (Some(old), Some(new)) => old != new,
+                (None, _) => false, // new item or no prior eTag — no invalidation needed
+                (Some(_), None) => false, // server didn't provide eTag — skip
+            };
+
+            if etag_changed {
+                let _ = cache.disk.remove(drive_id, &item.id).await;
+                cache.dirty_inodes.insert(inode);
+                tracing::debug!(
+                    "delta sync: eTag changed for {}, invalidated disk cache and marked inode {inode} dirty",
+                    item.id
+                );
+            }
+        }
+
         cache.memory.insert(inode, item.clone());
         upserts.push((inode, item.clone(), parent_inode));
     }

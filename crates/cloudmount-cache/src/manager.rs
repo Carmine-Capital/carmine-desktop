@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use dashmap::DashSet;
+
 use crate::disk::DiskCache;
 use crate::memory::MemoryCache;
 use crate::sqlite::SqliteStore;
@@ -10,6 +12,8 @@ pub struct CacheManager {
     pub sqlite: SqliteStore,
     pub disk: DiskCache,
     pub writeback: WriteBackBuffer,
+    /// Inodes known to have stale content (set by delta sync, checked by open_file).
+    pub dirty_inodes: DashSet<u64>,
 }
 
 impl CacheManager {
@@ -32,6 +36,7 @@ impl CacheManager {
             sqlite,
             disk,
             writeback,
+            dirty_inodes: DashSet::new(),
         })
     }
 
@@ -39,6 +44,7 @@ impl CacheManager {
         self.memory.clear();
         self.sqlite.clear()?;
         self.disk.clear().await?;
+        self.dirty_inodes.clear();
         Ok(())
     }
 }
