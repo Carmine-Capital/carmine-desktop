@@ -30,7 +30,7 @@ The system SHALL attempt to restore authentication tokens from secure storage on
 
 #### Scenario: No tokens found or refresh fails (desktop mode)
 - **WHEN** no stored tokens are found or the refresh token has been revoked, and the application is running in desktop mode
-- **THEN** the system shows the sign-in wizard and waits for user authentication
+- **THEN** the system shows the sign-in wizard and waits for user authentication, regardless of whether this is the first run or a subsequent launch after sign-out
 
 #### Scenario: No tokens found or refresh fails (headless mode)
 - **WHEN** no stored tokens are found or the refresh token has been revoked, and the application is running in headless mode
@@ -52,11 +52,15 @@ The system SHALL manage the lifecycle of filesystem mounts — starting, stoppin
 
 #### Scenario: Start mount
 - **WHEN** the system needs to mount a drive (after sign-in, on startup with valid tokens, or when a new mount is added)
-- **THEN** it resolves the drive root item from the Graph API, creates the mount point directory if it does not exist, starts a FUSE or CfApi session for the drive with the root inode pre-seeded, adds the drive to the delta sync timer's drive list, and sends a "Mount Ready" notification
+- **THEN** it resolves the drive root item from the Graph API, detects and cleans up any stale FUSE mount at the target path, creates the mount point directory if it does not exist, starts a FUSE or CfApi session for the drive with the root inode pre-seeded, adds the drive to the delta sync timer's drive list, and sends a "Mount Ready" notification
 
 #### Scenario: Start mount failure — root resolution
 - **WHEN** the system attempts to start a mount but the drive root item cannot be fetched from the Graph API
 - **THEN** the mount is skipped, an error is logged with the drive name and reason, no notification is sent, and other mounts continue unaffected
+
+#### Scenario: Start mount — stale FUSE mount detected
+- **WHEN** the system attempts to create or access the mount point directory and the path is a stale FUSE mount (stat returns ENOTCONN or EIO)
+- **THEN** the system attempts to clean up the stale mount via `fusermount -u` (or `umount` on macOS), logs the cleanup result, and retries directory creation; if cleanup fails, the mount is skipped with an actionable error message suggesting manual `fusermount -u <path>`
 
 #### Scenario: Stop mount
 - **WHEN** the system needs to unmount a drive (on sign-out, mount removal, or application quit)
@@ -64,7 +68,7 @@ The system SHALL manage the lifecycle of filesystem mounts — starting, stoppin
 
 #### Scenario: Start all mounts after authentication
 - **WHEN** the user successfully authenticates or tokens are restored on startup
-- **THEN** the system starts mounts for all enabled mount configurations in order, skipping any with errors (invalid mount point, missing drive_id, root resolution failure), and logs skipped mounts with the reason
+- **THEN** the system starts mounts for all enabled mount configurations in order, skipping any with errors (invalid mount point, missing drive_id, root resolution failure, unrecoverable stale mount), and logs skipped mounts with the reason
 
 #### Scenario: Stop all mounts on sign-out
 - **WHEN** the user signs out
