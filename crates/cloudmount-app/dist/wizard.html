@@ -40,7 +40,7 @@
       <h1 id="app-title">CloudMount</h1>
       <p>Mount your OneDrive and SharePoint files as local folders.</p>
       <div id="preconfigured-mounts" class="mount-list" style="display:none"></div>
-      <button onclick="startSignIn()">Sign in with Microsoft</button>
+      <button id="sign-in-btn">Sign in with Microsoft</button>
     </div>
     <div id="step-signing-in" class="step">
       <div class="spinner"></div>
@@ -48,31 +48,31 @@
       <p>A browser window should have opened. If not, copy the URL below and open it manually.</p>
       <div class="url-box">
         <input id="auth-url" class="url-input" type="text" readonly>
-        <button id="copy-btn" onclick="copyAuthUrl()">Copy URL</button>
+        <button id="copy-btn">Copy URL</button>
       </div>
       <div id="auth-error" class="error-msg" style="display:none"></div>
-      <button class="btn-secondary" onclick="cancelSignIn()" style="margin-top:1rem">Cancel</button>
+      <button id="cancel-btn" class="btn-secondary" style="margin-top:1rem">Cancel</button>
     </div>
     <div id="step-source" class="step">
       <h1>Select Source</h1>
       <p>What would you like to mount?</p>
-      <button onclick="selectSource('drive')">OneDrive</button>
-      <button onclick="selectSource('sharepoint')">SharePoint Site</button>
+      <button id="source-drive-btn">OneDrive</button>
+      <button id="source-sp-btn">SharePoint Site</button>
       <div id="source-error" class="error-msg" style="display:none"></div>
     </div>
     <div id="step-sharepoint" class="step">
-      <button class="sp-back-link" onclick="showStep('step-source')">&larr; Back</button>
+      <button id="sp-back-btn" class="sp-back-link">&larr; Back</button>
       <h1>Select SharePoint Site</h1>
       <p>Search for a SharePoint site to mount.</p>
       <div class="sp-search-row">
         <input id="sp-search" type="text" placeholder="Search sites&hellip;">
-        <button onclick="searchSites()">Search</button>
+        <button id="sp-search-btn">Search</button>
       </div>
       <div id="sp-spinner" class="spinner" style="display:none"></div>
       <div id="sp-error" class="error-msg" style="display:none"></div>
       <div id="sp-sites"></div>
       <div id="sp-libraries" style="display:none">
-        <button class="sp-back-link" onclick="showSitesBack()">&larr; Back to sites</button>
+        <button id="sp-back-sites-btn" class="sp-back-link">&larr; Back to sites</button>
         <h2 style="margin-bottom:0.75rem;font-size:1.1rem">Select Library</h2>
         <div id="sp-lib-list"></div>
       </div>
@@ -81,7 +81,7 @@
       <h1>All Set</h1>
       <p>Your drives are mounted and ready to use.</p>
       <ul id="done-mount-list" class="mount-list" style="list-style:none"></ul>
-      <button onclick="window.__TAURI__.window.getCurrentWindow().close()">Close</button>
+      <button id="wizard-close-btn">Close</button>
     </div>
   </div>
   <script src="wizard.js"></script>

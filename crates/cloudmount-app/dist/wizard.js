@@ -287,6 +287,18 @@ async function init() {
     }
   } catch (e) { console.error(e); }
 
+  document.getElementById('sign-in-btn').addEventListener('click', startSignIn);
+  document.getElementById('copy-btn').addEventListener('click', copyAuthUrl);
+  document.getElementById('cancel-btn').addEventListener('click', cancelSignIn);
+  document.getElementById('source-drive-btn').addEventListener('click', () => selectSource('drive'));
+  document.getElementById('source-sp-btn').addEventListener('click', () => selectSource('sharepoint'));
+  document.getElementById('sp-back-btn').addEventListener('click', () => showStep('step-source'));
+  document.getElementById('sp-search-btn').addEventListener('click', searchSites);
+  document.getElementById('sp-back-sites-btn').addEventListener('click', showSitesBack);
+  document.getElementById('wizard-close-btn').addEventListener('click', () => {
+    window.__TAURI__.window.getCurrentWindow().close();
+  });
+
   const spSearch = document.getElementById('sp-search');
   if (spSearch) {
     spSearch.addEventListener('keydown', (e) => {
