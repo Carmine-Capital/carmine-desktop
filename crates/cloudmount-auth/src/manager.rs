@@ -20,11 +20,7 @@ struct AuthState {
 }
 
 impl AuthManager {
-    pub fn new(
-        client_id: String,
-        tenant_id: Option<String>,
-        opener: OpenerFn,
-    ) -> Self {
+    pub fn new(client_id: String, tenant_id: Option<String>, opener: OpenerFn) -> Self {
         Self {
             state: RwLock::new(AuthState::default()),
             client_id,
