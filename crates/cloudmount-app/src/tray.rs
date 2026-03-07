@@ -69,7 +69,7 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             let config = state.effective_config.lock().unwrap();
             if let Some(mc) = config.mounts.iter().find(|m| m.id == mount_id) {
                 let expanded = cloudmount_core::config::expand_mount_point(&mc.mount_point);
-                let _ = open::that(&expanded);
+                let _ = crate::open_with_clean_env(&expanded);
             }
         }
         return;

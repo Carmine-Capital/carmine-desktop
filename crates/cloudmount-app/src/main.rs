@@ -24,6 +24,27 @@ use std::sync::Arc;
 
 type OpenerFn = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
+pub(crate) fn open_with_clean_env(path: &str) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::process::Command::new("xdg-open")
+            .arg(path)
+            .env_remove("LD_LIBRARY_PATH")
+            .env_remove("LD_PRELOAD")
+            .status()
+            .map_err(|e| format!("failed to spawn xdg-open: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("xdg-open exited with {status}"))
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        open::that(path).map_err(|e| e.to_string())
+    }
+}
+
 use cloudmount_auth::AuthManager;
 use cloudmount_cache::CacheManager;
 use cloudmount_cache::sync::run_delta_sync;
@@ -403,22 +424,7 @@ fn run_desktop(
     let opener: OpenerFn = {
         #[cfg(target_os = "linux")]
         {
-            // On Linux, spawn xdg-open directly so we can strip AppImage env vars
-            // (LD_LIBRARY_PATH, LD_PRELOAD) that cause gio/GLib version mismatches
-            // and silent browser launch failures. Use .status() for error observability.
-            Arc::new(|url: &str| {
-                let status = std::process::Command::new("xdg-open")
-                    .arg(url)
-                    .env_remove("LD_LIBRARY_PATH")
-                    .env_remove("LD_PRELOAD")
-                    .status()
-                    .map_err(|e| format!("failed to spawn xdg-open: {e}"))?;
-                if status.success() {
-                    Ok(())
-                } else {
-                    Err(format!("xdg-open exited with {status}"))
-                }
-            })
+            Arc::new(|url: &str| open_with_clean_env(url))
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -939,7 +945,7 @@ fn run_headless(
         let opener: OpenerFn =
             Arc::new(|url: &str| {
                 if cloudmount_auth::oauth::has_display() {
-                    open::that(url).map_err(|e| e.to_string())
+                    open_with_clean_env(url)
                 } else {
                     Err("no display available".to_string())
                 }
