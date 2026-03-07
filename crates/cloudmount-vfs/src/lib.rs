@@ -13,6 +13,9 @@ pub use fuse_fs::CloudMountFs;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use mount::MountHandle;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use mount::cleanup_stale_mount;
+
 #[cfg(target_os = "windows")]
 pub mod cfapi;
 

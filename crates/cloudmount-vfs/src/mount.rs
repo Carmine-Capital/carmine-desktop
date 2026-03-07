@@ -10,6 +10,74 @@ use cloudmount_graph::GraphClient;
 
 const UNMOUNT_FLUSH_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Detect and clean up a stale FUSE mount at `path`.
+///
+/// Returns `true` if the path is usable (not stale, or cleanup succeeded).
+/// Returns `false` if the path is a stale mount that could not be cleaned up.
+pub fn cleanup_stale_mount(path: &str) -> bool {
+    let meta = std::fs::metadata(path);
+    match meta {
+        Ok(_) => true, // Path exists and is accessible — not stale
+        Err(e) => {
+            let raw = e.raw_os_error();
+            // ENOTCONN (107) = "Transport endpoint is not connected"
+            // EIO (5) = "Input/output error"
+            if raw == Some(107) || raw == Some(5) {
+                tracing::warn!(
+                    "stale FUSE mount detected at {path} (errno {:?}), attempting cleanup",
+                    raw.unwrap()
+                );
+                if try_unmount(path) {
+                    tracing::info!("stale mount at {path} cleaned up successfully");
+                    true
+                } else {
+                    tracing::warn!(
+                        "failed to clean up stale mount at {path} — run `fusermount -u {path}` manually"
+                    );
+                    false
+                }
+            } else {
+                // Path doesn't exist or other benign error — not stale
+                true
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn try_unmount(path: &str) -> bool {
+    // Try fusermount3 first (Fedora 43+ default), then fusermount
+    for cmd in &["fusermount3", "fusermount"] {
+        match std::process::Command::new(cmd).arg("-u").arg(path).output() {
+            Ok(output) if output.status.success() => return true,
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::debug!("{cmd} -u {path} failed: {stderr}");
+            }
+            Err(e) => {
+                tracing::debug!("{cmd} not available: {e}");
+            }
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn try_unmount(path: &str) -> bool {
+    match std::process::Command::new("umount").arg(path).output() {
+        Ok(output) if output.status.success() => true,
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::debug!("umount {path} failed: {stderr}");
+            false
+        }
+        Err(e) => {
+            tracing::debug!("umount not available: {e}");
+            false
+        }
+    }
+}
+
 pub struct MountHandle {
     session: fuser::BackgroundSession,
     cache: Arc<CacheManager>,

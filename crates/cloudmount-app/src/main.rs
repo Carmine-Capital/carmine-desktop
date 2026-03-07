@@ -429,6 +429,11 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
         tray::update_tray_menu(app);
     } else if first_run {
         tray::open_or_focus_window(app, "wizard", "Setup", "wizard.html");
+    } else {
+        // Post-sign-out restart: config exists but no valid tokens.
+        // Reopen the wizard so the user can re-authenticate.
+        tracing::info!("no valid tokens and not first run — opening wizard for re-authentication");
+        tray::open_or_focus_window(app, "wizard", "Setup", "wizard.html");
     }
 
     // Signal handler — graceful shutdown on Ctrl+C / SIGTERM
@@ -488,6 +493,13 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         .ok_or_else(|| format!("mount '{}' has no drive_id", mount_config.name))?;
 
     let mountpoint = expand_mount_point(&mount_config.mount_point);
+
+    if !cloudmount_vfs::cleanup_stale_mount(&mountpoint) {
+        return Err(format!(
+            "stale FUSE mount at {mountpoint} could not be cleaned up — run `fusermount -u {mountpoint}` manually"
+        ));
+    }
+
     std::fs::create_dir_all(&mountpoint).map_err(|e| format!("create mountpoint failed: {e}"))?;
 
     let state = app.state::<AppState>();
@@ -928,6 +940,16 @@ fn run_headless(
             let drive_id = mount_config.drive_id.as_deref().unwrap();
 
             let mountpoint = expand_mount_point(&mount_config.mount_point);
+
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if !cloudmount_vfs::cleanup_stale_mount(&mountpoint) {
+                tracing::error!(
+                    "mount '{}': stale FUSE mount at {mountpoint} could not be cleaned up, skipping",
+                    mount_config.name
+                );
+                continue;
+            }
+
             if let Err(e) = std::fs::create_dir_all(&mountpoint) {
                 tracing::error!("create mountpoint failed for '{}': {e}", mount_config.name);
                 continue;
