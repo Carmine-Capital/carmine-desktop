@@ -727,6 +727,22 @@ impl CoreOps {
     /// Validates disk cache freshness via dirty-inode set, eTag, and size checks.
     pub fn open_file(&self, ino: u64) -> VfsResult<u64> {
         let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
+
+        // Local files haven't been uploaded yet — Graph API would reject any download
+        // attempt with 400. If another handle is already open (e.g. LibreOffice opens
+        // the same file twice during its save flow), clone its in-memory content;
+        // otherwise return an empty buffer.
+        if item_id.starts_with("local:") {
+            let content = self
+                .open_files
+                .find_by_ino(ino)
+                .and_then(|e| e.content.as_complete().cloned())
+                .unwrap_or_default();
+            return Ok(self
+                .open_files
+                .insert(ino, DownloadState::Complete(content)));
+        }
+
         let item = self.lookup_item(ino);
 
         // Check writeback buffer first (pending local writes)
