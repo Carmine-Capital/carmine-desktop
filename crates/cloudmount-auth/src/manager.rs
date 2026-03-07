@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 type OpenerFn = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
@@ -10,6 +11,7 @@ pub struct AuthManager {
     tenant_id: Option<String>,
     redirect_port: u16,
     opener: OpenerFn,
+    active_cancel: Arc<Mutex<Option<CancellationToken>>>,
 }
 
 #[derive(Debug, Default)]
@@ -27,6 +29,14 @@ impl AuthManager {
             tenant_id,
             redirect_port: 0,
             opener,
+            active_cancel: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn cancel(&self) {
+        let mut guard = self.active_cancel.lock().unwrap();
+        if let Some(token) = guard.take() {
+            token.cancel();
         }
     }
 
@@ -78,7 +88,16 @@ impl AuthManager {
         &self,
         url_tx: Option<tokio::sync::oneshot::Sender<String>>,
     ) -> cloudmount_core::Result<()> {
-        let (code, verifier, actual_port) = self.authorize(url_tx).await?;
+        {
+            let mut guard = self.active_cancel.lock().unwrap();
+            if let Some(old) = guard.take() {
+                old.cancel();
+            }
+            *guard = Some(CancellationToken::new());
+        }
+        let result = self.authorize(url_tx).await;
+        self.active_cancel.lock().unwrap().take();
+        let (code, verifier, actual_port) = result?;
         self.exchange_code(&code, &verifier, actual_port).await
     }
 
@@ -99,12 +118,17 @@ impl AuthManager {
         &self,
         url_tx: Option<tokio::sync::oneshot::Sender<String>>,
     ) -> cloudmount_core::Result<(String, String, u16)> {
+        let cancel_token = {
+            let guard = self.active_cancel.lock().unwrap();
+            guard.as_ref().map(|t| t.child_token()).unwrap_or_default()
+        };
         crate::oauth::run_pkce_flow(
             &self.client_id,
             self.tenant_id.as_deref(),
             self.redirect_port,
             self.opener.as_ref(),
             url_tx,
+            cancel_token,
         )
         .await
     }

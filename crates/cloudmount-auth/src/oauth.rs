@@ -37,6 +37,7 @@ pub async fn run_pkce_flow(
     port: u16,
     opener: &(dyn Fn(&str) -> Result<(), String> + Send + Sync),
     url_tx: Option<tokio::sync::oneshot::Sender<String>>,
+    cancel_token: tokio_util::sync::CancellationToken,
 ) -> cloudmount_core::Result<(String, String, u16)> {
     let (verifier, challenge) = generate_pkce();
 
@@ -84,12 +85,15 @@ pub async fn run_pkce_flow(
         }
     }
 
-    let code = wait_for_callback(listener).await?;
+    let code = wait_for_callback(listener, cancel_token).await?;
 
     Ok((code, verifier, actual_port))
 }
 
-async fn wait_for_callback(listener: tokio::net::TcpListener) -> cloudmount_core::Result<String> {
+async fn wait_for_callback(
+    listener: tokio::net::TcpListener,
+    cancel_token: tokio_util::sync::CancellationToken,
+) -> cloudmount_core::Result<String> {
     use http_body_util::Full;
     use hyper::body::Bytes;
     use hyper::server::conn::http1;
@@ -98,10 +102,16 @@ async fn wait_for_callback(listener: tokio::net::TcpListener) -> cloudmount_core
     use hyper_util::rt::TokioIo;
 
     let timeout = tokio::time::Duration::from_secs(120);
-    let (stream, _addr) = tokio::time::timeout(timeout, listener.accept())
-        .await
-        .map_err(|_| cloudmount_core::Error::Auth("authentication timed out after 120s".into()))?
-        .map_err(|e| cloudmount_core::Error::Auth(format!("callback accept failed: {e}")))?;
+    let (stream, _addr) = tokio::select! {
+        result = tokio::time::timeout(timeout, listener.accept()) => {
+            result
+                .map_err(|_| cloudmount_core::Error::Auth("authentication timed out after 120s".into()))?
+                .map_err(|e| cloudmount_core::Error::Auth(format!("callback accept failed: {e}")))?
+        }
+        _ = cancel_token.cancelled() => {
+            return Err(cloudmount_core::Error::Auth("sign-in cancelled".into()));
+        }
+    };
 
     let io = TokioIo::new(stream);
     let (tx, rx) = tokio::sync::oneshot::channel::<String>();
