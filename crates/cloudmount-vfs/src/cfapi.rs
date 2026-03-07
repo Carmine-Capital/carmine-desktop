@@ -151,7 +151,7 @@ impl SyncFilter for CloudMountCfFilter {
         let content = match self.core.read_range_direct(ino, offset, length) {
             Ok(c) => c,
             Err(e) => {
-                tracing::warn!(path = %rel_path, "cfapi: fetch_data download failed: {e}");
+                tracing::warn!(path = %rel_path, "cfapi: fetch_data download failed: {e:?}");
                 return Ok(());
             }
         };
