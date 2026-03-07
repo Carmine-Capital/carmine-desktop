@@ -165,8 +165,8 @@ fn fuse_available() -> bool {
 #[cfg(target_os = "windows")]
 fn cfapi_version_meets(min_major: u32, min_minor: u32, min_build: u32) -> bool {
     use windows::Win32::System::SystemInformation::{
-        OSVERSIONINFOEXW, VER_BUILDNUMBER, VER_MAJORVERSION, VER_MINORVERSION, VER_PRODUCT_TYPE,
-        VerSetConditionMask, VerifyVersionInfoW,
+        OSVERSIONINFOEXW, VER_BUILDNUMBER, VER_MAJORVERSION, VER_MINORVERSION, VerSetConditionMask,
+        VerifyVersionInfoW,
     };
 
     let mut osvi = OSVERSIONINFOEXW {
@@ -174,22 +174,20 @@ fn cfapi_version_meets(min_major: u32, min_minor: u32, min_build: u32) -> bool {
         dwMajorVersion: min_major,
         dwMinorVersion: min_minor,
         dwBuildNumber: min_build,
-        wProductType: 1, // VER_NT_WORKSTATION
         ..Default::default()
     };
 
-    // 3 = VER_GREATER_EQUAL
+    // 3 = VER_GREATER_EQUAL; omit VER_PRODUCT_TYPE so this works on Windows Server too
     let condition_mask = unsafe {
         let cm = VerSetConditionMask(0, VER_MAJORVERSION, 3);
         let cm = VerSetConditionMask(cm, VER_MINORVERSION, 3);
-        let cm = VerSetConditionMask(cm, VER_BUILDNUMBER, 3);
-        VerSetConditionMask(cm, VER_PRODUCT_TYPE, 3)
+        VerSetConditionMask(cm, VER_BUILDNUMBER, 3)
     };
 
     unsafe {
         VerifyVersionInfoW(
             &mut osvi,
-            VER_MAJORVERSION | VER_MINORVERSION | VER_BUILDNUMBER | VER_PRODUCT_TYPE,
+            VER_MAJORVERSION | VER_MINORVERSION | VER_BUILDNUMBER,
             condition_mask,
         )
         .is_ok()
