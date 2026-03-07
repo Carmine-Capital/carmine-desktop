@@ -460,13 +460,7 @@ fn setup_core_ops_two_files(
         },
     );
 
-    let ops = Arc::new(CoreOps::new(
-        graph,
-        cache,
-        inodes,
-        DRIVE_ID.to_string(),
-        rt,
-    ));
+    let ops = Arc::new(CoreOps::new(graph, cache, inodes, DRIVE_ID.to_string(), rt));
     (ops, ino1, ino2)
 }
 
@@ -492,8 +486,7 @@ async fn copy_file_range_eligible_when_remote_full_file() {
             "/drives/{DRIVE_ID}/items/{FILE2_ITEM_ID}/content"
         )))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(b"12345".to_vec(), "application/octet-stream"),
+            ResponseTemplate::new(200).set_body_raw(b"12345".to_vec(), "application/octet-stream"),
         )
         .mount(&server)
         .await;
@@ -504,9 +497,7 @@ async fn copy_file_range_eligible_when_remote_full_file() {
         .and(path(format!(
             "/drives/{DRIVE_ID}/items/{FILE_ITEM_ID}/copy"
         )))
-        .respond_with(
-            ResponseTemplate::new(202).insert_header("Location", monitor_url.as_str()),
-        )
+        .respond_with(ResponseTemplate::new(202).insert_header("Location", monitor_url.as_str()))
         .mount(&server)
         .await;
 
@@ -522,9 +513,7 @@ async fn copy_file_range_eligible_when_remote_full_file() {
 
     // get new item
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/drives/{DRIVE_ID}/items/new-copied-id"
-        )))
+        .and(path(format!("/drives/{DRIVE_ID}/items/new-copied-id")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "new-copied-id",
             "name": "dest.txt",
@@ -653,13 +642,7 @@ async fn copy_file_range_ineligible_local_source() {
         .mount(&server)
         .await;
 
-    let ops = Arc::new(CoreOps::new(
-        graph,
-        cache,
-        inodes,
-        DRIVE_ID.to_string(),
-        rt,
-    ));
+    let ops = Arc::new(CoreOps::new(graph, cache, inodes, DRIVE_ID.to_string(), rt));
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
@@ -705,8 +688,7 @@ async fn copy_file_range_ineligible_partial_offset() {
             "/drives/{DRIVE_ID}/items/{FILE2_ITEM_ID}/content"
         )))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(b"12345".to_vec(), "application/octet-stream"),
+            ResponseTemplate::new(200).set_body_raw(b"12345".to_vec(), "application/octet-stream"),
         )
         .mount(&server)
         .await;
@@ -758,8 +740,7 @@ async fn copy_file_range_ineligible_len_too_small() {
             "/drives/{DRIVE_ID}/items/{FILE2_ITEM_ID}/content"
         )))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(b"12345".to_vec(), "application/octet-stream"),
+            ResponseTemplate::new(200).set_body_raw(b"12345".to_vec(), "application/octet-stream"),
         )
         .mount(&server)
         .await;
@@ -845,13 +826,7 @@ fn setup_core_ops_large_file(
         },
     );
 
-    let ops = Arc::new(CoreOps::new(
-        graph,
-        cache,
-        inodes,
-        DRIVE_ID.to_string(),
-        rt,
-    ));
+    let ops = Arc::new(CoreOps::new(graph, cache, inodes, DRIVE_ID.to_string(), rt));
     (ops, file_ino)
 }
 
@@ -978,8 +953,7 @@ async fn streaming_open_read_lifecycle() {
             "/drives/{DRIVE_ID}/items/{LARGE_FILE_ID}/content"
         )))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(content.clone(), "application/octet-stream"),
+            ResponseTemplate::new(200).set_body_raw(content.clone(), "application/octet-stream"),
         )
         .mount(&server)
         .await;
@@ -1154,8 +1128,7 @@ async fn write_to_streaming_file_blocks_until_complete() {
             "/drives/{DRIVE_ID}/items/{LARGE_FILE_ID}/content"
         )))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(content.clone(), "application/octet-stream"),
+            ResponseTemplate::new(200).set_body_raw(content.clone(), "application/octet-stream"),
         )
         .mount(&server)
         .await;

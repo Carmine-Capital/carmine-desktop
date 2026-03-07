@@ -239,9 +239,8 @@ impl GraphClient {
         &self,
         drive_id: &str,
         item_id: &str,
-    ) -> cloudmount_core::Result<
-        Pin<Box<dyn Stream<Item = cloudmount_core::Result<Bytes>> + Send>>,
-    > {
+    ) -> cloudmount_core::Result<Pin<Box<dyn Stream<Item = cloudmount_core::Result<Bytes>> + Send>>>
+    {
         let base_url = &self.base_url;
         let token = self.token().await?;
         let resp = self
@@ -256,10 +255,9 @@ impl GraphClient {
 
         let resp = Self::handle_error(resp).await?;
 
-        Ok(Box::pin(
-            resp.bytes_stream()
-                .map(|r| r.map_err(|e| cloudmount_core::Error::Network(e.to_string()))),
-        ))
+        Ok(Box::pin(resp.bytes_stream().map(|r| {
+            r.map_err(|e| cloudmount_core::Error::Network(e.to_string()))
+        })))
     }
 
     pub async fn upload_small(
@@ -608,10 +606,7 @@ impl GraphClient {
         .await
     }
 
-    pub async fn poll_copy_status(
-        &self,
-        monitor_url: &str,
-    ) -> cloudmount_core::Result<CopyStatus> {
+    pub async fn poll_copy_status(&self, monitor_url: &str) -> cloudmount_core::Result<CopyStatus> {
         let resp = self
             .http
             .get(monitor_url)
@@ -628,19 +623,22 @@ impl GraphClient {
         }
 
         let monitor: CopyMonitorResponse =
-            resp.json().await.map_err(|e| cloudmount_core::Error::GraphApi {
-                status: 0,
-                message: format!("copy monitor parse failed: {e}"),
-            })?;
+            resp.json()
+                .await
+                .map_err(|e| cloudmount_core::Error::GraphApi {
+                    status: 0,
+                    message: format!("copy monitor parse failed: {e}"),
+                })?;
 
         match monitor.status.as_str() {
             "completed" => {
-                let resource_id = monitor.resource_id.ok_or_else(|| {
-                    cloudmount_core::Error::GraphApi {
-                        status: 0,
-                        message: "copy completed but no resourceId".into(),
-                    }
-                })?;
+                let resource_id =
+                    monitor
+                        .resource_id
+                        .ok_or_else(|| cloudmount_core::Error::GraphApi {
+                            status: 0,
+                            message: "copy completed but no resourceId".into(),
+                        })?;
                 Ok(CopyStatus::Completed { resource_id })
             }
             "failed" => {

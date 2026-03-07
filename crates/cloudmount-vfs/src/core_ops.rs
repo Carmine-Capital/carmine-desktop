@@ -347,40 +347,50 @@ impl CoreOps {
             return Some((child_inode, item));
         }
 
-        if let Ok(children) = self.cache.sqlite.get_children(parent_ino) {
-            for (_, item) in children {
-                if item.name == name {
-                    let resolved_ino = self.inodes.allocate(&item.id);
-                    self.cache.memory.insert(resolved_ino, item.clone());
-                    return Some((resolved_ino, item));
+        match self.cache.sqlite.get_children(parent_ino) {
+            Ok(children) => {
+                for (_, item) in children {
+                    if item.name == name {
+                        let resolved_ino = self.inodes.allocate(&item.id);
+                        self.cache.memory.insert(resolved_ino, item.clone());
+                        return Some((resolved_ino, item));
+                    }
                 }
+            }
+            Err(e) => {
+                tracing::warn!(parent_ino, name, "find_child sqlite lookup failed: {e}");
             }
         }
 
         let parent_item_id = self.inodes.get_item_id(parent_ino)?;
-        if let Ok(children) = self
+        match self
             .rt
             .block_on(self.graph.list_children(&self.drive_id, &parent_item_id))
         {
-            let mut children_map = std::collections::HashMap::new();
-            let mut found = None;
+            Ok(children) => {
+                let mut children_map = std::collections::HashMap::new();
+                let mut found = None;
 
-            for item in &children {
-                let child_inode = self.inodes.allocate(&item.id);
-                children_map.insert(item.name.clone(), child_inode);
-                self.cache.memory.insert(child_inode, item.clone());
-                if item.name == name && found.is_none() {
-                    found = Some((child_inode, item.clone()));
+                for item in &children {
+                    let child_inode = self.inodes.allocate(&item.id);
+                    children_map.insert(item.name.clone(), child_inode);
+                    self.cache.memory.insert(child_inode, item.clone());
+                    if item.name == name && found.is_none() {
+                        found = Some((child_inode, item.clone()));
+                    }
                 }
-            }
 
-            if let Some(parent_item) = self.lookup_item(parent_ino) {
-                self.cache
-                    .memory
-                    .insert_with_children(parent_ino, parent_item, children_map);
-            }
+                if let Some(parent_item) = self.lookup_item(parent_ino) {
+                    self.cache
+                        .memory
+                        .insert_with_children(parent_ino, parent_item, children_map);
+                }
 
-            return found;
+                return found;
+            }
+            Err(e) => {
+                tracing::warn!(parent_ino, name, "find_child graph fallback failed: {e}");
+            }
         }
         None
     }
@@ -396,47 +406,58 @@ impl CoreOps {
             return result;
         }
 
-        if let Ok(children) = self.cache.sqlite.get_children(parent_ino)
-            && !children.is_empty()
-        {
-            return children
-                .into_iter()
-                .map(|(_, item)| {
-                    let resolved_ino = self.inodes.allocate(&item.id);
-                    self.cache.memory.insert(resolved_ino, item.clone());
-                    (resolved_ino, item)
-                })
-                .collect();
+        match self.cache.sqlite.get_children(parent_ino) {
+            Ok(children) if !children.is_empty() => {
+                return children
+                    .into_iter()
+                    .map(|(_, item)| {
+                        let resolved_ino = self.inodes.allocate(&item.id);
+                        self.cache.memory.insert(resolved_ino, item.clone());
+                        (resolved_ino, item)
+                    })
+                    .collect();
+            }
+            Ok(_) => {
+                tracing::debug!(parent_ino, "list_children: no children in sqlite");
+            }
+            Err(e) => {
+                tracing::warn!(parent_ino, "list_children sqlite lookup failed: {e}");
+            }
         }
 
         let Some(item_id) = self.inodes.get_item_id(parent_ino) else {
+            tracing::warn!(parent_ino, "list_children: no item_id for inode");
             return Vec::new();
         };
-        if let Ok(items) = self
+        match self
             .rt
             .block_on(self.graph.list_children(&self.drive_id, &item_id))
         {
-            let mut children_map = std::collections::HashMap::new();
-            let result: Vec<_> = items
-                .into_iter()
-                .map(|item| {
-                    let ino = self.inodes.allocate(&item.id);
-                    children_map.insert(item.name.clone(), ino);
-                    self.cache.memory.insert(ino, item.clone());
-                    (ino, item)
-                })
-                .collect();
+            Ok(items) => {
+                let mut children_map = std::collections::HashMap::new();
+                let result: Vec<_> = items
+                    .into_iter()
+                    .map(|item| {
+                        let ino = self.inodes.allocate(&item.id);
+                        children_map.insert(item.name.clone(), ino);
+                        self.cache.memory.insert(ino, item.clone());
+                        (ino, item)
+                    })
+                    .collect();
 
-            if let Some(parent_item) = self.lookup_item(parent_ino) {
-                self.cache
-                    .memory
-                    .insert_with_children(parent_ino, parent_item, children_map);
+                if let Some(parent_item) = self.lookup_item(parent_ino) {
+                    self.cache
+                        .memory
+                        .insert_with_children(parent_ino, parent_item, children_map);
+                }
+
+                result
             }
-
-            return result;
+            Err(e) => {
+                tracing::error!(parent_ino, %item_id, "list_children graph fallback failed: {e}");
+                Vec::new()
+            }
         }
-
-        Vec::new()
     }
 
     /// Read file content from disk cache or download from Graph API.
@@ -677,7 +698,9 @@ impl CoreOps {
             .rt
             .block_on(self.cache.writeback.read(&self.drive_id, &item_id))
         {
-            return Ok(self.open_files.insert(ino, DownloadState::Complete(content)));
+            return Ok(self
+                .open_files
+                .insert(ino, DownloadState::Complete(content)));
         }
 
         // Check disk cache
@@ -685,7 +708,9 @@ impl CoreOps {
             .rt
             .block_on(self.cache.disk.get(&self.drive_id, &item_id))
         {
-            return Ok(self.open_files.insert(ino, DownloadState::Complete(content)));
+            return Ok(self
+                .open_files
+                .insert(ino, DownloadState::Complete(content)));
         }
 
         // Not cached — check file size for streaming decision
@@ -694,7 +719,9 @@ impl CoreOps {
         if file_size < SMALL_FILE_LIMIT {
             // Small file: download fully
             let content = self.read_content(ino)?;
-            Ok(self.open_files.insert(ino, DownloadState::Complete(content)))
+            Ok(self
+                .open_files
+                .insert(ino, DownloadState::Complete(content)))
         } else {
             // Large file: stream in background
             let buffer = Arc::new(StreamingBuffer::new(file_size as u64));
@@ -754,9 +781,10 @@ impl CoreOps {
                 .inodes
                 .get_item_id(open_file.ino)
                 .ok_or(VfsError::NotFound)?;
-            let content = open_file.content.as_complete().ok_or_else(|| {
-                VfsError::IoError("dirty file in non-complete state".to_string())
-            })?;
+            let content = open_file
+                .content
+                .as_complete()
+                .ok_or_else(|| VfsError::IoError("dirty file in non-complete state".to_string()))?;
             self.rt
                 .block_on(
                     self.cache
@@ -915,7 +943,9 @@ impl CoreOps {
         self.cache.memory.insert(inode, item.clone());
         self.cache.memory.add_child(parent_ino, name, inode);
 
-        let fh = self.open_files.insert(inode, DownloadState::Complete(Vec::new()));
+        let fh = self
+            .open_files
+            .insert(inode, DownloadState::Complete(Vec::new()));
 
         Ok((fh, inode, item))
     }
@@ -1086,8 +1116,7 @@ impl CoreOps {
         let src_item_id = src_item.id.clone();
         let src_size = src_item.size as u64;
 
-        let eligible =
-            !src_item_id.starts_with("local:") && offset_in == 0 && len >= src_size;
+        let eligible = !src_item_id.starts_with("local:") && offset_in == 0 && len >= src_size;
 
         if eligible {
             self.copy_file_range_server(ino_out, fh_out, &src_item)
@@ -1154,7 +1183,9 @@ impl CoreOps {
                             if retries > COPY_POLL_MAX_RETRIES {
                                 break Err(e);
                             }
-                            tracing::warn!("copy poll retry {retries}/{COPY_POLL_MAX_RETRIES}: {e}");
+                            tracing::warn!(
+                                "copy poll retry {retries}/{COPY_POLL_MAX_RETRIES}: {e}"
+                            );
                             std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                         }
                     }
@@ -1166,9 +1197,7 @@ impl CoreOps {
                     let new_item = self
                         .rt
                         .block_on(self.graph.get_item(&self.drive_id, &resource_id))
-                        .map_err(|e| {
-                            VfsError::IoError(format!("get copied item failed: {e}"))
-                        })?;
+                        .map_err(|e| VfsError::IoError(format!("get copied item failed: {e}")))?;
 
                     self.inodes.reassign(ino_out, &new_item.id);
                     self.cache.memory.insert(ino_out, new_item.clone());

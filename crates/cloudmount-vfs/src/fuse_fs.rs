@@ -5,8 +5,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use fuser::{
     BsdFileFlags, Config, CopyFileRangeFlags, Errno, FileAttr, FileHandle, FileType, Filesystem,
     FopenFlags, Generation, INodeNo, InitFlags, KernelConfig, LockOwner, MountOption, OpenFlags,
-    RenameFlags, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyDirectoryPlus,
-    ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request, TimeOrNow, WriteFlags,
+    RenameFlags, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty,
+    ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request, TimeOrNow, WriteFlags,
 };
 use tokio::runtime::Handle;
 
@@ -456,10 +456,9 @@ impl Filesystem for CloudMountFs {
         _flags: CopyFileRangeFlags,
         reply: ReplyWrite,
     ) {
-        match self
-            .ops
-            .copy_file_range(ino_in.0, fh_in.0, offset_in, ino_out.0, fh_out.0, offset_out, len)
-        {
+        match self.ops.copy_file_range(
+            ino_in.0, fh_in.0, offset_in, ino_out.0, fh_out.0, offset_out, len,
+        ) {
             Ok(n) => reply.written(n),
             Err(e) => reply.error(Self::vfs_err_to_errno(e)),
         }

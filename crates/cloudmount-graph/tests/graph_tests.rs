@@ -103,8 +103,7 @@ async fn download_streaming_yields_chunks() {
         .and(path("/drives/d1/items/i1/content"))
         .and(header("Authorization", "Bearer test-token"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(payload.clone(), "application/octet-stream"),
+            ResponseTemplate::new(200).set_body_raw(payload.clone(), "application/octet-stream"),
         )
         .expect(1)
         .mount(&server)
@@ -372,14 +371,15 @@ async fn copy_item_returns_monitor_url() {
 
     Mock::given(method("POST"))
         .and(path("/drives/d1/items/i1/copy"))
-        .respond_with(
-            ResponseTemplate::new(202).insert_header("Location", monitor.as_str()),
-        )
+        .respond_with(ResponseTemplate::new(202).insert_header("Location", monitor.as_str()))
         .mount(&server)
         .await;
 
     let client = make_client(&server.uri());
-    let url = client.copy_item("d1", "i1", "d1", "p1", "copy.txt").await.unwrap();
+    let url = client
+        .copy_item("d1", "i1", "d1", "p1", "copy.txt")
+        .await
+        .unwrap();
     assert_eq!(url, monitor);
 }
 
@@ -396,7 +396,10 @@ async fn copy_item_retries_on_429_and_500() {
         .await;
 
     let client = make_client(&server.uri());
-    let err = client.copy_item("d1", "i1", "d1", "p1", "copy.txt").await.unwrap_err();
+    let err = client
+        .copy_item("d1", "i1", "d1", "p1", "copy.txt")
+        .await
+        .unwrap_err();
     match err {
         cloudmount_core::Error::GraphApi { status, .. } => assert_eq!(status, 429),
         other => panic!("expected GraphApi 429, got: {other:?}"),
@@ -417,7 +420,10 @@ async fn copy_item_fails_on_404() {
         .await;
 
     let client = make_client(&server.uri());
-    let err = client.copy_item("d1", "i1", "d1", "p1", "copy.txt").await.unwrap_err();
+    let err = client
+        .copy_item("d1", "i1", "d1", "p1", "copy.txt")
+        .await
+        .unwrap_err();
     match err {
         cloudmount_core::Error::GraphApi { status, .. } => assert_eq!(status, 404),
         other => panic!("expected GraphApi 404, got: {other:?}"),
@@ -526,12 +532,21 @@ async fn poll_copy_status_sends_no_auth_header() {
         .await
         .unwrap();
 
-    assert!(matches!(status, cloudmount_graph::CopyStatus::Completed { .. }));
+    assert!(matches!(
+        status,
+        cloudmount_graph::CopyStatus::Completed { .. }
+    ));
 
     let requests = server.received_requests().await.unwrap();
-    let poll_req = requests.iter().find(|r| r.url.path() == "/monitor/abc").unwrap();
+    let poll_req = requests
+        .iter()
+        .find(|r| r.url.path() == "/monitor/abc")
+        .unwrap();
     assert!(
-        !poll_req.headers.iter().any(|(name, _)| name == "authorization"),
+        !poll_req
+            .headers
+            .iter()
+            .any(|(name, _)| name == "authorization"),
         "poll request should not contain Authorization header"
     );
 }
