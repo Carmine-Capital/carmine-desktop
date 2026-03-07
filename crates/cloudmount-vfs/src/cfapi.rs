@@ -131,17 +131,22 @@ impl SyncFilter for CloudMountCfFilter {
         ticket: ticket::FetchData,
         info: info::FetchData,
     ) -> CResult<()> {
-        // relative_path and resolve_path failures are logged and treated as non-fatal:
-        // returning Err here would cause proxy.rs to call CfExecute(..).unwrap() which
-        // panics across the FFI boundary (STATUS_STACK_BUFFER_OVERRUN) if CfExecute fails.
         let Some(rel_path) = self.relative_path(&request.path()) else {
             tracing::warn!("cfapi: fetch_data called for path outside sync root");
-            return Ok(());
+            return Err(CloudErrorKind::Unsuccessful);
         };
 
-        let Some((ino, _item)) = self.core.resolve_path(&rel_path) else {
-            tracing::warn!(path = %rel_path, "cfapi: fetch_data could not resolve path, skipping");
-            return Ok(());
+        let item_id = match std::str::from_utf8(request.file_blob()) {
+            Ok(s) => s.to_owned(),
+            Err(e) => {
+                tracing::warn!(path = %rel_path, "cfapi: fetch_data blob decode failed: {e:?}");
+                return Err(CloudErrorKind::Unsuccessful);
+            }
+        };
+
+        let Some(ino) = self.core.inodes().get_inode(&item_id) else {
+            tracing::warn!(path = %rel_path, "cfapi: fetch_data inode not found for item {item_id}");
+            return Err(CloudErrorKind::Unsuccessful);
         };
 
         let range = info.required_file_range();
@@ -152,12 +157,12 @@ impl SyncFilter for CloudMountCfFilter {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(path = %rel_path, "cfapi: fetch_data download failed: {e:?}");
-                return Ok(());
+                return Err(CloudErrorKind::Unsuccessful);
             }
         };
 
         if content.is_empty() {
-            return Ok(());
+            return Err(CloudErrorKind::Unsuccessful);
         }
 
         let data = &content[..];
@@ -175,7 +180,7 @@ impl SyncFilter for CloudMountCfFilter {
 
             if let Err(e) = ticket.write_at(&data[pos..pos + chunk_len], offset) {
                 tracing::warn!(path = %rel_path, "cfapi: fetch_data write_at failed: {e:?}");
-                break;
+                return Err(CloudErrorKind::Unsuccessful);
             }
 
             pos += chunk_len;
