@@ -40,7 +40,8 @@ sudo dnf install -y \
   librsvg2-devel \
   fuse3-devel \
   openssl-devel \
-  pkg-config
+  pkg-config \
+  xdg-utils
 ```
 
 ## Build

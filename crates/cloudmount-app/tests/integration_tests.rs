@@ -815,7 +815,11 @@ async fn test_initialization_sequence() -> cloudmount_core::Result<()> {
     let client_id = packaged
         .client_id()
         .unwrap_or("00000000-0000-0000-0000-000000000000");
-    let auth = Arc::new(AuthManager::new(client_id.to_string(), None));
+    let auth = Arc::new(AuthManager::new(
+        client_id.to_string(),
+        None,
+        Arc::new(|_url: &str| Ok(())),
+    ));
 
     // 3. Create GraphClient with auth token closure (same wiring as run_desktop)
     let auth_for_graph = auth.clone();
@@ -909,6 +913,7 @@ async fn test_token_restoration_flow() -> cloudmount_core::Result<()> {
     let auth = Arc::new(AuthManager::new(
         "test-client-id".to_string(),
         Some("test-tenant".to_string()),
+        Arc::new(|_url: &str| Ok(())),
     ));
 
     // try_restore returns false when no stored tokens exist

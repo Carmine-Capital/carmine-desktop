@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub struct AuthManager {
@@ -6,6 +7,7 @@ pub struct AuthManager {
     client_id: String,
     tenant_id: Option<String>,
     redirect_port: u16,
+    opener: Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
 }
 
 #[derive(Debug, Default)]
@@ -16,12 +18,17 @@ struct AuthState {
 }
 
 impl AuthManager {
-    pub fn new(client_id: String, tenant_id: Option<String>) -> Self {
+    pub fn new(
+        client_id: String,
+        tenant_id: Option<String>,
+        opener: Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
+    ) -> Self {
         Self {
             state: RwLock::new(AuthState::default()),
             client_id,
             tenant_id,
             redirect_port: 0,
+            opener,
         }
     }
 
@@ -92,6 +99,7 @@ impl AuthManager {
             &self.client_id,
             self.tenant_id.as_deref(),
             self.redirect_port,
+            self.opener.as_ref(),
         )
         .await
     }

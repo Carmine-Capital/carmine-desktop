@@ -35,6 +35,7 @@ pub async fn run_pkce_flow(
     client_id: &str,
     tenant_id: Option<&str>,
     port: u16,
+    opener: &(dyn Fn(&str) -> Result<(), String> + Send + Sync),
 ) -> cloudmount_core::Result<(String, String, u16)> {
     let (verifier, challenge) = generate_pkce();
 
@@ -67,17 +68,13 @@ pub async fn run_pkce_flow(
         auth_url.query_pairs_mut().append_pair("domain_hint", tid);
     }
 
-    if has_display() {
-        tracing::info!("opening browser for authentication");
-        match open::that(auth_url.as_str()) {
-            Ok(()) => {}
-            Err(e) => {
-                tracing::warn!("failed to open browser: {e}");
-                print_auth_url(auth_url.as_str());
-            }
+    tracing::info!("opening browser for authentication");
+    match opener(auth_url.as_str()) {
+        Ok(()) => {}
+        Err(e) => {
+            tracing::warn!("failed to open browser: {e}");
+            print_auth_url(auth_url.as_str());
         }
-    } else {
-        print_auth_url(auth_url.as_str());
     }
 
     let code = wait_for_callback(listener).await?;

@@ -183,11 +183,12 @@ fn init_components(
     overrides: &RuntimeOverrides,
     packaged: &PackagedDefaults,
     effective: &EffectiveConfig,
+    opener: Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
 ) -> Components {
     let client_id = resolve_client_id(overrides, packaged);
     let tenant_id = resolve_tenant_id(overrides, packaged);
 
-    let auth = Arc::new(AuthManager::new(client_id, tenant_id));
+    let auth = Arc::new(AuthManager::new(client_id, tenant_id, opener));
 
     let auth_for_graph = auth.clone();
     let graph = Arc::new(GraphClient::new(move || {
@@ -309,12 +310,33 @@ fn run_desktop(
         .unwrap_or_else(|| effective.app_name.clone());
     let first_run = !config_file_path().exists();
 
+    // The opener is constructed before the Tauri app, so we use a lazily-populated
+    // AppHandle slot. The closure is only called after sign-in (after .setup() runs).
+    let app_handle_slot: Arc<std::sync::Mutex<Option<tauri::AppHandle>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let opener_handle = app_handle_slot.clone();
+    let opener: Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync> =
+        Arc::new(move |url: &str| {
+            use tauri_plugin_opener::OpenerExt;
+            let handle = {
+                let guard = opener_handle.lock().unwrap();
+                guard
+                    .as_ref()
+                    .ok_or_else(|| "Tauri app not yet initialized".to_string())?
+                    .clone()
+            };
+            handle
+                .opener()
+                .open_url(url, None::<&str>)
+                .map_err(|e| e.to_string())
+        });
+
     let Components {
         auth,
         graph,
         cache,
         inodes,
-    } = init_components(&overrides, &packaged, &effective);
+    } = init_components(&overrides, &packaged, &effective, opener);
     let drive_ids: Arc<RwLock<Vec<String>>> = Arc::new(RwLock::new(Vec::new()));
 
     let state = AppState {
@@ -333,6 +355,7 @@ fn run_desktop(
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -353,6 +376,9 @@ fn run_desktop(
             commands::clear_cache,
         ])
         .setup(move |app| {
+            // Populate the opener's AppHandle slot now that the app is running.
+            *app_handle_slot.lock().unwrap() = Some(app.handle().clone());
+
             tray::setup(app.handle(), &app_name)?;
 
             #[cfg(target_os = "macos")]
@@ -778,12 +804,21 @@ fn run_headless(
         .expect("failed to create tokio runtime");
 
     rt.block_on(async {
+        let opener: Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync> =
+            Arc::new(|url: &str| {
+                if cloudmount_auth::oauth::has_display() {
+                    open::that(url).map_err(|e| e.to_string())
+                } else {
+                    Err("no display available".to_string())
+                }
+            });
+
         let Components {
             auth,
             graph,
             cache,
             inodes,
-        } = init_components(&overrides, &packaged, &effective);
+        } = init_components(&overrides, &packaged, &effective, opener);
 
         // Authentication
         let account = effective.accounts.first();

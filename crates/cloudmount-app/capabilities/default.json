@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/capabilities.json",
+  "identifier": "default",
+  "description": "Default capabilities for CloudMount",
+  "windows": ["wizard", "settings"],
+  "permissions": [
+    "core:default",
+    "opener:default"
+  ]
+}
