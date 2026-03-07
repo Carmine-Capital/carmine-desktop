@@ -286,37 +286,40 @@ pub fn save_settings(
     root_dir: Option<String>,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
 
-    let general = user_config.general.get_or_insert_with(Default::default);
-    if let Some(v) = auto_start {
-        general.auto_start = Some(v);
-    }
-    if let Some(v) = cache_max_size {
-        general.cache_max_size = Some(v);
-    }
-    if let Some(v) = sync_interval_secs {
-        general.sync_interval_secs = Some(v);
-    }
-    if let Some(v) = metadata_ttl_secs {
-        general.metadata_ttl_secs = Some(v);
-    }
-    if cache_dir.is_some() {
-        general.cache_dir = cache_dir;
-    }
-    if let Some(v) = log_level {
-        general.log_level = Some(v);
-    }
-    if let Some(v) = notifications {
-        general.notifications = Some(v);
-    }
-    if let Some(v) = root_dir {
-        general.root_dir = Some(v);
-    }
+    {
+        let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
 
-    user_config
-        .save_to_file(&config_file_path())
-        .map_err(|e| e.to_string())?;
+        let general = user_config.general.get_or_insert_with(Default::default);
+        if let Some(v) = auto_start {
+            general.auto_start = Some(v);
+        }
+        if let Some(v) = cache_max_size {
+            general.cache_max_size = Some(v);
+        }
+        if let Some(v) = sync_interval_secs {
+            general.sync_interval_secs = Some(v);
+        }
+        if let Some(v) = metadata_ttl_secs {
+            general.metadata_ttl_secs = Some(v);
+        }
+        if cache_dir.is_some() {
+            general.cache_dir = cache_dir;
+        }
+        if let Some(v) = log_level {
+            general.log_level = Some(v);
+        }
+        if let Some(v) = notifications {
+            general.notifications = Some(v);
+        }
+        if let Some(v) = root_dir {
+            general.root_dir = Some(v);
+        }
+
+        user_config
+            .save_to_file(&config_file_path())
+            .map_err(|e| e.to_string())?;
+    }
 
     rebuild_effective_config(&app)?;
     Ok(())
