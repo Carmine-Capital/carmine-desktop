@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Instant;
 
 use cloudmount_core::types::DriveItem;
@@ -14,7 +15,7 @@ pub struct MemoryCache {
 
 struct CachedEntry {
     item: DriveItem,
-    children: Option<Vec<u64>>,
+    children: Option<HashMap<String, u64>>,
     inserted_at: Instant,
     last_access: Instant,
 }
@@ -39,7 +40,7 @@ impl MemoryCache {
         Some(entry.item.clone())
     }
 
-    pub fn get_children(&self, parent_inode: u64) -> Option<Vec<u64>> {
+    pub fn get_children(&self, parent_inode: u64) -> Option<HashMap<String, u64>> {
         let mut entry = self.entries.get_mut(&parent_inode)?;
         let elapsed = entry.inserted_at.elapsed().as_secs();
         if elapsed > self.ttl_secs {
@@ -63,7 +64,12 @@ impl MemoryCache {
         );
     }
 
-    pub fn insert_with_children(&self, inode: u64, item: DriveItem, children: Vec<u64>) {
+    pub fn insert_with_children(
+        &self,
+        inode: u64,
+        item: DriveItem,
+        children: HashMap<String, u64>,
+    ) {
         self.maybe_evict();
         let now = Instant::now();
         self.entries.insert(
@@ -75,6 +81,22 @@ impl MemoryCache {
                 last_access: now,
             },
         );
+    }
+
+    pub fn add_child(&self, parent_inode: u64, name: &str, child_inode: u64) {
+        if let Some(mut entry) = self.entries.get_mut(&parent_inode)
+            && let Some(children) = &mut entry.children
+        {
+            children.insert(name.to_string(), child_inode);
+        }
+    }
+
+    pub fn remove_child(&self, parent_inode: u64, name: &str) {
+        if let Some(mut entry) = self.entries.get_mut(&parent_inode)
+            && let Some(children) = &mut entry.children
+        {
+            children.remove(name);
+        }
     }
 
     pub fn invalidate(&self, inode: u64) {

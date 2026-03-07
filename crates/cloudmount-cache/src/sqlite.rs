@@ -119,7 +119,7 @@ impl SqliteStore {
     ) -> cloudmount_core::Result<Option<(u64, DriveItem)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT inode, json_data FROM items WHERE item_id = ?1")
+            .prepare_cached("SELECT inode, json_data FROM items WHERE item_id = ?1")
             .map_err(|e| cloudmount_core::Error::Cache(format!("prepare failed: {e}")))?;
 
         let result = stmt
@@ -148,7 +148,7 @@ impl SqliteStore {
     ) -> cloudmount_core::Result<Vec<(u64, DriveItem)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT inode, json_data FROM items WHERE parent_inode = ?1")
+            .prepare_cached("SELECT inode, json_data FROM items WHERE parent_inode = ?1")
             .map_err(|e| cloudmount_core::Error::Cache(format!("prepare failed: {e}")))?;
 
         let rows = stmt
@@ -191,7 +191,7 @@ impl SqliteStore {
     pub fn get_delta_token(&self, drive_id: &str) -> cloudmount_core::Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT token FROM delta_tokens WHERE drive_id = ?1")
+            .prepare_cached("SELECT token FROM delta_tokens WHERE drive_id = ?1")
             .map_err(|e| cloudmount_core::Error::Cache(format!("prepare failed: {e}")))?;
 
         stmt.query_row(params![drive_id], |row| row.get(0))

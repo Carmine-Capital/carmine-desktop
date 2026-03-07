@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+use std::time::Duration;
+
 use cloudmount_cache::{
     disk::DiskCache, memory::MemoryCache, sqlite::SqliteStore, writeback::WriteBackBuffer,
 };
 use cloudmount_core::types::{DriveItem, FolderFacet};
-use std::time::Duration;
 use tokio::time::sleep;
 
 /// Helper function to create a test DriveItem
@@ -87,7 +89,11 @@ fn test_memory_cache_clear() {
 fn test_memory_cache_insert_with_children() {
     let cache = MemoryCache::new(Some(60));
     let folder = test_drive_item("folder1", "my_folder", true);
-    let children = vec![10, 11, 12];
+    let children: HashMap<String, u64> = HashMap::from([
+        ("a.txt".into(), 10),
+        ("b.txt".into(), 11),
+        ("c.txt".into(), 12),
+    ]);
 
     cache.insert_with_children(1, folder, children.clone());
     let retrieved_children = cache.get_children(1);
@@ -100,7 +106,12 @@ fn test_memory_cache_insert_with_children() {
 fn test_memory_cache_get_children_roundtrip() {
     let cache = MemoryCache::new(Some(60));
     let folder = test_drive_item("folder1", "my_folder", true);
-    let children = vec![100, 101, 102, 103];
+    let children: HashMap<String, u64> = HashMap::from([
+        ("w.txt".into(), 100),
+        ("x.txt".into(), 101),
+        ("y.txt".into(), 102),
+        ("z.txt".into(), 103),
+    ]);
 
     cache.insert_with_children(5, folder, children.clone());
     let retrieved = cache.get_children(5);
@@ -113,13 +124,94 @@ fn test_memory_cache_get_children_roundtrip() {
 fn test_memory_cache_get_children_ttl_expiry() {
     let cache = MemoryCache::new(Some(1));
     let folder = test_drive_item("folder1", "my_folder", true);
-    let children = vec![10, 11];
+    let children: HashMap<String, u64> =
+        HashMap::from([("a.txt".into(), 10), ("b.txt".into(), 11)]);
 
     cache.insert_with_children(1, folder, children);
     assert!(cache.get_children(1).is_some());
 
     std::thread::sleep(Duration::from_secs(2));
     assert!(cache.get_children(1).is_none());
+}
+
+#[test]
+fn test_memory_cache_add_child() {
+    let cache = MemoryCache::new(Some(60));
+    let folder = test_drive_item("folder1", "my_folder", true);
+    let children: HashMap<String, u64> = HashMap::from([("a.txt".into(), 10)]);
+
+    cache.insert_with_children(1, folder, children);
+    cache.add_child(1, "b.txt", 11);
+
+    let retrieved = cache.get_children(1).unwrap();
+    assert_eq!(retrieved.len(), 2);
+    assert_eq!(retrieved["a.txt"], 10);
+    assert_eq!(retrieved["b.txt"], 11);
+}
+
+#[test]
+fn test_memory_cache_add_child_noop_when_not_cached() {
+    let cache = MemoryCache::new(Some(60));
+    // Parent not in cache — should be a no-op
+    cache.add_child(999, "file.txt", 10);
+    assert!(cache.get_children(999).is_none());
+}
+
+#[test]
+fn test_memory_cache_add_child_noop_when_children_none() {
+    let cache = MemoryCache::new(Some(60));
+    let item = test_drive_item("item1", "test.txt", false);
+
+    cache.insert(1, item);
+    cache.add_child(1, "file.txt", 10);
+    // children was None, so add_child is a no-op
+    assert!(cache.get_children(1).is_none());
+}
+
+#[test]
+fn test_memory_cache_remove_child() {
+    let cache = MemoryCache::new(Some(60));
+    let folder = test_drive_item("folder1", "my_folder", true);
+    let children: HashMap<String, u64> =
+        HashMap::from([("a.txt".into(), 10), ("b.txt".into(), 11)]);
+
+    cache.insert_with_children(1, folder, children);
+    cache.remove_child(1, "a.txt");
+
+    let retrieved = cache.get_children(1).unwrap();
+    assert_eq!(retrieved.len(), 1);
+    assert_eq!(retrieved["b.txt"], 11);
+}
+
+#[test]
+fn test_memory_cache_remove_child_noop_when_not_cached() {
+    let cache = MemoryCache::new(Some(60));
+    cache.remove_child(999, "file.txt");
+    // No panic, no-op
+}
+
+#[test]
+fn test_memory_cache_remove_child_noop_when_children_none() {
+    let cache = MemoryCache::new(Some(60));
+    let item = test_drive_item("item1", "test.txt", false);
+
+    cache.insert(1, item);
+    cache.remove_child(1, "file.txt");
+    // No panic, no-op
+}
+
+#[test]
+fn test_memory_cache_remove_child_nonexistent_name() {
+    let cache = MemoryCache::new(Some(60));
+    let folder = test_drive_item("folder1", "my_folder", true);
+    let children: HashMap<String, u64> = HashMap::from([("a.txt".into(), 10)]);
+
+    cache.insert_with_children(1, folder, children);
+    cache.remove_child(1, "nonexistent.txt");
+
+    let retrieved = cache.get_children(1).unwrap();
+    assert_eq!(retrieved.len(), 1);
+    assert_eq!(retrieved["a.txt"], 10);
 }
 
 // ============================================================================
