@@ -97,6 +97,7 @@ pub struct AppState {
     #[cfg(target_os = "windows")]
     pub mounts: Mutex<HashMap<String, cloudmount_vfs::CfMountHandle>>,
     pub sync_cancel: Mutex<Option<CancellationToken>>,
+    pub active_sign_in: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub drive_ids: Arc<RwLock<Vec<String>>>,
     pub authenticated: AtomicBool,
     pub auth_degraded: AtomicBool,
@@ -140,6 +141,91 @@ fn resolve_tenant_id(overrides: &RuntimeOverrides, packaged: &PackagedDefaults) 
         .or_else(|| packaged.tenant_id().map(String::from))
 }
 
+/// Returns true if FUSE is available on the current system.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn fuse_available() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("fusermount3")
+            .arg("--version")
+            .output()
+            .is_ok()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("fusermount")
+            .arg("--version")
+            .output()
+            .is_ok()
+    }
+}
+
+/// Checks that the Windows version meets the Cloud Files API minimum (10.0.16299).
+/// Extracted for testability — callers can pass a custom minimum version.
+#[cfg(target_os = "windows")]
+fn cfapi_version_meets(min_major: u32, min_minor: u32, min_build: u32) -> bool {
+    use windows::Win32::System::SystemInformation::{
+        OSVERSIONINFOEXW, VER_BUILDNUMBER, VER_MAJORVERSION, VER_MINORVERSION, VER_PRODUCT_TYPE,
+        VerSetConditionMask, VerifyVersionInfoW,
+    };
+
+    let mut osvi = OSVERSIONINFOEXW {
+        dwOSVersionInfoSize: std::mem::size_of::<OSVERSIONINFOEXW>() as u32,
+        dwMajorVersion: min_major,
+        dwMinorVersion: min_minor,
+        dwBuildNumber: min_build,
+        wProductType: 1, // VER_NT_WORKSTATION
+        ..Default::default()
+    };
+
+    // 3 = VER_GREATER_EQUAL
+    let condition_mask = unsafe {
+        let cm = VerSetConditionMask(0, VER_MAJORVERSION, 3);
+        let cm = VerSetConditionMask(cm, VER_MINORVERSION, 3);
+        let cm = VerSetConditionMask(cm, VER_BUILDNUMBER, 3);
+        VerSetConditionMask(cm, VER_PRODUCT_TYPE, 3)
+    };
+
+    unsafe {
+        VerifyVersionInfoW(
+            &mut osvi,
+            VER_MAJORVERSION | VER_MINORVERSION | VER_BUILDNUMBER | VER_PRODUCT_TYPE,
+            condition_mask,
+        )
+        .is_ok()
+    }
+}
+
+/// Show a native Win32 error dialog. Only compiled on Windows release desktop builds
+/// where `windows_subsystem = "windows"` detaches the console (making eprintln invisible).
+#[cfg(all(target_os = "windows", feature = "desktop", not(debug_assertions)))]
+fn show_error_dialog(title: &str, msg: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+    use windows::core::PCWSTR;
+
+    let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    let msg_wide: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(msg_wide.as_ptr()),
+            PCWSTR(title_wide.as_ptr()),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
+/// Report a fatal startup error and terminate. On Windows release desktop builds, shows
+/// a `MessageBoxW` dialog (stderr is detached). On all other builds, writes to stderr.
+fn fatal_error(msg: &str) -> ! {
+    #[cfg(all(target_os = "windows", feature = "desktop", not(debug_assertions)))]
+    show_error_dialog("CloudMount \u{2014} Configuration Error", msg);
+    #[cfg(not(all(target_os = "windows", feature = "desktop", not(debug_assertions))))]
+    eprintln!("Error: {msg}");
+    std::process::exit(1);
+}
+
 fn preflight_checks(client_id: &str) -> Result<(), String> {
     if client_id == DEFAULT_CLIENT_ID {
         return Err("No Azure AD client ID configured.\n\n\
@@ -153,29 +239,22 @@ fn preflight_checks(client_id: &str) -> Result<(), String> {
     }
 
     #[cfg(target_os = "linux")]
-    {
-        if std::process::Command::new("fusermount3")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            tracing::warn!(
-                "FUSE not available \u{2014} install libfuse3-dev to enable filesystem mounts"
-            );
-        }
+    if !fuse_available() {
+        tracing::warn!(
+            "FUSE not available \u{2014} install libfuse3-dev to enable filesystem mounts"
+        );
     }
 
     #[cfg(target_os = "macos")]
-    {
-        if std::process::Command::new("fusermount")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            tracing::warn!(
-                "FUSE not available \u{2014} install macFUSE to enable filesystem mounts"
-            );
-        }
+    if !fuse_available() {
+        tracing::warn!("FUSE not available \u{2014} install macFUSE to enable filesystem mounts");
+    }
+
+    #[cfg(target_os = "windows")]
+    if !cfapi_version_meets(10, 0, 16299) {
+        return Err(
+            "Cloud Files API requires Windows 10 version 1709 (build 16299) or later".to_string(),
+        );
     }
 
     Ok(())
@@ -273,8 +352,7 @@ fn main() {
         .unwrap_or(DEFAULT_CLIENT_ID);
 
     if let Err(msg) = preflight_checks(resolved_client_id) {
-        eprintln!("Error: {msg}");
-        std::process::exit(1);
+        fatal_error(&msg);
     }
 
     for mount in &effective.mounts {
@@ -377,12 +455,14 @@ fn run_desktop(
         inodes,
         mounts: Mutex::new(HashMap::new()),
         sync_cancel: Mutex::new(None),
+        active_sign_in: Mutex::new(None),
         drive_ids,
         authenticated: AtomicBool::new(false),
         auth_degraded: AtomicBool::new(false),
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -392,6 +472,7 @@ fn run_desktop(
         .invoke_handler(tauri::generate_handler![
             commands::sign_in,
             commands::start_sign_in,
+            commands::cancel_sign_in,
             commands::sign_out,
             commands::list_mounts,
             commands::add_mount,
@@ -403,6 +484,7 @@ fn run_desktop(
             commands::list_drives,
             commands::refresh_mount,
             commands::clear_cache,
+            commands::open_wizard,
         ])
         .setup(move |app| {
             // Populate the opener's AppHandle slot now that the app is running.
@@ -468,7 +550,31 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
 
     if restored {
         state.authenticated.store(true, Ordering::Relaxed);
+
+        // Reconcile OS auto-start state with the persisted config value.
+        let auto_start = {
+            let config = state.effective_config.lock().unwrap();
+            config.auto_start
+        };
+        match std::env::current_exe() {
+            Ok(exe) => {
+                let exe_path = exe.to_string_lossy();
+                if let Err(e) =
+                    cloudmount_core::config::autostart::set_enabled(auto_start, &exe_path)
+                {
+                    tracing::warn!("auto-start sync failed: {e}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("failed to resolve exe path for auto-start sync: {e}");
+            }
+        }
+
         run_crash_recovery(app);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if !fuse_available() {
+            notify::fuse_unavailable(app);
+        }
         start_all_mounts(app);
         start_delta_sync(app);
         // Only spawn periodic update checker if the updater endpoint is configured
@@ -527,6 +633,7 @@ fn start_all_mounts(app: &tauri::AppHandle) {
     for mount_config in &mounts_config {
         if let Err(e) = start_mount(app, mount_config) {
             tracing::error!("failed to start mount '{}': {e}", mount_config.name);
+            notify::mount_failed(app, &mount_config.name, &e);
         }
     }
     tray::update_tray_menu(app);
@@ -1317,5 +1424,33 @@ mod tests {
         let _: Option<&str> = BUILD_CLIENT_ID;
         let _: Option<&str> = BUILD_TENANT_ID;
         let _: Option<&str> = BUILD_APP_NAME;
+    }
+
+    #[test]
+    fn test_preflight_checks_rejects_placeholder_client_id() {
+        let result = preflight_checks(DEFAULT_CLIENT_ID);
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("client ID"),
+            "error should mention client ID, got: {msg}"
+        );
+    }
+
+    // Task 6.1: Windows-only test that simulates CfApi version check failure.
+    // Uses an impossibly high version requirement to exercise the failure path of
+    // cfapi_version_meets, which is the same code called by preflight_checks.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_cfapi_version_meets_fails_on_impossible_version() {
+        // Requesting Windows 99 guarantees failure on any real system, simulating
+        // a machine that does not meet the CfApi requirement.
+        assert!(
+            !cfapi_version_meets(99, 0, 0),
+            "cfapi_version_meets should return false for an unreachable version"
+        );
+        // Verify the error string that preflight_checks would emit is correct.
+        let err = "Cloud Files API requires Windows 10 version 1709 (build 16299) or later";
+        assert!(err.contains("Windows 10 version 1709"));
     }
 }

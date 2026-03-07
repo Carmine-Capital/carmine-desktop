@@ -195,28 +195,30 @@ impl SyncFilter for CloudMountCfFilter {
 
         let children = self.core.list_children(parent_ino);
 
-        // Filter out items that already have a local placeholder on disk.
-        // CfCreatePlaceholders returns ERROR_CLOUD_FILE_INVALID_REQUEST for
-        // existing entries; if we propagate that error, proxy.rs:97 panics via
-        // unwrap() through the FFI boundary → STATUS_STACK_BUFFER_OVERRUN.
-        let mut placeholders: Vec<PlaceholderFile> = children
+        // Pre-filter: skip items that already have a local placeholder on disk
+        // (optimisation hint — the per-item error handler below is the safety net).
+        let filtered: Vec<_> = children
             .iter()
             .filter(|(_ino, item)| !dir_path.join(&item.name).exists())
-            .map(|(_ino, item)| {
-                PlaceholderFile::new(&item.name)
-                    .metadata(Self::item_to_metadata(item))
-                    .blob(item.id.as_bytes().to_vec())
-                    .mark_in_sync()
-            })
             .collect();
 
-        if placeholders.is_empty() {
-            return Ok(());
-        }
+        for (_ino, item) in filtered {
+            let placeholder = PlaceholderFile::new(&item.name)
+                .metadata(Self::item_to_metadata(item))
+                .blob(item.id.as_bytes().to_vec())
+                .mark_in_sync();
 
-        ticket
-            .pass_with_placeholder(&mut placeholders)
-            .map_err(|_| CloudErrorKind::Unsuccessful)?;
+            if let Err(e) = ticket.pass_with_placeholder(&mut [placeholder]) {
+                if e.code().0 == 0x8007017cu32 as i32 {
+                    // ERROR_CLOUD_FILE_INVALID_REQUEST: placeholder already exists
+                    // (TOCTOU race between .exists() check and CfCreatePlaceholders).
+                    // Treat as non-fatal to prevent STATUS_STACK_BUFFER_OVERRUN crash.
+                    tracing::warn!(item = %item.name, "cfapi: placeholder already exists (TOCTOU skip)");
+                    continue;
+                }
+                return Err(CloudErrorKind::Unsuccessful);
+            }
+        }
 
         Ok(())
     }

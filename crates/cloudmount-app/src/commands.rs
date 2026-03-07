@@ -7,7 +7,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use cloudmount_cache::sync::run_delta_sync;
 use cloudmount_core::config::{
-    AccountMetadata, EffectiveConfig, config_file_path, derive_mount_point, expand_mount_point,
+    AccountMetadata, EffectiveConfig, autostart, config_file_path, derive_mount_point,
+    expand_mount_point,
 };
 
 use crate::AppState;
@@ -19,6 +20,7 @@ pub struct MountInfo {
     pub mount_type: String,
     pub mount_point: String,
     pub enabled: bool,
+    pub drive_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -61,11 +63,19 @@ pub async fn sign_in(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn start_sign_in(app: AppHandle) -> Result<String, String> {
     let state = app.state::<AppState>();
+
+    {
+        let mut guard = state.active_sign_in.lock().unwrap();
+        if let Some(handle) = guard.take() {
+            handle.abort();
+        }
+    }
+
     let (url_tx, url_rx) = tokio::sync::oneshot::channel::<String>();
 
     let auth = state.auth.clone();
     let app_handle = app.clone();
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         match auth.sign_in(Some(url_tx)).await {
             Ok(()) => {
                 tracing::info!("sign-in successful");
@@ -84,9 +94,22 @@ pub async fn start_sign_in(app: AppHandle) -> Result<String, String> {
         }
     });
 
+    *state.active_sign_in.lock().unwrap() = Some(handle);
+
     url_rx
         .await
         .map_err(|_| "auth URL channel closed unexpectedly".to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_sign_in(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    state.auth.cancel();
+    let mut guard = state.active_sign_in.lock().unwrap();
+    if let Some(handle) = guard.take() {
+        handle.abort();
+    }
+    Ok(())
 }
 
 async fn complete_sign_in(app: &AppHandle) -> Result<(), String> {
@@ -129,6 +152,10 @@ async fn complete_sign_in(app: &AppHandle) -> Result<(), String> {
     }
 
     rebuild_effective_config(app)?;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if !crate::fuse_available() {
+        crate::notify::fuse_unavailable(app);
+    }
     crate::start_all_mounts(app);
     crate::run_crash_recovery(app);
     crate::start_delta_sync(app);
@@ -166,7 +193,9 @@ pub async fn sign_out(app: AppHandle) -> Result<(), String> {
     state.auth_degraded.store(false, Ordering::Relaxed);
     crate::tray::update_tray_menu(&app);
 
-    app.get_webview_window("settings").map(|w| w.hide());
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.reload();
+    }
 
     if let Some(win) = app.get_webview_window("wizard") {
         let _ = win.reload();
@@ -192,6 +221,7 @@ pub fn list_mounts(app: AppHandle) -> Result<Vec<MountInfo>, String> {
             mount_type: m.mount_type.clone(),
             mount_point: expand_mount_point(&m.mount_point),
             enabled: m.enabled,
+            drive_id: m.drive_id.clone(),
         })
         .collect())
 }
@@ -373,6 +403,28 @@ pub fn save_settings(
     }
 
     rebuild_effective_config(&app)?;
+
+    if let Some(v) = auto_start {
+        match std::env::current_exe() {
+            Ok(exe) => {
+                let exe_path = exe.to_string_lossy();
+                match autostart::set_enabled(v, &exe_path) {
+                    Ok(()) => {
+                        tracing::info!("auto-start {}", if v { "enabled" } else { "disabled" });
+                    }
+                    Err(e) => {
+                        tracing::warn!("auto-start registration failed: {e}");
+                        crate::notify::auto_start_failed(&app, &e.to_string());
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("failed to resolve exe path for auto-start: {e}");
+                crate::notify::auto_start_failed(&app, &e.to_string());
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -450,6 +502,12 @@ pub async fn clear_cache(app: AppHandle) -> Result<(), String> {
     }
 
     crate::tray::update_tray_menu(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_wizard(app: AppHandle) -> Result<(), String> {
+    crate::tray::open_or_focus_window(&app, "wizard", "Setup", "wizard.html");
     Ok(())
 }
 

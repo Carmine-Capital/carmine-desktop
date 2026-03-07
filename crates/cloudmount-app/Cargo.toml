@@ -5,7 +5,7 @@ edition.workspace = true
 
 [features]
 default = []
-desktop = ["tauri", "tauri-plugin-notification", "tauri-plugin-updater", "tauri-plugin-process", "tauri-plugin-opener", "tauri-build"]
+desktop = ["tauri", "tauri-plugin-dialog", "tauri-plugin-notification", "tauri-plugin-updater", "tauri-plugin-process", "tauri-plugin-opener", "tauri-build"]
 
 [dependencies]
 cloudmount-core = { workspace = true }
@@ -29,10 +29,14 @@ bytes = { workspace = true }
 clap = { workspace = true }
 dotenvy = { workspace = true }
 tauri = { workspace = true, optional = true }
+tauri-plugin-dialog = { workspace = true, optional = true }
 tauri-plugin-notification = { workspace = true, optional = true }
 tauri-plugin-updater = { workspace = true, optional = true }
 tauri-plugin-process = { workspace = true, optional = true }
 tauri-plugin-opener = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
 
 [build-dependencies]
 tauri-build = { workspace = true, optional = true }

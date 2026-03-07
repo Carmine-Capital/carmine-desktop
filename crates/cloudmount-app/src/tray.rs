@@ -45,7 +45,16 @@ pub fn setup(app: &AppHandle, app_name: &str) -> tauri::Result<()> {
                 ..
             } = event
             {
-                open_or_focus_window(tray.app_handle(), "settings", "Settings", "settings.html");
+                let app = tray.app_handle();
+                let authenticated = app
+                    .try_state::<crate::AppState>()
+                    .map(|s| s.authenticated.load(std::sync::atomic::Ordering::Relaxed))
+                    .unwrap_or(false);
+                if authenticated {
+                    open_or_focus_window(app, "settings", "Settings", "settings.html");
+                } else {
+                    open_or_focus_window(app, "wizard", "Setup", "wizard.html");
+                }
             }
         })
         .build(app)?;
@@ -88,11 +97,33 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
                 crate::update::install_and_relaunch(&app);
             });
         }
+        "re_authenticate" => {
+            open_or_focus_window(app, "wizard", "Setup", "wizard.html");
+        }
         "sign_out" => {
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = crate::commands::sign_out(app).await {
-                    tracing::error!("sign out failed: {e}");
+                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+                let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+                app.dialog()
+                    .message("Sign out? All mounts will stop.")
+                    .title("Sign Out")
+                    .buttons(MessageDialogButtons::OkCancelCustom(
+                        "Sign Out".to_string(),
+                        "Cancel".to_string(),
+                    ))
+                    .show(move |confirmed| {
+                        let _ = tx.send(confirmed);
+                    });
+                match rx.await {
+                    Ok(true) => {
+                        if let Err(e) = crate::commands::sign_out(app).await {
+                            tracing::error!("sign out failed: {e}");
+                        }
+                    }
+                    Ok(false) | Err(_) => {
+                        tracing::debug!("sign-out cancelled by user");
+                    }
                 }
             });
         }
@@ -105,6 +136,9 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
 
 pub fn open_or_focus_window(app: &AppHandle, label: &str, title: &str, url: &str) {
     if let Some(win) = app.get_webview_window(label) {
+        if label == "settings" {
+            let _ = win.eval("loadSettings(); loadMounts();");
+        }
         let _ = win.unminimize();
         let _ = win.show();
         let _ = win.set_focus();
@@ -112,6 +146,7 @@ pub fn open_or_focus_window(app: &AppHandle, label: &str, title: &str, url: &str
         let _ = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
             .title(title)
             .inner_size(800.0, 600.0)
+            .min_inner_size(640.0, 480.0)
             .center()
             .build();
     }
@@ -132,11 +167,12 @@ pub fn update_tray_menu(app: &AppHandle) {
     let (mount_entries, app_name, auth_degraded, authenticated) = {
         let config = app_state.effective_config.lock().unwrap();
         let active_mounts = app_state.mounts.lock().unwrap();
-        let entries: Vec<(String, String, String)> = config
+        let entries: Vec<(String, String, bool)> = config
             .mounts
             .iter()
             .map(|mc| {
-                let status = if active_mounts.contains_key(&mc.id) {
+                let is_mounted = active_mounts.contains_key(&mc.id);
+                let status = if is_mounted {
                     "Mounted"
                 } else if mc.enabled && mc.drive_id.is_some() {
                     "Unmounted"
@@ -146,7 +182,7 @@ pub fn update_tray_menu(app: &AppHandle) {
                 (
                     format!("mount_{}", mc.id),
                     format!("{} \u{2014} {status}", mc.name),
-                    mc.id.clone(),
+                    is_mounted,
                 )
             })
             .collect();
@@ -165,7 +201,7 @@ pub fn update_tray_menu(app: &AppHandle) {
     } else {
         let mounted = mount_entries
             .iter()
-            .filter(|(_, label, _)| label.contains("Mounted") && !label.contains("Unmounted"))
+            .filter(|(_, _, is_mounted)| *is_mounted)
             .count();
         if mounted > 0 {
             format!("{app_name} \u{2014} {mounted} drive(s) mounted")
@@ -216,6 +252,12 @@ pub fn update_tray_menu(app: &AppHandle) {
 
         let quit = MenuItemBuilder::with_id("quit", format!("Quit {app_name}")).build(app)?;
         if authenticated {
+            if auth_degraded {
+                let re_auth =
+                    MenuItemBuilder::with_id("re_authenticate", "Re-authenticate\u{2026}")
+                        .build(app)?;
+                builder = builder.item(&re_auth);
+            }
             let sign_out = MenuItemBuilder::with_id("sign_out", "Sign Out").build(app)?;
             builder = builder.item(&sign_out).item(&quit);
         } else {
