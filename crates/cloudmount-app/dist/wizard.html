@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'">
   <title>CloudMount Setup</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -23,6 +24,14 @@
     .btn-secondary { background: #6c757d; }
     .btn-secondary:hover { background: #5a6268; }
     .error-msg { color: #c00; margin-top: 1rem; }
+    .sp-result-row { background: white; border: 1px solid #e0e0e0; border-radius: 4px; padding: 0.625rem 0.75rem; margin-bottom: 0.5rem; cursor: pointer; text-align: left; }
+    .sp-result-row:hover { background: #f0f6ff; border-color: #0078d4; }
+    .sp-result-url { font-size: 0.75rem; color: #888; margin-top: 0.2rem; }
+    .sp-back-link { display: inline-block; margin-bottom: 1rem; color: #0078d4; cursor: pointer; font-size: 0.875rem; text-decoration: underline; background: none; border: none; padding: 0; }
+    .sp-back-link:hover { background: none; color: #005a9e; }
+    .sp-search-row { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .sp-search-row input { flex: 1; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.875rem; }
+    .sp-search-row button { padding: 0.5rem 1rem; font-size: 0.875rem; }
   </style>
 </head>
 <body>
@@ -49,115 +58,32 @@
       <p>What would you like to mount?</p>
       <button onclick="selectSource('drive')">OneDrive</button>
       <button onclick="selectSource('sharepoint')">SharePoint Site</button>
+      <div id="source-error" class="error-msg" style="display:none"></div>
+    </div>
+    <div id="step-sharepoint" class="step">
+      <button class="sp-back-link" onclick="showStep('step-source')">&larr; Back</button>
+      <h1>Select SharePoint Site</h1>
+      <p>Search for a SharePoint site to mount.</p>
+      <div class="sp-search-row">
+        <input id="sp-search" type="text" placeholder="Search sites&hellip;">
+        <button onclick="searchSites()">Search</button>
+      </div>
+      <div id="sp-spinner" class="spinner" style="display:none"></div>
+      <div id="sp-error" class="error-msg" style="display:none"></div>
+      <div id="sp-sites"></div>
+      <div id="sp-libraries" style="display:none">
+        <button class="sp-back-link" onclick="showSitesBack()">&larr; Back to sites</button>
+        <h2 style="margin-bottom:0.75rem;font-size:1.1rem">Select Library</h2>
+        <div id="sp-lib-list"></div>
+      </div>
     </div>
     <div id="step-done" class="step">
       <h1>All Set</h1>
       <p>Your drives are mounted and ready to use.</p>
+      <ul id="done-mount-list" class="mount-list" style="list-style:none"></ul>
       <button onclick="window.__TAURI__.window.getCurrentWindow().close()">Close</button>
     </div>
   </div>
-  <script>
-    const { invoke } = window.__TAURI__.core;
-    const { listen } = window.__TAURI__.event;
-
-    let signingIn = false;
-    let activeListeners = [];
-
-    async function startSignIn() {
-      if (signingIn) return;
-      signingIn = true;
-      document.getElementById('auth-error').style.display = 'none';
-      showStep('step-signing-in');
-
-      // Register event listeners before invoking so we don't miss events.
-      activeListeners.push(await listen('auth-complete', async () => {
-        if (!signingIn) return;
-        signingIn = false;
-        cleanupListeners();
-        await onSignInComplete();
-      }));
-      activeListeners.push(await listen('auth-error', (event) => {
-        if (!signingIn) return;
-        signingIn = false;
-        cleanupListeners();
-        const errEl = document.getElementById('auth-error');
-        errEl.textContent = 'Sign-in failed: ' + (event.payload || 'unknown error');
-        errEl.style.display = 'block';
-      }));
-
-      try {
-        const authUrl = await invoke('start_sign_in');
-        document.getElementById('auth-url').value = authUrl;
-      } catch (e) {
-        signingIn = false;
-        cleanupListeners();
-        console.error('start_sign_in failed:', e);
-        showStep('step-welcome');
-      }
-    }
-
-    function cancelSignIn() {
-      signingIn = false;
-      cleanupListeners();
-      showStep('step-welcome');
-    }
-
-    async function copyAuthUrl() {
-      const url = document.getElementById('auth-url').value;
-      if (!url) return;
-      try {
-        await navigator.clipboard.writeText(url);
-        const btn = document.getElementById('copy-btn');
-        btn.textContent = 'Copied!';
-        setTimeout(() => { btn.textContent = 'Copy URL'; }, 2000);
-      } catch (e) {
-        console.error('clipboard write failed:', e);
-      }
-    }
-
-    async function onSignInComplete() {
-      const mounts = await invoke('list_mounts');
-      if (mounts.length > 0) {
-        showStep('step-done');
-      } else {
-        showStep('step-source');
-      }
-    }
-
-    function cleanupListeners() {
-      activeListeners.forEach(fn => { try { fn(); } catch (_) {} });
-      activeListeners = [];
-    }
-
-    function selectSource(type) {
-      showStep('step-done');
-    }
-
-    function showStep(id) {
-      document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
-      document.getElementById(id).classList.add('active');
-    }
-
-    async function init() {
-      try {
-        const settings = await invoke('get_settings');
-        document.getElementById('app-title').textContent = settings.app_name;
-        document.title = settings.app_name + ' Setup';
-
-        const mounts = await invoke('list_mounts');
-        if (mounts.length > 0) {
-          const list = document.getElementById('preconfigured-mounts');
-          list.style.display = 'block';
-          mounts.forEach(m => {
-            const div = document.createElement('div');
-            div.className = 'mount-item';
-            div.textContent = m.name + ' \u2192 ' + m.mount_point;
-            list.appendChild(div);
-          });
-        }
-      } catch (e) { console.error(e); }
-    }
-    init();
-  </script>
+  <script src="wizard.js"></script>
 </body>
 </html>

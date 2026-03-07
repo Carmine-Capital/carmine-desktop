@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities for CloudMount","local":true,"windows":["wizard","settings"],"permissions":["core:default","opener:default"]}}
+{"default":{"identifier":"default","description":"Default capabilities for CloudMount","local":true,"windows":["wizard","settings"],"permissions":["core:default","core:window:allow-close","opener:default"]}}
