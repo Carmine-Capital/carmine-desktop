@@ -3,10 +3,10 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fuser::{
-    BsdFileFlags, Config, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags,
-    Generation, INodeNo, LockOwner, MountOption, OpenFlags, RenameFlags, ReplyAttr, ReplyCreate,
-    ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request,
-    TimeOrNow, WriteFlags,
+    BsdFileFlags, Config, CopyFileRangeFlags, Errno, FileAttr, FileHandle, FileType, Filesystem,
+    FopenFlags, Generation, INodeNo, InitFlags, KernelConfig, LockOwner, MountOption, OpenFlags,
+    RenameFlags, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyDirectoryPlus,
+    ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request, TimeOrNow, WriteFlags,
 };
 use tokio::runtime::Handle;
 
@@ -51,6 +51,8 @@ impl CloudMountFs {
         config.mount_options = vec![
             MountOption::RW,
             MountOption::FSName("cloudmount".to_string()),
+            MountOption::CUSTOM("max_read=1048576".into()),
+            MountOption::NoAtime,
         ];
         if auto_unmount {
             config.mount_options.push(MountOption::AutoUnmount);
@@ -114,6 +116,22 @@ impl CloudMountFs {
 }
 
 impl Filesystem for CloudMountFs {
+    fn init(&mut self, _req: &Request, config: &mut KernelConfig) -> std::io::Result<()> {
+        let caps = InitFlags::FUSE_WRITEBACK_CACHE | InitFlags::FUSE_PARALLEL_DIROPS;
+        match config.add_capabilities(caps) {
+            Ok(()) => {
+                tracing::info!("FUSE capabilities enabled: writeback cache, parallel dirops");
+            }
+            Err(unsupported) => {
+                tracing::warn!(
+                    ?unsupported,
+                    "some FUSE capabilities not supported by kernel"
+                );
+            }
+        }
+        Ok(())
+    }
+
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
         let name_str = name.to_string_lossy();
 
@@ -195,6 +213,49 @@ impl Filesystem for CloudMountFs {
 
         for (i, (inode, kind, name)) in entries.into_iter().enumerate().skip(offset as usize) {
             if reply.add(INodeNo(inode), (i + 1) as u64, kind, &name) {
+                break;
+            }
+        }
+        reply.ok();
+    }
+
+    fn readdirplus(
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
+        mut reply: ReplyDirectoryPlus,
+    ) {
+        let ino_val = ino.0;
+
+        let dir_attr = match self.ops.lookup_item(ino_val) {
+            Some(item) => self.item_to_attr(ino_val, &item),
+            None => {
+                reply.error(Errno::ENOENT);
+                return;
+            }
+        };
+
+        let mut entries: Vec<(u64, FileAttr, String)> = vec![
+            (ino_val, dir_attr, ".".to_string()),
+            (ino_val, dir_attr, "..".to_string()),
+        ];
+
+        for (child_ino, item) in self.ops.list_children(ino_val) {
+            let attr = self.item_to_attr(child_ino, &item);
+            entries.push((child_ino, attr, item.name.clone()));
+        }
+
+        for (i, (inode, attr, name)) in entries.into_iter().enumerate().skip(offset as usize) {
+            if reply.add(
+                INodeNo(inode),
+                (i + 1) as u64,
+                &name,
+                &TTL,
+                &attr,
+                Generation(0),
+            ) {
                 break;
             }
         }
@@ -378,6 +439,28 @@ impl Filesystem for CloudMountFs {
             .rename(parent.0, &name_str, newparent.0, &newname_str)
         {
             Ok(()) => reply.ok(),
+            Err(e) => reply.error(Self::vfs_err_to_errno(e)),
+        }
+    }
+
+    fn copy_file_range(
+        &self,
+        _req: &Request,
+        ino_in: INodeNo,
+        fh_in: FileHandle,
+        offset_in: u64,
+        ino_out: INodeNo,
+        fh_out: FileHandle,
+        offset_out: u64,
+        len: u64,
+        _flags: CopyFileRangeFlags,
+        reply: ReplyWrite,
+    ) {
+        match self
+            .ops
+            .copy_file_range(ino_in.0, fh_in.0, offset_in, ino_out.0, fh_out.0, offset_out, len)
+        {
+            Ok(n) => reply.written(n),
             Err(e) => reply.error(Self::vfs_err_to_errno(e)),
         }
     }

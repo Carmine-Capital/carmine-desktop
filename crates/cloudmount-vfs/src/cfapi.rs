@@ -140,21 +140,14 @@ impl SyncFilter for CloudMountCfFilter {
             .resolve_path(&rel_path)
             .ok_or(CloudErrorKind::NotInSync)?;
 
-        let fh = self
-            .core
-            .open_file(ino)
-            .map_err(|_| CloudErrorKind::Unsuccessful)?;
-
         let range = info.required_file_range();
-        let start = range.start as usize;
-        let length = (range.end - range.start) as usize;
+        let offset = range.start;
+        let length = range.end - range.start;
 
         let content = self
             .core
-            .read_handle(fh, start, length)
+            .read_range_direct(ino, offset, length)
             .map_err(|_| CloudErrorKind::Unsuccessful)?;
-
-        let _ = self.core.release_file(fh);
 
         if content.is_empty() {
             return Ok(());

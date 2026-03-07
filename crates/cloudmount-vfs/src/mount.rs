@@ -28,14 +28,13 @@ impl MountHandle {
         mountpoint: &str,
         rt: Handle,
     ) -> cloudmount_core::Result<Self> {
-        let root_item = tokio::task::block_in_place(|| {
-            rt.block_on(graph.get_item(&drive_id, "root"))
-        })
-        .map_err(|e| {
-            cloudmount_core::Error::Filesystem(format!(
-                "failed to fetch root item for drive {drive_id}: {e}"
-            ))
-        })?;
+        let root_item =
+            tokio::task::block_in_place(|| rt.block_on(graph.get_item(&drive_id, "root")))
+                .map_err(|e| {
+                    cloudmount_core::Error::Filesystem(format!(
+                        "failed to fetch root item for drive {drive_id}: {e}"
+                    ))
+                })?;
 
         inodes.set_root(&root_item.id);
         cache.memory.insert(ROOT_INODE, root_item.clone());
