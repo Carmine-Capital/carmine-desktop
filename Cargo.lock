@@ -789,6 +789,7 @@ dependencies = [
  "cloudmount-cache",
  "cloudmount-core",
  "cloudmount-graph",
+ "dashmap",
  "fuser",
  "libc",
  "nt-time",

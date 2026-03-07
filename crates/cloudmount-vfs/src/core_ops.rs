@@ -5,16 +5,77 @@
 //! CfApi sync filter) delegate to [`CoreOps`] instead of duplicating this logic.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use chrono::Utc;
+use dashmap::DashMap;
 use tokio::runtime::Handle;
 
 use crate::inode::InodeTable;
 use cloudmount_cache::CacheManager;
 use cloudmount_core::types::{DriveItem, FileFacet, ParentReference};
 use cloudmount_graph::GraphClient;
+
+pub struct OpenFile {
+    pub ino: u64,
+    pub content: Vec<u8>,
+    pub dirty: bool,
+}
+
+pub struct OpenFileTable {
+    files: DashMap<u64, OpenFile>,
+    next_handle: AtomicU64,
+}
+
+impl Default for OpenFileTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OpenFileTable {
+    pub fn new() -> Self {
+        Self {
+            files: DashMap::new(),
+            next_handle: AtomicU64::new(1),
+        }
+    }
+
+    pub fn insert(&self, ino: u64, content: Vec<u8>) -> u64 {
+        let fh = self.next_handle.fetch_add(1, Ordering::Relaxed);
+        self.files.insert(
+            fh,
+            OpenFile {
+                ino,
+                content,
+                dirty: false,
+            },
+        );
+        fh
+    }
+
+    pub fn get(&self, fh: u64) -> Option<dashmap::mapref::one::Ref<'_, u64, OpenFile>> {
+        self.files.get(&fh)
+    }
+
+    pub fn get_mut(&self, fh: u64) -> Option<dashmap::mapref::one::RefMut<'_, u64, OpenFile>> {
+        self.files.get_mut(&fh)
+    }
+
+    pub fn remove(&self, fh: u64) -> Option<OpenFile> {
+        self.files.remove(&fh).map(|(_, v)| v)
+    }
+
+    pub fn find_by_ino(&self, ino: u64) -> Option<dashmap::mapref::one::RefMut<'_, u64, OpenFile>> {
+        let fh = {
+            let entry = self.files.iter().find(|e| e.value().ino == ino)?;
+            *entry.key()
+        };
+        self.files.get_mut(&fh)
+    }
+}
 
 /// Errors from core VFS operations.
 ///
@@ -45,6 +106,7 @@ pub struct CoreOps {
     inodes: Arc<InodeTable>,
     drive_id: String,
     rt: Handle,
+    open_files: OpenFileTable,
 }
 
 impl CoreOps {
@@ -61,6 +123,7 @@ impl CoreOps {
             inodes,
             drive_id,
             rt,
+            open_files: OpenFileTable::new(),
         }
     }
 
@@ -252,31 +315,41 @@ impl CoreOps {
     }
 
     /// Truncate or extend a file to the given size.
+    /// If the file has an open handle, resizes that buffer directly.
     pub fn truncate(&self, ino: u64, new_size: u64) -> VfsResult<()> {
-        let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
         let new_size = new_size as usize;
 
-        let mut content = if new_size == 0 {
-            Vec::new()
+        // If the file is open, operate on the open file buffer directly
+        if let Some(mut entry) = self.open_files.find_by_ino(ino) {
+            entry.content.resize(new_size, 0);
+            entry.dirty = true;
+            drop(entry);
         } else {
+            // Fallback: truncate via writeback buffer
+            let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
+
+            let mut content = if new_size == 0 {
+                Vec::new()
+            } else {
+                self.rt
+                    .block_on(self.cache.writeback.read(&self.drive_id, &item_id))
+                    .or_else(|| {
+                        self.rt
+                            .block_on(self.cache.disk.get(&self.drive_id, &item_id))
+                    })
+                    .unwrap_or_default()
+            };
+
+            content.resize(new_size, 0);
+
             self.rt
-                .block_on(self.cache.writeback.read(&self.drive_id, &item_id))
-                .or_else(|| {
-                    self.rt
-                        .block_on(self.cache.disk.get(&self.drive_id, &item_id))
-                })
-                .unwrap_or_default()
-        };
-
-        content.resize(new_size, 0);
-
-        self.rt
-            .block_on(
-                self.cache
-                    .writeback
-                    .write(&self.drive_id, &item_id, &content),
-            )
-            .map_err(|e| VfsError::IoError(format!("truncate writeback failed: {e}")))?;
+                .block_on(
+                    self.cache
+                        .writeback
+                        .write(&self.drive_id, &item_id, &content),
+                )
+                .map_err(|e| VfsError::IoError(format!("truncate writeback failed: {e}")))?;
+        }
 
         if let Some(mut item) = self.lookup_item(ino) {
             item.size = new_size as i64;
@@ -382,6 +455,11 @@ impl CoreOps {
             }
         }
 
+        // Persist to disk for crash safety before the network upload
+        let _ = self
+            .rt
+            .block_on(self.cache.writeback.persist(&self.drive_id, &item_id));
+
         let upload_result = if is_new_file {
             if parent_id.is_empty() {
                 return Err(VfsError::IoError("no parent for new file".to_string()));
@@ -425,8 +503,98 @@ impl CoreOps {
         }
     }
 
+    /// Open a file, loading its content into the open file table.
+    /// Returns a unique file handle for subsequent read/write/flush/release calls.
+    pub fn open_file(&self, ino: u64) -> VfsResult<u64> {
+        let content = self.read_content(ino)?;
+        Ok(self.open_files.insert(ino, content))
+    }
+
+    /// Release a file handle, flushing dirty content to writeback if needed.
+    pub fn release_file(&self, fh: u64) -> VfsResult<()> {
+        let open_file = match self.open_files.remove(fh) {
+            Some(f) => f,
+            None => return Ok(()),
+        };
+        if open_file.dirty {
+            let item_id = self
+                .inodes
+                .get_item_id(open_file.ino)
+                .ok_or(VfsError::NotFound)?;
+            self.rt
+                .block_on(
+                    self.cache
+                        .writeback
+                        .write(&self.drive_id, &item_id, &open_file.content),
+                )
+                .map_err(|e| VfsError::IoError(format!("release writeback failed: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// Read bytes from an open file handle's buffer.
+    pub fn read_handle(&self, fh: u64, offset: usize, size: usize) -> VfsResult<Vec<u8>> {
+        let entry = self.open_files.get(fh).ok_or(VfsError::NotFound)?;
+        let content = &entry.content;
+        if offset >= content.len() {
+            return Ok(Vec::new());
+        }
+        let end = std::cmp::min(offset + size, content.len());
+        Ok(content[offset..end].to_vec())
+    }
+
+    /// Write data into an open file handle's buffer in-place.
+    pub fn write_handle(&self, fh: u64, offset: usize, data: &[u8]) -> VfsResult<u32> {
+        let mut entry = self.open_files.get_mut(fh).ok_or(VfsError::NotFound)?;
+        let needed = offset + data.len();
+        if entry.content.len() < needed {
+            entry.content.resize(needed, 0);
+        }
+        entry.content[offset..offset + data.len()].copy_from_slice(data);
+        entry.dirty = true;
+        let ino = entry.ino;
+        let new_size = entry.content.len() as i64;
+        drop(entry);
+
+        if let Some(mut item) = self.lookup_item(ino) {
+            item.size = new_size;
+            self.cache.memory.insert(ino, item);
+        }
+
+        Ok(data.len() as u32)
+    }
+
+    /// Flush an open file handle: push dirty content to writeback and upload.
+    pub fn flush_handle(&self, fh: u64) -> VfsResult<()> {
+        let entry = self.open_files.get(fh).ok_or(VfsError::NotFound)?;
+        if !entry.dirty {
+            return Ok(());
+        }
+        let ino = entry.ino;
+        let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
+        let content = entry.content.clone();
+        drop(entry);
+
+        self.rt
+            .block_on(
+                self.cache
+                    .writeback
+                    .write(&self.drive_id, &item_id, &content),
+            )
+            .map_err(|e| VfsError::IoError(format!("flush writeback failed: {e}")))?;
+
+        self.flush_inode(ino)?;
+
+        if let Some(mut entry) = self.open_files.get_mut(fh) {
+            entry.dirty = false;
+        }
+
+        Ok(())
+    }
+
     /// Create a new file with a temporary `local:{nanos}` ID, reassigned on flush.
-    pub fn create_file(&self, parent_ino: u64, name: &str) -> VfsResult<(u64, DriveItem)> {
+    /// Returns `(file_handle, inode, DriveItem)`.
+    pub fn create_file(&self, parent_ino: u64, name: &str) -> VfsResult<(u64, u64, DriveItem)> {
         let parent_item_id = self
             .inodes
             .get_item_id(parent_ino)
@@ -461,14 +629,6 @@ impl CoreOps {
 
         let inode = self.inodes.allocate(&temp_item_id);
 
-        self.rt
-            .block_on(
-                self.cache
-                    .writeback
-                    .write(&self.drive_id, &temp_item_id, &[]),
-            )
-            .map_err(|e| VfsError::IoError(format!("create writeback failed: {e}")))?;
-
         self.cache.memory.insert(inode, item.clone());
 
         let mut children = self
@@ -493,7 +653,9 @@ impl CoreOps {
                 .insert_with_children(parent_ino, parent_item, children);
         }
 
-        Ok((inode, item))
+        let fh = self.open_files.insert(inode, Vec::new());
+
+        Ok((fh, inode, item))
     }
 
     pub fn mkdir(&self, parent_ino: u64, name: &str) -> VfsResult<(u64, DriveItem)> {
@@ -615,10 +777,9 @@ impl CoreOps {
             && existing_item.id != item_id
         {
             if !existing_item.id.starts_with("local:") {
-                let _ = self.rt.block_on(
-                    self.graph
-                        .delete_item(&self.drive_id, &existing_item.id),
-                );
+                let _ = self
+                    .rt
+                    .block_on(self.graph.delete_item(&self.drive_id, &existing_item.id));
             }
             self.cleanup_deleted_item(&existing_item.id, existing_ino, new_parent_ino);
         }

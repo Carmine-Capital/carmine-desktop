@@ -140,20 +140,27 @@ impl SyncFilter for CloudMountCfFilter {
             .resolve_path(&rel_path)
             .ok_or(CloudErrorKind::NotInSync)?;
 
-        let content = self
+        let fh = self
             .core
-            .read_content(ino)
+            .open_file(ino)
             .map_err(|_| CloudErrorKind::Unsuccessful)?;
 
         let range = info.required_file_range();
         let start = range.start as usize;
-        let end = std::cmp::min(range.end as usize, content.len());
+        let length = (range.end - range.start) as usize;
 
-        if start >= content.len() {
+        let content = self
+            .core
+            .read_handle(fh, start, length)
+            .map_err(|_| CloudErrorKind::Unsuccessful)?;
+
+        let _ = self.core.release_file(fh);
+
+        if content.is_empty() {
             return Ok(());
         }
 
-        let data = &content[start..end];
+        let data = &content[..];
         let total_len = data.len();
         let mut offset = range.start;
 

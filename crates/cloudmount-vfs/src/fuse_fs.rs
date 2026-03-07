@@ -204,41 +204,32 @@ impl Filesystem for CloudMountFs {
     fn read(
         &self,
         _req: &Request,
-        ino: INodeNo,
-        _fh: FileHandle,
+        _ino: INodeNo,
+        fh: FileHandle,
         offset: u64,
         size: u32,
         _flags: OpenFlags,
         _lock_owner: Option<LockOwner>,
         reply: ReplyData,
     ) {
-        match self.ops.read_content(ino.0) {
-            Ok(content) => {
-                let start = offset as usize;
-                let end = std::cmp::min(start + size as usize, content.len());
-                if start < content.len() {
-                    reply.data(&content[start..end]);
-                } else {
-                    reply.data(&[]);
-                }
-            }
+        match self.ops.read_handle(fh.0, offset as usize, size as usize) {
+            Ok(data) => reply.data(&data),
             Err(e) => reply.error(Self::vfs_err_to_errno(e)),
         }
     }
 
     fn open(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
-        if self.ops.lookup_item(ino.0).is_some() {
-            reply.opened(FileHandle(0), FopenFlags::empty());
-        } else {
-            reply.error(Errno::ENOENT);
+        match self.ops.open_file(ino.0) {
+            Ok(fh) => reply.opened(FileHandle(fh), FopenFlags::empty()),
+            Err(e) => reply.error(Self::vfs_err_to_errno(e)),
         }
     }
 
     fn write(
         &self,
         _req: &Request,
-        ino: INodeNo,
-        _fh: FileHandle,
+        _ino: INodeNo,
+        fh: FileHandle,
         offset: u64,
         data: &[u8],
         _write_flags: WriteFlags,
@@ -246,7 +237,7 @@ impl Filesystem for CloudMountFs {
         _lock_owner: Option<LockOwner>,
         reply: ReplyWrite,
     ) {
-        match self.ops.write_to_buffer(ino.0, offset as usize, data) {
+        match self.ops.write_handle(fh.0, offset as usize, data) {
             Ok(written) => reply.written(written),
             Err(e) => reply.error(Self::vfs_err_to_errno(e)),
         }
@@ -255,12 +246,28 @@ impl Filesystem for CloudMountFs {
     fn flush(
         &self,
         _req: &Request,
-        ino: INodeNo,
-        _fh: FileHandle,
+        _ino: INodeNo,
+        fh: FileHandle,
         _lock_owner: LockOwner,
         reply: ReplyEmpty,
     ) {
-        match self.ops.flush_inode(ino.0) {
+        match self.ops.flush_handle(fh.0) {
+            Ok(()) => reply.ok(),
+            Err(e) => reply.error(Self::vfs_err_to_errno(e)),
+        }
+    }
+
+    fn release(
+        &self,
+        _req: &Request,
+        _ino: INodeNo,
+        fh: FileHandle,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
+        _flush: bool,
+        reply: ReplyEmpty,
+    ) {
+        match self.ops.release_file(fh.0) {
             Ok(()) => reply.ok(),
             Err(e) => reply.error(Self::vfs_err_to_errno(e)),
         }
@@ -269,12 +276,12 @@ impl Filesystem for CloudMountFs {
     fn fsync(
         &self,
         _req: &Request,
-        ino: INodeNo,
-        _fh: FileHandle,
+        _ino: INodeNo,
+        fh: FileHandle,
         _datasync: bool,
         reply: ReplyEmpty,
     ) {
-        match self.ops.flush_inode(ino.0) {
+        match self.ops.flush_handle(fh.0) {
             Ok(()) => reply.ok(),
             Err(e) => reply.error(Self::vfs_err_to_errno(e)),
         }
@@ -293,13 +300,13 @@ impl Filesystem for CloudMountFs {
         let name_str = name.to_string_lossy().to_string();
 
         match self.ops.create_file(parent.0, &name_str) {
-            Ok((inode, item)) => {
+            Ok((fh, inode, item)) => {
                 let attr = self.item_to_attr(inode, &item);
                 reply.created(
                     &TTL,
                     &attr,
                     Generation(0),
-                    FileHandle(0),
+                    FileHandle(fh),
                     FopenFlags::empty(),
                 );
             }

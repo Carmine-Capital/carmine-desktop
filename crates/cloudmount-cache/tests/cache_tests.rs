@@ -407,8 +407,11 @@ async fn test_writeback_list_pending() -> cloudmount_core::Result<()> {
     let buffer = WriteBackBuffer::new(cache_dir);
 
     buffer.write("drive1", "item1", b"content1").await?;
+    buffer.persist("drive1", "item1").await?;
     buffer.write("drive1", "item2", b"content2").await?;
+    buffer.persist("drive1", "item2").await?;
     buffer.write("drive2", "item3", b"content3").await?;
+    buffer.persist("drive2", "item3").await?;
 
     let pending = buffer.list_pending().await?;
     assert_eq!(pending.len(), 3);
@@ -433,8 +436,11 @@ async fn test_writeback_crash_recovery() -> cloudmount_core::Result<()> {
     {
         let buffer = WriteBackBuffer::new(cache_dir.clone());
         buffer.write("drive1", "item1", b"content1").await?;
+        buffer.persist("drive1", "item1").await?;
         buffer.write("drive1", "item2", b"content2").await?;
+        buffer.persist("drive1", "item2").await?;
         buffer.write("drive2", "item3", b"content3").await?;
+        buffer.persist("drive2", "item3").await?;
     }
 
     {

@@ -310,18 +310,21 @@ async fn test_crash_recovery_pending_writes() -> cloudmount_core::Result<()> {
     cleanup(&base);
     std::fs::create_dir_all(&base)?;
 
-    // Simulate "before crash": write pending items then drop the buffer
+    // Simulate "before crash": write and persist pending items then drop the buffer
     {
         let buffer = WriteBackBuffer::new(base.clone());
         buffer
             .write("drive1", "doc-a", b"unsaved content A")
             .await?;
+        buffer.persist("drive1", "doc-a").await?;
         buffer
             .write("drive1", "doc-b", b"unsaved content B")
             .await?;
+        buffer.persist("drive1", "doc-b").await?;
         buffer
             .write("drive2", "spreadsheet", b"unsaved spreadsheet")
             .await?;
+        buffer.persist("drive2", "spreadsheet").await?;
     }
     // Buffer dropped — simulates process crash
 
@@ -1098,17 +1101,19 @@ async fn test_crash_recovery_reupload_pending_writes() -> cloudmount_core::Resul
         Some(60),
     )?);
 
-    // Simulate crashed writes: write pending items directly
+    // Simulate crashed writes: write and persist pending items
     cache
         .writeback
         .write("drive-crash", "doc-1", b"unsaved document content")
         .await?;
+    cache.writeback.persist("drive-crash", "doc-1").await?;
     cache
         .writeback
         .write("drive-crash", "doc-2", b"another unsaved file")
         .await?;
+    cache.writeback.persist("drive-crash", "doc-2").await?;
 
-    // Verify pending writes exist
+    // Verify pending writes exist on disk
     let pending = cache.writeback.list_pending().await?;
     assert_eq!(pending.len(), 2, "should have 2 pending writes");
 
