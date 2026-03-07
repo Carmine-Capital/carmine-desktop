@@ -1,7 +1,7 @@
 {
   "productName": "CloudMount",
   "version": "0.1.0",
-  "identifier": "com.cloudmount.app",
+  "identifier": "com.cloudmount",
   "build": {
     "frontendDist": "./dist"
   },

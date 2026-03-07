@@ -78,7 +78,7 @@ zeroize = { version = "1.8.2", features = ["derive"] }
 # Windows Cloud Files API (virtual filesystem)
 cloud-filter = "0.0.6"
 nt-time = { version = "0.8", features = ["chrono"] }
-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_SystemInformation"] }
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_SystemInformation", "Win32_System_LibraryLoader"] }
 
 # Tauri v2 (desktop GUI)
 tauri = { version = "2", features = ["tray-icon", "image-png"] }

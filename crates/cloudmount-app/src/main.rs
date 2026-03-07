@@ -164,34 +164,38 @@ fn fuse_available() -> bool {
 /// Extracted for testability — callers can pass a custom minimum version.
 #[cfg(target_os = "windows")]
 fn cfapi_version_meets(min_major: u32, min_minor: u32, min_build: u32) -> bool {
-    use windows::Win32::System::SystemInformation::{
-        OSVERSIONINFOEXW, VER_BUILDNUMBER, VER_MAJORVERSION, VER_MINORVERSION, VerSetConditionMask,
-        VerifyVersionInfoW,
-    };
+    use std::mem;
+    use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
+    use windows::core::{s, w};
 
-    let mut osvi = OSVERSIONINFOEXW {
-        dwOSVersionInfoSize: std::mem::size_of::<OSVERSIONINFOEXW>() as u32,
-        dwMajorVersion: min_major,
-        dwMinorVersion: min_minor,
-        dwBuildNumber: min_build,
+    // VerifyVersionInfoW lies about the OS version on Windows 10+ unless the binary
+    // carries a Windows 10 compatibility manifest (test runners and generic builds
+    // do not). RtlGetVersion from ntdll bypasses this and returns the true version.
+    type RtlGetVersionFn = unsafe extern "system" fn(*mut OSVERSIONINFOW) -> i32;
+
+    let mut osvi = OSVERSIONINFOW {
+        dwOSVersionInfoSize: mem::size_of::<OSVERSIONINFOW>() as u32,
         ..Default::default()
     };
 
-    // 3 = VER_GREATER_EQUAL; omit VER_PRODUCT_TYPE so this works on Windows Server too
-    let condition_mask = unsafe {
-        let cm = VerSetConditionMask(0, VER_MAJORVERSION, 3);
-        let cm = VerSetConditionMask(cm, VER_MINORVERSION, 3);
-        VerSetConditionMask(cm, VER_BUILDNUMBER, 3)
-    };
-
     unsafe {
-        VerifyVersionInfoW(
-            &mut osvi,
-            VER_MAJORVERSION | VER_MINORVERSION | VER_BUILDNUMBER,
-            condition_mask,
-        )
-        .is_ok()
+        let ntdll = match GetModuleHandleW(w!("ntdll.dll")) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+        let Some(proc) = GetProcAddress(ntdll, s!("RtlGetVersion")) else {
+            return false;
+        };
+        let rtl_get_version: RtlGetVersionFn = mem::transmute(proc);
+        if rtl_get_version(&mut osvi) != 0 {
+            // Non-zero NTSTATUS means failure
+            return false;
+        }
     }
+
+    let actual = (osvi.dwMajorVersion, osvi.dwMinorVersion, osvi.dwBuildNumber);
+    actual >= (min_major, min_minor, min_build)
 }
 
 /// Show a native Win32 error dialog. Only compiled on Windows release desktop builds
