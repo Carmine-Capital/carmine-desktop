@@ -1,5 +1,6 @@
 pub mod core_ops;
 pub mod inode;
+pub(crate) mod pending;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod fuse_fs;

@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio::runtime::Handle;
 
@@ -7,8 +6,6 @@ use crate::fuse_fs::CloudMountFs;
 use crate::inode::{InodeTable, ROOT_INODE};
 use cloudmount_cache::CacheManager;
 use cloudmount_graph::GraphClient;
-
-const UNMOUNT_FLUSH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Detect and clean up a stale FUSE mount at `path`.
 ///
@@ -156,78 +153,16 @@ impl MountHandle {
     }
 
     pub fn unmount(self) -> cloudmount_core::Result<()> {
-        self.flush_pending();
+        tokio::task::block_in_place(|| {
+            self.rt.block_on(crate::pending::flush_pending(
+                &self.cache,
+                &self.graph,
+                &self.drive_id,
+            ))
+        });
         drop(self.session);
         tracing::info!("unmounted {}", self.mountpoint);
         Ok(())
-    }
-
-    fn flush_pending(&self) {
-        let pending = match tokio::task::block_in_place(|| {
-            self.rt.block_on(self.cache.writeback.list_pending())
-        }) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!("failed to list pending writes on unmount: {e}");
-                return;
-            }
-        };
-
-        let drive_pending: Vec<_> = pending
-            .into_iter()
-            .filter(|(d, _)| d == &self.drive_id)
-            .collect();
-
-        if drive_pending.is_empty() {
-            return;
-        }
-
-        tracing::info!(
-            "flushing {} pending writes for drive {}",
-            drive_pending.len(),
-            self.drive_id
-        );
-
-        let graph = self.graph.clone();
-        let cache = self.cache.clone();
-        let drive_id = self.drive_id.clone();
-
-        let flush_result = tokio::task::block_in_place(|| {
-            self.rt.block_on(async {
-                tokio::time::timeout(UNMOUNT_FLUSH_TIMEOUT, async {
-                    for (_, item_id) in &drive_pending {
-                        if let Some(content) = cache.writeback.read(&drive_id, item_id).await {
-                            match graph
-                                .upload(
-                                    &drive_id,
-                                    "",
-                                    Some(item_id),
-                                    item_id,
-                                    bytes::Bytes::from(content),
-                                )
-                                .await
-                            {
-                                Ok(_) => {
-                                    let _ = cache.writeback.remove(&drive_id, item_id).await;
-                                }
-                                Err(e) => {
-                                    tracing::error!("flush upload failed for {item_id}: {e}");
-                                }
-                            }
-                        }
-                    }
-                })
-                .await
-            })
-        });
-
-        if flush_result.is_err() {
-            tracing::warn!(
-                "unmount flush timed out after {}s, {} writes may be pending",
-                UNMOUNT_FLUSH_TIMEOUT.as_secs(),
-                drive_pending.len()
-            );
-        }
     }
 }
 
