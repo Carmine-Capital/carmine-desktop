@@ -142,9 +142,31 @@ impl SyncFilter for CloudMountCfFilter {
             }
         };
 
-        let Some(ino) = self.core.inodes().get_inode(&item_id) else {
-            tracing::warn!(path = %rel_path, "cfapi: fetch_data inode not found for item {item_id}");
-            return Err(CloudErrorKind::Unsuccessful);
+        // Fast path: item_id from blob is already in the inode table.
+        // Fallback: resolve via path traversal (cache → Graph API). This fires
+        // when fetch_placeholders hasn't populated the inode table yet — e.g. on
+        // Windows Server CI runners where directory-enumeration callbacks are
+        // unreliable and tests create placeholders directly via PlaceholderFile.
+        //
+        // NOTE: do NOT return Err if resolution fails. Write::fail in
+        // cloud-filter 0.0.6 calls CfExecute(TRANSFER_DATA, length=0) which
+        // Windows rejects with ERROR_CLOUD_FILE_INVALID_REQUEST for non-empty
+        // files, causing an unwrap() panic across the FFI boundary
+        // (STATUS_STACK_BUFFER_OVERRUN). Return Ok(()) instead so the OS
+        // cancels the transfer via CANCEL_FETCH_DATA.
+        let ino = if let Some(ino) = self.core.inodes().get_inode(&item_id) {
+            ino
+        } else {
+            match self.core.resolve_path(&rel_path) {
+                Some((ino, _)) => ino,
+                None => {
+                    tracing::warn!(
+                        path = %rel_path,
+                        "cfapi: fetch_data inode not found for item {item_id}, path unresolvable"
+                    );
+                    return Ok(());
+                }
+            }
         };
 
         let range = info.required_file_range();
