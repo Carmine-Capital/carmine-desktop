@@ -40,7 +40,7 @@
     "security": {}
   },
   "plugins": {
-    "notification": {},
+    "notification": null,
     "updater": {
       "endpoints": [],
       "pubkey": ""

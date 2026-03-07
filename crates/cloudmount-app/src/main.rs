@@ -696,7 +696,9 @@ fn run_crash_recovery(app: &tauri::AppHandle) {
             // local:* files have no server-side metadata — unrecoverable after restart
             if item_id.starts_with("local:") {
                 let _ = cache.writeback.remove(drive_id, item_id).await;
-                tracing::warn!("crash recovery: discarded unrecoverable local file {drive_id}/{item_id}");
+                tracing::warn!(
+                    "crash recovery: discarded unrecoverable local file {drive_id}/{item_id}"
+                );
                 continue;
             }
 

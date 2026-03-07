@@ -1471,3 +1471,96 @@ async fn test_smoke_windows_cfapi_mount_list_read_write_unmount() -> cloudmount_
 
     Ok(())
 }
+
+// ============================================================================
+// SURGICAL INVALIDATION: parent cache preserved after create
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_surgical_invalidation_create_preserves_parent_cache() -> cloudmount_core::Result<()> {
+    use cloudmount_vfs::core_ops::CoreOps;
+    use cloudmount_vfs::inode::InodeTable;
+
+    let server = MockServer::start().await;
+    let base = unique_temp_dir("surgical");
+    let cache_dir = base.join("cache");
+    let db_path = base.join("metadata.db");
+    cleanup(&base);
+    std::fs::create_dir_all(&cache_dir)?;
+
+    let graph = Arc::new(make_client(&server.uri()));
+    let cache = Arc::new(CacheManager::new(
+        cache_dir,
+        db_path,
+        100_000_000,
+        Some(300),
+    )?);
+    let inodes = Arc::new(InodeTable::new());
+    inodes.set_root("root-id");
+    let drive_id = "test-drive";
+
+    // Seed root directory item in cache so insert_with_children can find the parent
+    let root_item = test_drive_item("root-id", "root", true);
+    cache.memory.insert(1, root_item);
+
+    // Mock list_children for root — should only be called once
+    let list_children_mock = Mock::given(method("GET"))
+        .and(path(format!("/drives/{drive_id}/items/root-id/children")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "id": "existing-file-1",
+                    "name": "existing.txt",
+                    "size": 100,
+                    "parentReference": { "driveId": drive_id, "id": "root-id" },
+                    "file": { "mimeType": "text/plain" }
+                }
+            ]
+        })))
+        .expect(1) // Exactly one call
+        .mount_as_scoped(&server)
+        .await;
+
+    let rt = tokio::runtime::Handle::current();
+    let ops = CoreOps::new(
+        graph.clone(),
+        cache.clone(),
+        inodes.clone(),
+        drive_id.to_string(),
+        rt,
+    );
+
+    // CoreOps uses block_on internally, so run on a blocking thread
+    tokio::task::spawn_blocking(move || {
+        // First call populates the parent's children cache from Graph API
+        let children = ops.list_children(1);
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].1.name, "existing.txt");
+
+        // Create a new file — should surgically add to parent cache, NOT invalidate it
+        let create_result = ops.create_file(1, "newfile.txt");
+        assert!(create_result.is_ok());
+
+        // List children again — should serve from memory cache, no new Graph API call
+        let children_after = ops.list_children(1);
+        assert_eq!(
+            children_after.len(),
+            2,
+            "should have both existing and new file"
+        );
+        let names: Vec<&str> = children_after
+            .iter()
+            .map(|(_, item)| item.name.as_str())
+            .collect();
+        assert!(names.contains(&"existing.txt"));
+        assert!(names.contains(&"newfile.txt"));
+    })
+    .await
+    .expect("blocking task panicked");
+
+    // The scoped mock with expect(1) will panic on drop if called more than once
+    drop(list_children_mock);
+
+    cleanup(&base);
+    Ok(())
+}
