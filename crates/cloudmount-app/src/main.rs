@@ -22,6 +22,8 @@ use cloudmount_core::config::{
 
 use std::sync::Arc;
 
+type OpenerFn = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
 use cloudmount_auth::AuthManager;
 use cloudmount_cache::CacheManager;
 use cloudmount_cache::sync::run_delta_sync;
@@ -183,7 +185,7 @@ fn init_components(
     overrides: &RuntimeOverrides,
     packaged: &PackagedDefaults,
     effective: &EffectiveConfig,
-    opener: Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
+    opener: OpenerFn,
 ) -> Components {
     let client_id = resolve_client_id(overrides, packaged);
     let tenant_id = resolve_tenant_id(overrides, packaged);
@@ -804,7 +806,7 @@ fn run_headless(
         .expect("failed to create tokio runtime");
 
     rt.block_on(async {
-        let opener: Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync> =
+        let opener: OpenerFn =
             Arc::new(|url: &str| {
                 if cloudmount_auth::oauth::has_display() {
                     open::that(url).map_err(|e| e.to_string())
