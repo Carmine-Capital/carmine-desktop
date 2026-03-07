@@ -737,6 +737,10 @@ impl CoreOps {
                 .open_files
                 .find_by_ino(ino)
                 .and_then(|e| e.content.as_complete().cloned())
+                .or_else(|| {
+                    self.rt
+                        .block_on(self.cache.writeback.read(&self.drive_id, &item_id))
+                })
                 .unwrap_or_default();
             return Ok(self
                 .open_files
