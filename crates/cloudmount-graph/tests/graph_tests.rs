@@ -1,6 +1,7 @@
 use bytes::Bytes;
+use futures_util::StreamExt;
 use serde_json::json;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use cloudmount_graph::GraphClient;
@@ -90,6 +91,35 @@ async fn download_content_returns_bytes() {
     let data = client.download_content("d1", "i1").await.unwrap();
 
     assert_eq!(data.as_ref(), payload);
+}
+
+#[tokio::test]
+async fn download_streaming_yields_chunks() {
+    let server = MockServer::start().await;
+    // 8 KB body — large enough to produce multiple chunks from reqwest
+    let payload: Vec<u8> = (0..8192).map(|i| (i % 256) as u8).collect();
+
+    Mock::given(method("GET"))
+        .and(path("/drives/d1/items/i1/content"))
+        .and(header("Authorization", "Bearer test-token"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(payload.clone(), "application/octet-stream"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let mut stream = client.download_streaming("d1", "i1").await.unwrap();
+
+    let mut collected = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.unwrap();
+        collected.extend_from_slice(&chunk);
+    }
+
+    assert_eq!(collected, payload);
 }
 
 #[tokio::test]
@@ -331,4 +361,177 @@ async fn error_500_retries_then_fails() {
         }
         other => panic!("expected GraphApi 500 error, got: {other:?}"),
     }
+}
+
+// --- copy_item tests ---
+
+#[tokio::test]
+async fn copy_item_returns_monitor_url() {
+    let server = MockServer::start().await;
+    let monitor = format!("{}/monitor/abc", server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/drives/d1/items/i1/copy"))
+        .respond_with(
+            ResponseTemplate::new(202).insert_header("Location", monitor.as_str()),
+        )
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let url = client.copy_item("d1", "i1", "d1", "p1", "copy.txt").await.unwrap();
+    assert_eq!(url, monitor);
+}
+
+#[tokio::test]
+async fn copy_item_retries_on_429_and_500() {
+    tokio::time::pause();
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/drives/d1/items/i1/copy"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "1"))
+        .expect(4)
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let err = client.copy_item("d1", "i1", "d1", "p1", "copy.txt").await.unwrap_err();
+    match err {
+        cloudmount_core::Error::GraphApi { status, .. } => assert_eq!(status, 429),
+        other => panic!("expected GraphApi 429, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn copy_item_fails_on_404() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/drives/d1/items/i1/copy"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "error": { "code": "itemNotFound", "message": "not found" }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let err = client.copy_item("d1", "i1", "d1", "p1", "copy.txt").await.unwrap_err();
+    match err {
+        cloudmount_core::Error::GraphApi { status, .. } => assert_eq!(status, 404),
+        other => panic!("expected GraphApi 404, got: {other:?}"),
+    }
+}
+
+// --- poll_copy_status tests ---
+
+#[tokio::test]
+async fn poll_copy_status_returns_completed() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/monitor/abc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": "completed",
+            "resourceId": "new-item-id",
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let status = client
+        .poll_copy_status(&format!("{}/monitor/abc", server.uri()))
+        .await
+        .unwrap();
+
+    match status {
+        cloudmount_graph::CopyStatus::Completed { resource_id } => {
+            assert_eq!(resource_id, "new-item-id");
+        }
+        other => panic!("expected Completed, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn poll_copy_status_returns_in_progress() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/monitor/abc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": "inProgress",
+            "percentageComplete": 42.5,
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let status = client
+        .poll_copy_status(&format!("{}/monitor/abc", server.uri()))
+        .await
+        .unwrap();
+
+    match status {
+        cloudmount_graph::CopyStatus::InProgress { percentage } => {
+            assert!((percentage - 42.5).abs() < f64::EPSILON);
+        }
+        other => panic!("expected InProgress, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn poll_copy_status_returns_failed() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/monitor/abc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": "failed",
+            "error": { "code": "nameAlreadyExists", "message": "name conflict" },
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let status = client
+        .poll_copy_status(&format!("{}/monitor/abc", server.uri()))
+        .await
+        .unwrap();
+
+    match status {
+        cloudmount_graph::CopyStatus::Failed { message } => {
+            assert!(message.contains("nameAlreadyExists"));
+        }
+        other => panic!("expected Failed, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn poll_copy_status_sends_no_auth_header() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/monitor/abc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": "completed",
+            "resourceId": "r1",
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let status = client
+        .poll_copy_status(&format!("{}/monitor/abc", server.uri()))
+        .await
+        .unwrap();
+
+    assert!(matches!(status, cloudmount_graph::CopyStatus::Completed { .. }));
+
+    let requests = server.received_requests().await.unwrap();
+    let poll_req = requests.iter().find(|r| r.url.path() == "/monitor/abc").unwrap();
+    assert!(
+        !poll_req.headers.iter().any(|(name, _)| name == "authorization"),
+        "poll request should not contain Authorization header"
+    );
 }

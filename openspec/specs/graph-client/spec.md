@@ -24,9 +24,28 @@ The system SHALL download file content from OneDrive/SharePoint via the Graph AP
 - **WHEN** the VFS requests a specific byte range of a file (offset + length)
 - **THEN** the system includes a `Range: bytes={offset}-{offset+length-1}` header in the request and returns only the requested bytes
 
-#### Scenario: Download large file
-- **WHEN** the VFS requests content of a file larger than 4 MB
-- **THEN** the system downloads the file in chunks using range requests, writing each chunk to the disk cache as it arrives
+#### Scenario: Download large file via streaming
+- **WHEN** the VFS requests content of a file larger than 4 MB that is not in the disk cache
+- **THEN** the system downloads the file using a streaming connection, delivering chunks to the caller as they arrive from the network, and the caller writes each chunk to a buffer as it is received
+
+#### Scenario: Random-access download via range request
+- **WHEN** the VFS requests a specific byte range of a large file during a streaming download (e.g., due to a seek operation)
+- **THEN** the system issues a separate `GET` request with a `Range` header for the requested bytes and returns them independently of the ongoing streaming download
+
+### Requirement: Streaming file download
+The system SHALL support downloading file content as a byte stream, delivering chunks progressively as they arrive from the network rather than buffering the entire response in memory before returning.
+
+#### Scenario: Stream large file download
+- **WHEN** the VFS requests a streaming download of a file
+- **THEN** the system initiates a `GET /drives/{driveId}/items/{itemId}/content` request and returns a byte stream that yields chunks as they arrive from the server, without waiting for the complete response body
+
+#### Scenario: Streaming download with retry on failure
+- **WHEN** a streaming download connection drops mid-transfer due to a network error
+- **THEN** the system reports the error to the caller via the stream; the caller is responsible for retry decisions (e.g., restarting the download or falling back to range requests)
+
+#### Scenario: Streaming download authentication
+- **WHEN** a streaming download is initiated
+- **THEN** the system obtains a fresh access token before starting the HTTP request, using the same token acquisition mechanism as other Graph API calls
 
 ### Requirement: Upload file content
 The system SHALL upload file content to OneDrive/SharePoint via the Graph API.
@@ -97,3 +116,68 @@ The system SHALL respect Microsoft Graph API rate limits and implement retry log
 #### Scenario: Request batching
 - **WHEN** multiple metadata requests are pending within a 50ms window
 - **THEN** the system MAY batch them into a single `POST /$batch` request containing up to 20 individual requests
+
+### Requirement: Field selection on Graph API list queries
+
+List queries must request only the fields used by DriveItem deserialization, reducing JSON payload size.
+
+#### Scenario: list_children includes $select parameter
+
+- **WHEN** `list_children(drive_id, item_id)` is called
+- **THEN** the request URL includes `$select=id,name,size,lastModifiedDateTime,createdDateTime,eTag,parentReference,folder,file,@microsoft.graph.downloadUrl`
+- **AND** the response is smaller due to excluded unused fields
+- **AND** DriveItem deserialization continues to work (serde ignores missing optional fields)
+
+#### Scenario: list_root_children includes $select parameter
+
+- **WHEN** `list_root_children(drive_id)` is called
+- **THEN** the request URL includes the same `$select` parameter
+- **AND** pagination via `@odata.nextLink` continues to work (server preserves $select across pages)
+
+#### Scenario: delta_query is NOT modified
+
+- **WHEN** `delta_query` is called
+- **THEN** no `$select` parameter is added
+- **AND** because delta responses include `deleted` facets and other fields needed for sync processing
+
+### Requirement: Server-side copy via Graph API
+The system SHALL support copying items server-side via the Microsoft Graph API without transferring file content through the client.
+
+#### Scenario: Copy item within same drive
+- **WHEN** a server-side copy is requested for an item within the same drive
+- **THEN** the system calls `POST /drives/{driveId}/items/{itemId}/copy` with body `{ "parentReference": { "driveId": "<driveId>", "id": "<parentId>" }, "name": "<newName>" }`, receives HTTP 202 Accepted, and extracts the monitor URL from the `Location` response header
+
+#### Scenario: Copy request retries on transient error
+- **WHEN** the copy POST request returns HTTP 429 or a 5xx status code
+- **THEN** the system retries up to 3 times with exponential backoff, following the existing retry pattern
+
+#### Scenario: Copy request fails with client error
+- **WHEN** the copy POST request returns HTTP 400, 403, 404, or another non-retryable error
+- **THEN** the system returns the error immediately without retrying
+
+### Requirement: Poll copy monitor URL for completion
+The system SHALL poll the monitor URL returned by the copy endpoint to track the async copy operation until completion, failure, or timeout.
+
+#### Scenario: Copy in progress
+- **WHEN** the monitor URL returns `{ "status": "inProgress", "percentageComplete": <value> }`
+- **THEN** the system waits and polls again after an exponential backoff delay (starting at 500ms, doubling up to 5s)
+
+#### Scenario: Copy completed
+- **WHEN** the monitor URL returns `{ "status": "completed", "resourceId": "<newItemId>" }`
+- **THEN** the system returns the `resourceId` of the newly created item
+
+#### Scenario: Copy failed on server
+- **WHEN** the monitor URL returns `{ "status": "failed" }` with an optional error object
+- **THEN** the system returns an error containing the failure message from the server response
+
+#### Scenario: Monitor URL unreachable
+- **WHEN** a poll request to the monitor URL fails due to a network error
+- **THEN** the system retries the poll up to 3 times before treating the copy as failed
+
+#### Scenario: Copy exceeds maximum poll duration
+- **WHEN** the total polling duration exceeds 300 seconds (5 minutes)
+- **THEN** the system stops polling and returns a timeout error
+
+#### Scenario: Monitor URL does not require authentication
+- **WHEN** the system polls the monitor URL
+- **THEN** the system SHALL NOT include an `Authorization` header, as the monitor URL is pre-authenticated

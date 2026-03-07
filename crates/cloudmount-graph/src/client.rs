@@ -1,13 +1,23 @@
+use std::pin::Pin;
+
 use bytes::Bytes;
 use cloudmount_core::types::*;
+use futures_util::{Stream, StreamExt};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, RANGE};
 use reqwest::{Client, StatusCode};
 
 use crate::retry::with_retry;
 
 const GRAPH_BASE: &str = "https://graph.microsoft.com/v1.0";
+
+#[derive(Debug, Clone)]
+pub enum CopyStatus {
+    InProgress { percentage: f64 },
+    Completed { resource_id: String },
+    Failed { message: String },
+}
 const UPLOAD_CHUNK_SIZE: usize = 10 * 1024 * 1024;
-const SMALL_FILE_LIMIT: usize = 4 * 1024 * 1024;
+pub const SMALL_FILE_LIMIT: usize = 4 * 1024 * 1024;
 
 type TokenFuture =
     std::pin::Pin<Box<dyn std::future::Future<Output = cloudmount_core::Result<String>> + Send>>;
@@ -119,7 +129,9 @@ impl GraphClient {
     ) -> cloudmount_core::Result<Vec<DriveItem>> {
         let base_url = &self.base_url;
         let mut items = Vec::new();
-        let mut url = format!("{base_url}/drives/{drive_id}/items/{item_id}/children?$top=200");
+        let mut url = format!(
+            "{base_url}/drives/{drive_id}/items/{item_id}/children?$top=200&$select=id,name,size,lastModifiedDateTime,createdDateTime,eTag,parentReference,folder,file,@microsoft.graph.downloadUrl"
+        );
 
         loop {
             let page: GraphCollection<DriveItem> = self.get_json(&url).await?;
@@ -139,7 +151,9 @@ impl GraphClient {
     ) -> cloudmount_core::Result<Vec<DriveItem>> {
         let base_url = &self.base_url;
         let mut items = Vec::new();
-        let mut url = format!("{base_url}/drives/{drive_id}/root/children?$top=200");
+        let mut url = format!(
+            "{base_url}/drives/{drive_id}/root/children?$top=200&$select=id,name,size,lastModifiedDateTime,createdDateTime,eTag,parentReference,folder,file,@microsoft.graph.downloadUrl"
+        );
 
         loop {
             let page: GraphCollection<DriveItem> = self.get_json(&url).await?;
@@ -221,6 +235,33 @@ impl GraphClient {
         .await
     }
 
+    pub async fn download_streaming(
+        &self,
+        drive_id: &str,
+        item_id: &str,
+    ) -> cloudmount_core::Result<
+        Pin<Box<dyn Stream<Item = cloudmount_core::Result<Bytes>> + Send>>,
+    > {
+        let base_url = &self.base_url;
+        let token = self.token().await?;
+        let resp = self
+            .http
+            .get(format!(
+                "{base_url}/drives/{drive_id}/items/{item_id}/content"
+            ))
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .send()
+            .await
+            .map_err(|e| cloudmount_core::Error::Network(e.to_string()))?;
+
+        let resp = Self::handle_error(resp).await?;
+
+        Ok(Box::pin(
+            resp.bytes_stream()
+                .map(|r| r.map_err(|e| cloudmount_core::Error::Network(e.to_string()))),
+        ))
+    }
+
     pub async fn upload_small(
         &self,
         drive_id: &str,
@@ -231,7 +272,8 @@ impl GraphClient {
         let base_url = &self.base_url;
         let token = self.token().await?;
         let encoded_name = urlencoding::encode(name);
-        let url = format!("{base_url}/drives/{drive_id}/items/{parent_id}:/{encoded_name}:/content");
+        let url =
+            format!("{base_url}/drives/{drive_id}/items/{parent_id}:/{encoded_name}:/content");
         let content_len = content.len();
         let resp = self
             .http
@@ -514,6 +556,104 @@ impl GraphClient {
             .into_iter()
             .filter(|item| item.folder.is_some())
             .collect())
+    }
+
+    pub async fn copy_item(
+        &self,
+        drive_id: &str,
+        item_id: &str,
+        dest_drive_id: &str,
+        dest_parent_id: &str,
+        dest_name: &str,
+    ) -> cloudmount_core::Result<String> {
+        let base_url = &self.base_url;
+        let url = format!("{base_url}/drives/{drive_id}/items/{item_id}/copy");
+        let body = serde_json::json!({
+            "parentReference": {
+                "driveId": dest_drive_id,
+                "id": dest_parent_id,
+            },
+            "name": dest_name,
+        });
+
+        with_retry(|| async {
+            let token = self.token().await?;
+            let resp = self
+                .http
+                .post(&url)
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header(CONTENT_TYPE, "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| cloudmount_core::Error::Network(e.to_string()))?;
+
+            let status = resp.status();
+            if status == StatusCode::ACCEPTED {
+                let monitor_url = resp
+                    .headers()
+                    .get("Location")
+                    .and_then(|v| v.to_str().ok())
+                    .ok_or_else(|| cloudmount_core::Error::GraphApi {
+                        status: 202,
+                        message: "copy 202 response missing Location header".into(),
+                    })?
+                    .to_string();
+                return Ok(monitor_url);
+            }
+
+            // Not 202 — treat as error
+            Err(Self::handle_error(resp).await.unwrap_err())
+        })
+        .await
+    }
+
+    pub async fn poll_copy_status(
+        &self,
+        monitor_url: &str,
+    ) -> cloudmount_core::Result<CopyStatus> {
+        let resp = self
+            .http
+            .get(monitor_url)
+            .send()
+            .await
+            .map_err(|e| cloudmount_core::Error::Network(e.to_string()))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(cloudmount_core::Error::GraphApi {
+                status: status.as_u16(),
+                message: format!("copy monitor returned {status}"),
+            });
+        }
+
+        let monitor: CopyMonitorResponse =
+            resp.json().await.map_err(|e| cloudmount_core::Error::GraphApi {
+                status: 0,
+                message: format!("copy monitor parse failed: {e}"),
+            })?;
+
+        match monitor.status.as_str() {
+            "completed" => {
+                let resource_id = monitor.resource_id.ok_or_else(|| {
+                    cloudmount_core::Error::GraphApi {
+                        status: 0,
+                        message: "copy completed but no resourceId".into(),
+                    }
+                })?;
+                Ok(CopyStatus::Completed { resource_id })
+            }
+            "failed" => {
+                let message = monitor
+                    .error
+                    .map(|e| format!("{}: {}", e.code, e.message))
+                    .unwrap_or_else(|| "unknown error".into());
+                Ok(CopyStatus::Failed { message })
+            }
+            _ => Ok(CopyStatus::InProgress {
+                percentage: monitor.percentage_complete.unwrap_or(0.0),
+            }),
+        }
     }
 
     pub async fn list_site_drives(&self, site_id: &str) -> cloudmount_core::Result<Vec<Drive>> {

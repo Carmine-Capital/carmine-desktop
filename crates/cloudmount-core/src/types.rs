@@ -118,3 +118,13 @@ pub struct GraphCollection<T> {
     #[serde(rename = "@odata.nextLink")]
     pub next_link: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopyMonitorResponse {
+    pub status: String,
+    #[serde(rename = "percentageComplete")]
+    pub percentage_complete: Option<f64>,
+    #[serde(rename = "resourceId")]
+    pub resource_id: Option<String>,
+    pub error: Option<GraphErrorBody>,
+}

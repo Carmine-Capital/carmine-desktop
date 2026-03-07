@@ -61,6 +61,7 @@ sha2 = "0.10"
 rand = "0.9"
 url = "2.5"
 bytes = "1.11"
+futures-util = "0.3"
 
 # Workspace crate inter-dependencies
 cloudmount-core = { path = "crates/cloudmount-core" }
