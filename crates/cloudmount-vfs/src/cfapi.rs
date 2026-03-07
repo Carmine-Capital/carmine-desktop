@@ -131,23 +131,30 @@ impl SyncFilter for CloudMountCfFilter {
         ticket: ticket::FetchData,
         info: info::FetchData,
     ) -> CResult<()> {
-        let rel_path = self
-            .relative_path(&request.path())
-            .ok_or(CloudErrorKind::NotUnderSyncRoot)?;
+        // relative_path and resolve_path failures are logged and treated as non-fatal:
+        // returning Err here would cause proxy.rs to call CfExecute(..).unwrap() which
+        // panics across the FFI boundary (STATUS_STACK_BUFFER_OVERRUN) if CfExecute fails.
+        let Some(rel_path) = self.relative_path(&request.path()) else {
+            tracing::warn!("cfapi: fetch_data called for path outside sync root");
+            return Ok(());
+        };
 
-        let (ino, _item) = self
-            .core
-            .resolve_path(&rel_path)
-            .ok_or(CloudErrorKind::NotInSync)?;
+        let Some((ino, _item)) = self.core.resolve_path(&rel_path) else {
+            tracing::warn!(path = %rel_path, "cfapi: fetch_data could not resolve path, skipping");
+            return Ok(());
+        };
 
         let range = info.required_file_range();
         let offset = range.start;
         let length = range.end - range.start;
 
-        let content = self
-            .core
-            .read_range_direct(ino, offset, length)
-            .map_err(|_| CloudErrorKind::Unsuccessful)?;
+        let content = match self.core.read_range_direct(ino, offset, length) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(path = %rel_path, "cfapi: fetch_data download failed: {e}");
+                return Ok(());
+            }
+        };
 
         if content.is_empty() {
             return Ok(());
@@ -166,9 +173,10 @@ impl SyncFilter for CloudMountCfFilter {
                 remaining
             };
 
-            ticket
-                .write_at(&data[pos..pos + chunk_len], offset)
-                .map_err(|_| CloudErrorKind::Unsuccessful)?;
+            if let Err(e) = ticket.write_at(&data[pos..pos + chunk_len], offset) {
+                tracing::warn!(path = %rel_path, "cfapi: fetch_data write_at failed: {e:?}");
+                break;
+            }
 
             pos += chunk_len;
             offset += chunk_len as u64;
@@ -289,7 +297,9 @@ impl SyncFilter for CloudMountCfFilter {
             }
         }
 
-        ticket.pass().map_err(|_| CloudErrorKind::Unsuccessful)?;
+        if let Err(e) = ticket.pass() {
+            tracing::warn!("cfapi: dehydrate ticket.pass() failed: {e:?}");
+        }
         Ok(())
     }
 
@@ -324,7 +334,9 @@ impl SyncFilter for CloudMountCfFilter {
             );
         }
 
-        ticket.pass().map_err(|_| CloudErrorKind::Unsuccessful)?;
+        if let Err(e) = ticket.pass() {
+            tracing::warn!(path = %rel_path, "cfapi: delete ticket.pass() failed: {e:?}");
+        }
         Ok(())
     }
 
@@ -359,7 +371,9 @@ impl SyncFilter for CloudMountCfFilter {
             self.core.cache().memory.invalidate(ino);
         }
 
-        ticket.pass().map_err(|_| CloudErrorKind::Unsuccessful)?;
+        if let Err(e) = ticket.pass() {
+            tracing::warn!(path = %rel_path, new_path = %new_rel, "cfapi: rename ticket.pass() failed: {e:?}");
+        }
         Ok(())
     }
 

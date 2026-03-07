@@ -104,7 +104,8 @@ impl CfTestFixture {
         PlaceholderFile::new("hello.txt")
             .metadata(Metadata::file().size(13))
             .blob(b"file-1".to_vec())
-            .mark_in_sync()
+            // No mark_in_sync(): file is intentionally dehydrated so the OS fires
+            // fetch_data on access and accepts CfExecute(TRANSFER_DATA) writes.
             .create::<&std::path::Path>(self.mount_path.as_path())
             .expect("create hello.txt placeholder");
 
