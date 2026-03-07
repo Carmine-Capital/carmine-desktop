@@ -1,9 +1,12 @@
+## Purpose
+Defines the runtime lifecycle of the CloudMount application: component initialization, mount management, authentication state handling, crash recovery, and graceful shutdown.
+## Requirements
 ### Requirement: Component initialization
 The system SHALL initialize all service components in dependency order during application startup, before accepting user interactions. Startup SHALL begin with .env file loading, CLI argument parsing, and pre-flight validation before proceeding to component creation.
 
 #### Scenario: Initialization sequence
 - **WHEN** the application starts
-- **THEN** it initializes in this order: (1) load .env file if present, (2) parse CLI arguments (including env var fallbacks), (3) load config (packaged defaults + user config → effective config), (4) run pre-flight validation (client ID, FUSE availability), (5) create AuthManager with resolved client_id and tenant_id (from CLI > env > packaged > default), (6) create GraphClient with AuthManager's token provider, (7) create CacheManager with cache directory and SQLite database, (8) create shared InodeTable, (9) assemble AppState with all components, (10) register `tauri-plugin-updater` in the Tauri builder (desktop mode only)
+- **THEN** it initializes in this order: (1) load .env file if present, (2) parse CLI arguments (including env var fallbacks), (3) load config (packaged defaults + user config → effective config), (4) run pre-flight validation (client ID, FUSE availability, CfApi version on Windows), (5) create AuthManager with resolved client_id and tenant_id (from CLI > env > packaged > default), (6) create GraphClient with AuthManager's token provider, (7) create CacheManager with cache directory and SQLite database, (8) create shared InodeTable, (9) assemble AppState with all components, (10) register `tauri-plugin-updater` in the Tauri builder (desktop mode only)
 
 #### Scenario: Initialization failure in config
 - **WHEN** the packaged defaults or user config cannot be loaded
@@ -14,8 +17,8 @@ The system SHALL initialize all service components in dependency order during ap
 - **THEN** the system logs an error and exits with a descriptive error message
 
 #### Scenario: Pre-flight validation failure
-- **WHEN** pre-flight checks detect a critical problem (e.g., placeholder client ID)
-- **THEN** the system prints an actionable error message to stderr and exits with code 1 before attempting authentication or component initialization
+- **WHEN** pre-flight checks detect a critical problem (e.g., placeholder client ID or unsupported Windows version)
+- **THEN** on Windows release desktop builds, the system displays a `MessageBoxW` dialog with the full actionable error message and exits with code 1; on all other platforms and build configurations, the system prints the actionable error message to stderr and exits with code 1
 
 ### Requirement: Token restoration on startup
 The system SHALL attempt to restore authentication tokens from secure storage on startup before requiring user sign-in.
@@ -72,7 +75,7 @@ The system SHALL manage the lifecycle of filesystem mounts — starting, stoppin
 
 #### Scenario: Stop all mounts on sign-out
 - **WHEN** the user signs out
-- **THEN** the system stops all active mounts, clears authentication tokens from secure storage, removes account metadata from user config, saves the config, reloads the wizard window to step-welcome (if the window exists), hides any open settings window, and transitions to the unauthenticated tray state (showing "Sign In…" in the tray menu and the wizard window)
+- **THEN** the system SHALL, in order: (1) attempt to stop all active mounts (best-effort, errors logged but not fatal), (2) attempt to clear authentication tokens from secure storage, remove account metadata from user config, and save the config (best-effort, errors logged), (3) regardless of any failures in steps 1–2, set the authenticated flag to false, rebuild the tray menu to the unauthenticated state, reload the settings window to clean DOM state, and show the sign-in wizard; if any step in phase 1–2 produced an error, the system SHALL emit a desktop notification describing the failure
 
 #### Scenario: Mount config change
 - **WHEN** the user adds, removes, toggles, or changes the mount point of a mount in settings
@@ -191,3 +194,4 @@ The system SHALL support running without the `desktop` feature flag, performing 
 #### Scenario: Headless via --headless flag
 - **WHEN** the application is compiled with the `desktop` feature and started with `--headless`
 - **THEN** the system runs in headless mode, bypassing Tauri initialization, using the same headless startup sequence as a non-desktop build
+

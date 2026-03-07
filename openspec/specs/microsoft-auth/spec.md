@@ -1,5 +1,8 @@
+## Purpose
+Defines OAuth2 PKCE authentication, token refresh, secure storage, and sign-out for Microsoft 365 organizational accounts.
+## Requirements
 ### Requirement: OAuth2 PKCE authentication flow
-The system SHALL authenticate users via OAuth2 Authorization Code Flow with PKCE using Microsoft Entra ID (Azure AD). Authentication MUST open the user's default browser to Microsoft's login page using a caller-provided URL opener mechanism, and listen for the authorization code on a localhost redirect URI. The URL opener SHALL be injected into the auth module at construction time, allowing the caller to provide a platform-appropriate implementation. On Linux in desktop mode, the opener SHALL spawn `xdg-open` directly via `std::process::Command` with `LD_LIBRARY_PATH` and `LD_PRELOAD` removed from the child process environment, and wait for the exit code. On macOS and Windows in desktop mode, `tauri-plugin-opener` SHALL be used. In headless mode, `open::that()` SHALL be used. Before invoking the opener, the system SHALL communicate the auth URL to any registered listener (e.g., the wizard UI) so it can be displayed as a fallback.
+The system SHALL authenticate users via OAuth2 Authorization Code Flow with PKCE using Microsoft Entra ID (Azure AD). Authentication MUST open the user's default browser to Microsoft's login page using a caller-provided URL opener mechanism, and listen for the authorization code on a localhost redirect URI. The URL opener SHALL be injected into the auth module at construction time, allowing the caller to provide a platform-appropriate implementation. On Linux in desktop mode, the opener SHALL spawn `xdg-open` directly via `std::process::Command` with `LD_LIBRARY_PATH` and `LD_PRELOAD` removed from the child process environment, and wait for the exit code. On macOS and Windows in desktop mode, `tauri-plugin-opener` SHALL be used. In headless mode, `open::that()` SHALL be used. Before invoking the opener, the system SHALL communicate the auth URL to any registered listener (e.g., the wizard UI) so it can be displayed as a fallback. The system SHALL enforce that at most one PKCE flow runs at a time; if a flow is already active when `sign_in()` is called, the prior flow MUST be cancelled before the new one begins.
 
 #### Scenario: First-time login (generic build)
 - **WHEN** the user clicks "Sign In", has no existing tokens, and no packaged tenant is configured
@@ -20,6 +23,14 @@ The system SHALL authenticate users via OAuth2 Authorization Code Flow with PKCE
 #### Scenario: User cancels login
 - **WHEN** the user closes the browser window without completing login, and the localhost listener times out after 120 seconds
 - **THEN** the system cancels the authentication attempt and returns to the unauthenticated state
+
+#### Scenario: User cancels login via UI
+- **WHEN** the user clicks the Cancel button in the sign-in wizard before the OAuth callback is received
+- **THEN** the system SHALL immediately terminate the active PKCE flow by firing its cancellation token, stop waiting for the localhost callback, and return to the unauthenticated state without waiting for the 120-second timeout
+
+#### Scenario: Concurrent sign-in attempt — cancel and retry
+- **WHEN** `sign_in()` is called while a previous `sign_in()` call is still waiting for the OAuth callback
+- **THEN** the system SHALL cancel the prior flow (fire its cancellation token), then begin a new PKCE flow; only one flow SHALL be active at any given time
 
 #### Scenario: Desktop mode browser opening on Linux
 - **WHEN** the OAuth flow is initiated in desktop mode (Tauri) on Linux
@@ -134,3 +145,37 @@ The system SHALL resolve the client_id using a four-layer precedence chain: CLI 
 #### Scenario: No client_id configured
 - **WHEN** no client_id is configured via CLI, environment, or packaged defaults
 - **THEN** the system falls back to the built-in default client_id
+
+### Requirement: Sign-in cancellation API
+The system SHALL expose a `cancel()` method on `AuthManager` that, when called, immediately terminates any active PKCE flow. This method SHALL be callable from any context (including from a Tauri command handler) and SHALL be a no-op if no flow is currently active.
+
+#### Scenario: Cancel with active flow
+- **WHEN** `AuthManager::cancel()` is called while a PKCE flow is waiting for the OAuth callback
+- **THEN** the flow SHALL stop waiting, the `sign_in()` future SHALL return an `Err` with a cancellation message, and the internal cancellation token SHALL be cleared so the next `sign_in()` call starts fresh
+
+#### Scenario: Cancel with no active flow
+- **WHEN** `AuthManager::cancel()` is called when no PKCE flow is in progress
+- **THEN** the call SHALL return immediately without error or side effects
+
+### Requirement: Wizard cancel_sign_in command
+The system SHALL provide a `cancel_sign_in` Tauri command that, when invoked, cancels the active backend sign-in flow and aborts the associated async spawn. The wizard's Cancel button SHALL invoke this command before performing any frontend cleanup.
+
+#### Scenario: Cancel button pressed during sign-in
+- **WHEN** the user clicks Cancel in the wizard while a sign-in flow is in progress
+- **THEN** the frontend SHALL invoke `cancel_sign_in`, which calls `AuthManager::cancel()` and aborts the backend spawn; the frontend then resets its state and returns to the welcome step
+
+#### Scenario: cancel_sign_in with no active spawn
+- **WHEN** `cancel_sign_in` is invoked but no sign-in spawn is tracked in `AppState`
+- **THEN** the command SHALL return `Ok(())` without error
+
+### Requirement: Exclusive sign-in spawn tracking
+The system SHALL track the `JoinHandle` of the most recent `start_sign_in` spawn in `AppState`. Before starting a new sign-in spawn, any previously tracked handle SHALL be aborted. This provides a belt-and-suspenders guarantee alongside the `CancellationToken` in `AuthManager`.
+
+#### Scenario: start_sign_in called with a prior spawn still running
+- **WHEN** `start_sign_in` is invoked while a previous spawn handle is tracked in `AppState`
+- **THEN** the prior handle SHALL be aborted before the new spawn is created; only the new spawn's handle SHALL be tracked going forward
+
+#### Scenario: start_sign_in called with no prior spawn
+- **WHEN** `start_sign_in` is invoked and no prior spawn handle is tracked
+- **THEN** the new spawn proceeds normally and its handle is stored in `AppState`
+
