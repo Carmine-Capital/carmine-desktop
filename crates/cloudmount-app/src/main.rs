@@ -312,26 +312,52 @@ fn run_desktop(
         .unwrap_or_else(|| effective.app_name.clone());
     let first_run = !config_file_path().exists();
 
-    // The opener is constructed before the Tauri app, so we use a lazily-populated
-    // AppHandle slot. The closure is only called after sign-in (after .setup() runs).
+    // On non-Linux, the opener uses tauri_plugin_opener which requires the AppHandle.
+    // The AppHandle is lazily populated after Tauri initializes.
+    #[cfg(not(target_os = "linux"))]
     let app_handle_slot: Arc<std::sync::Mutex<Option<tauri::AppHandle>>> =
         Arc::new(std::sync::Mutex::new(None));
+    #[cfg(not(target_os = "linux"))]
     let opener_handle = app_handle_slot.clone();
-    let opener: Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync> =
-        Arc::new(move |url: &str| {
-            use tauri_plugin_opener::OpenerExt;
-            let handle = {
-                let guard = opener_handle.lock().unwrap();
-                guard
-                    .as_ref()
-                    .ok_or_else(|| "Tauri app not yet initialized".to_string())?
-                    .clone()
-            };
-            handle
-                .opener()
-                .open_url(url, None::<&str>)
-                .map_err(|e| e.to_string())
-        });
+
+    let opener: OpenerFn = {
+        #[cfg(target_os = "linux")]
+        {
+            // On Linux, spawn xdg-open directly so we can strip AppImage env vars
+            // (LD_LIBRARY_PATH, LD_PRELOAD) that cause gio/GLib version mismatches
+            // and silent browser launch failures. Use .status() for error observability.
+            Arc::new(|url: &str| {
+                let status = std::process::Command::new("xdg-open")
+                    .arg(url)
+                    .env_remove("LD_LIBRARY_PATH")
+                    .env_remove("LD_PRELOAD")
+                    .status()
+                    .map_err(|e| format!("failed to spawn xdg-open: {e}"))?;
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("xdg-open exited with {status}"))
+                }
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Arc::new(move |url: &str| {
+                use tauri_plugin_opener::OpenerExt;
+                let handle = {
+                    let guard = opener_handle.lock().unwrap();
+                    guard
+                        .as_ref()
+                        .ok_or_else(|| "Tauri app not yet initialized".to_string())?
+                        .clone()
+                };
+                handle
+                    .opener()
+                    .open_url(url, None::<&str>)
+                    .map_err(|e| e.to_string())
+            })
+        }
+    };
 
     let Components {
         auth,
@@ -365,6 +391,7 @@ fn run_desktop(
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             commands::sign_in,
+            commands::start_sign_in,
             commands::sign_out,
             commands::list_mounts,
             commands::add_mount,
@@ -379,7 +406,11 @@ fn run_desktop(
         ])
         .setup(move |app| {
             // Populate the opener's AppHandle slot now that the app is running.
-            *app_handle_slot.lock().unwrap() = Some(app.handle().clone());
+            // On Linux the opener uses xdg-open directly and doesn't need the handle.
+            #[cfg(not(target_os = "linux"))]
+            {
+                *app_handle_slot.lock().unwrap() = Some(app.handle().clone());
+            }
 
             tray::setup(app.handle(), &app_name)?;
 
@@ -842,7 +873,7 @@ fn run_headless(
         }
 
         if !authenticated {
-            match auth.sign_in().await {
+            match auth.sign_in(None).await {
                 Ok(()) => {
                     tracing::info!("sign-in successful");
 
@@ -1088,7 +1119,7 @@ fn run_headless(
                     sighup.recv().await;
                     tracing::info!("SIGHUP received \u{2014} attempting re-authentication");
 
-                    match hup_auth.sign_in().await {
+                    match hup_auth.sign_in(None).await {
                         Ok(()) => {
                             hup_degraded.store(false, Ordering::Relaxed);
                             tracing::info!("re-authentication successful");

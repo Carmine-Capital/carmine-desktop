@@ -49,7 +49,7 @@ The system SHALL provide a context menu when the user right-clicks (or clicks on
 - **THEN** the system flushes all pending writes, unmounts all drives, stops the delta sync timer, and exits the process
 
 ### Requirement: First-run wizard
-The system SHALL present a setup wizard on first launch to guide the user through account login and initial mount configuration. The wizard adapts its flow based on whether packaged defaults are present.
+The system SHALL present a setup wizard on first launch to guide the user through account login and initial mount configuration. The wizard adapts its flow based on whether packaged defaults are present. During the sign-in flow, the wizard SHALL display the Microsoft auth URL with a copy button so the user can open it manually if the browser launch silently fails.
 
 #### Scenario: First launch detected
 - **WHEN** the application launches for the first time (no user configuration file exists)
@@ -74,6 +74,18 @@ The system SHALL present a setup wizard on first launch to guide the user throug
 #### Scenario: Root directory conflict during wizard
 - **WHEN** the suggested root directory path already exists on the filesystem
 - **THEN** the system displays a warning "~/Cloud already exists — files inside won't be affected" and allows the user to choose a different name or proceed with the existing directory
+
+#### Scenario: Auth URL displayed during sign-in
+- **WHEN** the user clicks "Sign In" in the wizard and the PKCE flow begins
+- **THEN** the wizard SHALL transition to a waiting state that displays the auth URL and a "Copy URL" button; the user can click "Copy URL" to copy the auth URL to the clipboard and open it manually in any browser; the wizard continues waiting for the localhost callback
+
+#### Scenario: Auth URL copy action
+- **WHEN** the user clicks "Copy URL" in the wizard sign-in waiting state
+- **THEN** the auth URL is copied to the system clipboard and a brief confirmation ("Copied!") is shown
+
+#### Scenario: Sign-in waiting state cancelled
+- **WHEN** the user clicks "Cancel" in the sign-in waiting state (before the 120s timeout)
+- **THEN** the wizard returns to the initial sign-in screen and the PKCE listener is abandoned
 
 ### Requirement: Branded UI elements
 The system SHALL display the packaged branding throughout the UI when a custom app name is configured.

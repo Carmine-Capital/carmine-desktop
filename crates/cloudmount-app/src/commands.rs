@@ -3,7 +3,7 @@
 use std::sync::atomic::Ordering;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use cloudmount_cache::sync::run_delta_sync;
 use cloudmount_core::config::{
@@ -50,9 +50,46 @@ pub struct DriveInfo {
 #[tauri::command]
 pub async fn sign_in(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
-
-    state.auth.sign_in().await.map_err(|e| e.to_string())?;
+    state.auth.sign_in(None).await.map_err(|e| e.to_string())?;
     tracing::info!("sign-in successful");
+    complete_sign_in(&app).await
+}
+
+/// Called by the wizard: returns the auth URL immediately, then emits `auth-complete`
+/// or `auth-error` when the PKCE flow finishes in the background.
+#[tauri::command]
+pub async fn start_sign_in(app: AppHandle) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    let (url_tx, url_rx) = tokio::sync::oneshot::channel::<String>();
+
+    let auth = state.auth.clone();
+    let app_handle = app.clone();
+    tokio::spawn(async move {
+        match auth.sign_in(Some(url_tx)).await {
+            Ok(()) => {
+                tracing::info!("sign-in successful");
+                match complete_sign_in(&app_handle).await {
+                    Ok(()) => {
+                        let _ = app_handle.emit("auth-complete", ());
+                    }
+                    Err(e) => {
+                        let _ = app_handle.emit("auth-error", e);
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = app_handle.emit("auth-error", e.to_string());
+            }
+        }
+    });
+
+    url_rx
+        .await
+        .map_err(|_| "auth URL channel closed unexpectedly".to_string())
+}
+
+async fn complete_sign_in(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
 
     let drive = state
         .graph
@@ -90,14 +127,14 @@ pub async fn sign_in(app: AppHandle) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
 
-    rebuild_effective_config(&app)?;
-    crate::start_all_mounts(&app);
-    crate::run_crash_recovery(&app);
-    crate::start_delta_sync(&app);
+    rebuild_effective_config(app)?;
+    crate::start_all_mounts(app);
+    crate::run_crash_recovery(app);
+    crate::start_delta_sync(app);
 
     state.authenticated.store(true, Ordering::Relaxed);
     state.auth_degraded.store(false, Ordering::Relaxed);
-    crate::tray::update_tray_menu(&app);
+    crate::tray::update_tray_menu(app);
 
     Ok(())
 }

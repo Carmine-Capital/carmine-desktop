@@ -36,6 +36,7 @@ pub async fn run_pkce_flow(
     tenant_id: Option<&str>,
     port: u16,
     opener: &(dyn Fn(&str) -> Result<(), String> + Send + Sync),
+    url_tx: Option<tokio::sync::oneshot::Sender<String>>,
 ) -> cloudmount_core::Result<(String, String, u16)> {
     let (verifier, challenge) = generate_pkce();
 
@@ -66,6 +67,12 @@ pub async fn run_pkce_flow(
 
     if let Some(tid) = tenant_id {
         auth_url.query_pairs_mut().append_pair("domain_hint", tid);
+    }
+
+    if let Some(tx) = url_tx
+        && tx.send(auth_url.to_string()).is_err()
+    {
+        tracing::debug!("auth URL channel receiver already dropped");
     }
 
     tracing::info!("opening browser for authentication");

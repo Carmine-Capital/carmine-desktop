@@ -74,8 +74,11 @@ impl AuthManager {
         }
     }
 
-    pub async fn sign_in(&self) -> cloudmount_core::Result<()> {
-        let (code, verifier, actual_port) = self.authorize().await?;
+    pub async fn sign_in(
+        &self,
+        url_tx: Option<tokio::sync::oneshot::Sender<String>>,
+    ) -> cloudmount_core::Result<()> {
+        let (code, verifier, actual_port) = self.authorize(url_tx).await?;
         self.exchange_code(&code, &verifier, actual_port).await
     }
 
@@ -92,12 +95,16 @@ impl AuthManager {
         Ok(())
     }
 
-    async fn authorize(&self) -> cloudmount_core::Result<(String, String, u16)> {
+    async fn authorize(
+        &self,
+        url_tx: Option<tokio::sync::oneshot::Sender<String>>,
+    ) -> cloudmount_core::Result<(String, String, u16)> {
         crate::oauth::run_pkce_flow(
             &self.client_id,
             self.tenant_id.as_deref(),
             self.redirect_port,
             self.opener.as_ref(),
+            url_tx,
         )
         .await
     }
