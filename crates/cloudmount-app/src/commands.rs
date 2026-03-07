@@ -170,25 +170,40 @@ async fn complete_sign_in(app: &AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn sign_out(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
+    let mut errors: Vec<String> = Vec::new();
 
+    // Phase 1: best-effort cleanup
     crate::stop_all_mounts(&app);
 
     if let Some(cancel) = state.sync_cancel.lock().unwrap().take() {
         cancel.cancel();
     }
 
-    state.auth.sign_out().await.map_err(|e| e.to_string())?;
-
-    {
-        let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
-        user_config.accounts.clear();
-        user_config
-            .save_to_file(&config_file_path())
-            .map_err(|e| e.to_string())?;
+    if let Err(e) = state.auth.sign_out().await {
+        tracing::error!("auth sign_out failed: {e}");
+        errors.push(e.to_string());
     }
 
-    rebuild_effective_config(&app)?;
+    match state.user_config.lock() {
+        Ok(mut user_config) => {
+            user_config.accounts.clear();
+            if let Err(e) = user_config.save_to_file(&config_file_path()) {
+                tracing::error!("failed to save config after sign-out: {e}");
+                errors.push(e.to_string());
+            }
+        }
+        Err(e) => {
+            tracing::error!("user_config lock poisoned during sign-out: {e}");
+            errors.push(e.to_string());
+        }
+    }
 
+    if let Err(e) = rebuild_effective_config(&app) {
+        tracing::error!("rebuild_effective_config failed during sign-out: {e}");
+        errors.push(e);
+    }
+
+    // Phase 2: guaranteed UI reset
     state.authenticated.store(false, Ordering::Relaxed);
     state.auth_degraded.store(false, Ordering::Relaxed);
     crate::tray::update_tray_menu(&app);
@@ -203,6 +218,12 @@ pub async fn sign_out(app: AppHandle) -> Result<(), String> {
         let _ = win.set_focus();
     } else {
         crate::tray::open_or_focus_window(&app, "wizard", "Setup", "wizard.html");
+    }
+
+    if !errors.is_empty() {
+        let msg = errors.join("; ");
+        crate::notify::sign_out_failed(&app, &msg);
+        return Err(msg);
     }
 
     Ok(())

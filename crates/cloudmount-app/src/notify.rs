@@ -32,6 +32,14 @@ pub fn auto_start_failed(app: &AppHandle, reason: &str) {
     );
 }
 
+pub fn sign_out_failed(app: &AppHandle, reason: &str) {
+    send(
+        app,
+        "Sign Out Failed",
+        &format!("Sign out encountered an error: {reason}"),
+    );
+}
+
 pub fn auth_expired(app: &AppHandle) {
     send(
         app,

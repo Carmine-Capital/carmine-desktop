@@ -162,11 +162,17 @@ pub fn update_tray_menu(app: &AppHandle) {
 
     let pending_update_version = app
         .try_state::<crate::update::UpdateState>()
-        .and_then(|s| s.pending_version.lock().unwrap().clone());
+        .and_then(|s| s.pending_version.lock().ok().and_then(|g| g.clone()));
 
     let (mount_entries, app_name, auth_degraded, authenticated) = {
-        let config = app_state.effective_config.lock().unwrap();
-        let active_mounts = app_state.mounts.lock().unwrap();
+        let Ok(config) = app_state.effective_config.lock() else {
+            tracing::warn!("update_tray_menu: effective_config mutex poisoned, skipping update");
+            return;
+        };
+        let Ok(active_mounts) = app_state.mounts.lock() else {
+            tracing::warn!("update_tray_menu: mounts mutex poisoned, skipping update");
+            return;
+        };
         let entries: Vec<(String, String, bool)> = config
             .mounts
             .iter()
