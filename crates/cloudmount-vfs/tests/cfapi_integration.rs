@@ -105,14 +105,14 @@ impl CfTestFixture {
             .metadata(Metadata::file().size(13))
             .blob(b"file-1".to_vec())
             .mark_in_sync()
-            .create(&self.mount_path)
+            .create(self.mount_path.as_path())
             .expect("create hello.txt placeholder");
 
         PlaceholderFile::new("docs")
             .metadata(Metadata::directory())
             .blob(b"folder-1".to_vec())
             .mark_in_sync()
-            .create(&self.mount_path)
+            .create(self.mount_path.as_path())
             .expect("create docs placeholder");
     }
 
