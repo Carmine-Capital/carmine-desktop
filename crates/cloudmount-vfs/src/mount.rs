@@ -163,7 +163,9 @@ impl MountHandle {
     }
 
     fn flush_pending(&self) {
-        let pending = match self.rt.block_on(self.cache.writeback.list_pending()) {
+        let pending = match tokio::task::block_in_place(|| {
+            self.rt.block_on(self.cache.writeback.list_pending())
+        }) {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!("failed to list pending writes on unmount: {e}");
@@ -190,31 +192,33 @@ impl MountHandle {
         let cache = self.cache.clone();
         let drive_id = self.drive_id.clone();
 
-        let flush_result = self.rt.block_on(async {
-            tokio::time::timeout(UNMOUNT_FLUSH_TIMEOUT, async {
-                for (_, item_id) in &drive_pending {
-                    if let Some(content) = cache.writeback.read(&drive_id, item_id).await {
-                        match graph
-                            .upload(
-                                &drive_id,
-                                "",
-                                Some(item_id),
-                                item_id,
-                                bytes::Bytes::from(content),
-                            )
-                            .await
-                        {
-                            Ok(_) => {
-                                let _ = cache.writeback.remove(&drive_id, item_id).await;
-                            }
-                            Err(e) => {
-                                tracing::error!("flush upload failed for {item_id}: {e}");
+        let flush_result = tokio::task::block_in_place(|| {
+            self.rt.block_on(async {
+                tokio::time::timeout(UNMOUNT_FLUSH_TIMEOUT, async {
+                    for (_, item_id) in &drive_pending {
+                        if let Some(content) = cache.writeback.read(&drive_id, item_id).await {
+                            match graph
+                                .upload(
+                                    &drive_id,
+                                    "",
+                                    Some(item_id),
+                                    item_id,
+                                    bytes::Bytes::from(content),
+                                )
+                                .await
+                            {
+                                Ok(_) => {
+                                    let _ = cache.writeback.remove(&drive_id, item_id).await;
+                                }
+                                Err(e) => {
+                                    tracing::error!("flush upload failed for {item_id}: {e}");
+                                }
                             }
                         }
                     }
-                }
+                })
+                .await
             })
-            .await
         });
 
         if flush_result.is_err() {

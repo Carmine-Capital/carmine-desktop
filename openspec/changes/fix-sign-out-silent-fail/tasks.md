@@ -20,3 +20,13 @@
 - [x] 4.2 Run `cargo fmt --all -- --check` and confirm no formatting issues
 - [ ] 4.3 Manual test — sign out while a mount is active: confirm drive unmounts, tray transitions to "Sign In…", and wizard appears on first click (no second click required)
 - [ ] 4.4 Manual test — tray menu updates correctly after sign-out: confirm menu shows "Sign In…" (not "Sign Out") when opened after the first sign-out attempt
+
+## 5. Fix `flush_pending` block_on panic (actual root cause)
+
+The real panic is `flush_pending` calling `self.rt.block_on()` from inside a Tokio worker thread
+(sign_out is async/spawned). `Handle::block_on` panics in async contexts. The file already uses
+`tokio::task::block_in_place(|| rt.block_on(...))` at line 100 — apply the same pattern here.
+
+- [x] 5.1 In `flush_pending` (`mount.rs`), wrap the first `self.rt.block_on(self.cache.writeback.list_pending())` with `tokio::task::block_in_place(|| ...)`
+- [x] 5.2 In `flush_pending` (`mount.rs`), wrap the second `self.rt.block_on(async { ... })` with `tokio::task::block_in_place(|| ...)`
+- [x] 5.3 Run `cargo clippy --all-targets` and `cargo fmt --all -- --check`
