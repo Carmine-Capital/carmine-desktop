@@ -12,5 +12,6 @@ Check for:
 - `cfg(feature = "desktop")` vs platform gates confusion
 - Windows-specific: CfApi callback patterns, sync root lifecycle
 - FUSE-specific: fuser trait implementations, inode consistency
+- Unconditional `let` bindings whose only use sites are inside a `#[cfg(...)]` block — these produce unused-variable errors on excluded platforms under `RUSTFLAGS=-Dwarnings`. Gate the binding with the same `#[cfg(...)]` attribute as its use sites.
 
 Focus on `crates/cloudmount-vfs/` and `crates/cloudmount-app/`. Report issues concisely.

@@ -1166,12 +1166,15 @@ fn run_headless(
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let rt_handle = tokio::runtime::Handle::current();
 
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let effective_cache_dir = effective
             .cache_dir
             .as_ref()
             .map(std::path::PathBuf::from)
             .unwrap_or_else(cache_dir);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let max_cache_bytes = parse_cache_size(&effective.cache_max_size);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let metadata_ttl = Some(effective.metadata_ttl_secs);
 
         for mount_config in &mounts_config {
