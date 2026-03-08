@@ -295,10 +295,10 @@ pub fn add_mount(
             let config = state.effective_config.lock().map_err(|e| e.to_string())?;
             config.mounts.iter().find(|m| m.id == mount_id).cloned()
         };
-        if let Some(mount_config) = mount_config_opt {
-            if let Err(e) = crate::start_mount(&app, &mount_config) {
-                tracing::error!("failed to start new mount: {e}");
-            }
+        if let Some(mount_config) = mount_config_opt
+            && let Err(e) = crate::start_mount(&app, &mount_config)
+        {
+            tracing::error!("failed to start new mount: {e}");
         }
     }
 

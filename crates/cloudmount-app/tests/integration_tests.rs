@@ -753,7 +753,11 @@ async fn test_sign_out_clears_account_and_config() -> cloudmount_core::Result<()
             display_name: Some("Test User".to_string()),
             tenant_id: None,
         });
-    user_config.add_onedrive_mount("drive-to-remove", "/tmp/cloudmount-test-signout/OneDrive", None)?;
+    user_config.add_onedrive_mount(
+        "drive-to-remove",
+        "/tmp/cloudmount-test-signout/OneDrive",
+        None,
+    )?;
 
     assert_eq!(user_config.accounts.len(), 1);
     assert_eq!(user_config.mounts.len(), 1);
@@ -807,8 +811,16 @@ async fn test_account_scoped_mounts_filtered() -> cloudmount_core::Result<()> {
     let mut user_config = UserConfig::load("")?;
 
     // Add two mounts for different accounts
-    user_config.add_onedrive_mount("drive-account-a", "/mnt/a/OneDrive", Some("account-a".to_string()))?;
-    user_config.add_onedrive_mount("drive-account-b", "/mnt/b/OneDrive", Some("account-b".to_string()))?;
+    user_config.add_onedrive_mount(
+        "drive-account-a",
+        "/mnt/a/OneDrive",
+        Some("account-a".to_string()),
+    )?;
+    user_config.add_onedrive_mount(
+        "drive-account-b",
+        "/mnt/b/OneDrive",
+        Some("account-b".to_string()),
+    )?;
 
     assert_eq!(user_config.mounts.len(), 2);
 

@@ -63,6 +63,14 @@ use std::collections::HashMap;
 #[cfg(feature = "desktop")]
 use std::sync::Mutex;
 
+/// Per-mount cache entry: `(CacheManager, InodeTable)` keyed by drive_id.
+#[cfg(feature = "desktop")]
+type MountCacheEntry = (Arc<CacheManager>, Arc<InodeTable>);
+
+/// Snapshot row used by the delta-sync loop: (drive_id, mount_id, mount_name, cache, inodes).
+#[cfg(feature = "desktop")]
+type SyncSnapshotRow = (String, String, String, Arc<CacheManager>, Arc<InodeTable>);
+
 const CLIENT_ID: &str = "8ebe3ef7-f509-4146-8fef-c9b5d7c22252";
 
 /// CloudMount — mount Microsoft OneDrive and SharePoint as local filesystems.
@@ -102,7 +110,7 @@ pub struct AppState {
     pub auth: Arc<AuthManager>,
     pub graph: Arc<GraphClient>,
     /// Per-mount cache and inode table, keyed by drive_id.
-    pub mount_caches: Mutex<HashMap<String, (Arc<CacheManager>, Arc<InodeTable>)>>,
+    pub mount_caches: Mutex<HashMap<String, MountCacheEntry>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub mounts: Mutex<HashMap<String, MountHandle>>,
     #[cfg(target_os = "windows")]
@@ -870,7 +878,7 @@ fn start_delta_sync(app: &tauri::AppHandle) {
 
         loop {
             // Snapshot includes mount_id and mount_name for error handling.
-            let snapshot: Vec<(String, String, String, Arc<CacheManager>, Arc<InodeTable>)> = {
+            let snapshot: Vec<SyncSnapshotRow> = {
                 use tauri::Manager;
                 let state = app_handle.state::<AppState>();
                 let caches = state.mount_caches.lock().unwrap();
