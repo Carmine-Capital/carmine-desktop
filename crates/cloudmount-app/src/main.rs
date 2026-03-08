@@ -147,10 +147,9 @@ fn fuse_available() -> bool {
     }
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("fusermount")
-            .arg("--version")
-            .output()
-            .is_ok()
+        // macFUSE does not ship `fusermount` (that is a Linux FUSE 2/3 binary).
+        // The canonical install indicator is the kernel extension bundle.
+        std::path::Path::new("/Library/Filesystems/macfuse.fs").exists()
     }
 }
 
@@ -323,7 +322,8 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
     let app_name = "CloudMount".to_string();
     let first_run = !config_file_path().exists();
 
-    // On non-Linux, the opener uses tauri_plugin_opener which requires the AppHandle.
+    // Desktop, non-Linux: the opener uses tauri_plugin_opener which requires the AppHandle.
+    // (Linux desktop uses xdg-open directly; headless mode uses open::that — neither needs this.)
     // The AppHandle is lazily populated after Tauri initializes.
     #[cfg(not(target_os = "linux"))]
     let app_handle_slot: Arc<std::sync::Mutex<Option<tauri::AppHandle>>> =
@@ -781,7 +781,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         mount_cache.clone(),
         mount_inodes.clone(),
         drive_id.to_string(),
-        std::path::Path::new(&mountpoint),
+        &std::path::PathBuf::from(&mountpoint),
         rt,
         drive_id.to_string(),
     )
@@ -818,16 +818,7 @@ fn stop_mount(app: &tauri::AppHandle, mount_id: &str) -> Result<(), String> {
         .remove(mount_id)
         .ok_or_else(|| format!("mount '{mount_id}' not found"))?;
 
-    let drive_id = {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        {
-            handle.drive_id().to_string()
-        }
-        #[cfg(target_os = "windows")]
-        {
-            handle.drive_id().to_string()
-        }
-    };
+    let drive_id = handle.drive_id().to_string();
 
     state.mount_caches.lock().unwrap().remove(&drive_id);
 
@@ -1244,7 +1235,11 @@ fn run_headless(
             #[cfg(target_os = "windows")]
             {
                 tracing::warn!(
-                    "headless mode does not support Windows CfApi mounts (mount '{}')",
+                    "headless mode: CfApi mount for '{}' not started — crash recovery skipped for this mount",
+                    mount_config.name
+                );
+                tracing::warn!(
+                    "headless mode: CfApi mount for '{}' not started — delta sync skipped for this mount",
                     mount_config.name
                 );
             }

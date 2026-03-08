@@ -151,6 +151,59 @@ intents:
           - validate-mount-before-start
         run_id: run-cloud-mount-005
         completed_at: 2026-03-08T13:59:52.788Z
+  - id: fix-cross-platform-findings
+    title: Fix Cross-Platform Findings
+    status: completed
+    work_items:
+      - id: fix-mount-path-separator
+        title: Fix mount point path construction to use OS-native separators
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-008
+        completed_at: 2026-03-08T15:05:38.736Z
+      - id: fix-macos-fuse-detection
+        title: Fix fuse_available() on macOS to probe macFUSE install path
+        complexity: low
+        mode: autopilot
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-007
+        completed_at: 2026-03-08T14:51:46.504Z
+      - id: fix-windows-headless-mounts
+        title: Add Windows mount tracking in headless mode with diagnostic
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-008
+        completed_at: 2026-03-08T15:05:38.736Z
+      - id: fix-forbidden-path-cfg-gates
+        title: Split forbidden-path list into platform-gated sets
+        complexity: low
+        mode: autopilot
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-007
+        completed_at: 2026-03-08T14:51:46.504Z
+      - id: fix-code-quality
+        title: Collapse redundant drive_id cfg branches, fix inaccurate comment,
+          document cache_dir rationale
+        complexity: low
+        mode: autopilot
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-007
+        completed_at: 2026-03-08T14:51:46.504Z
+      - id: fix-autostart-systemd-check
+        title: Check systemd availability before writing .service file
+        complexity: low
+        mode: autopilot
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-007
+        completed_at: 2026-03-08T14:51:46.504Z
 runs:
   active: []
   completed:
@@ -214,3 +267,31 @@ runs:
           mode: confirm
       started: 2026-03-08T14:06:57.740Z
       completed: 2026-03-08T14:23:11.793Z
+    - id: run-cloud-mount-007
+      scope: wide
+      work_items:
+        - id: fix-macos-fuse-detection
+          intent: fix-cross-platform-findings
+          mode: autopilot
+        - id: fix-forbidden-path-cfg-gates
+          intent: fix-cross-platform-findings
+          mode: autopilot
+        - id: fix-code-quality
+          intent: fix-cross-platform-findings
+          mode: autopilot
+        - id: fix-autostart-systemd-check
+          intent: fix-cross-platform-findings
+          mode: autopilot
+      started: 2026-03-08T14:47:57.476Z
+      completed: 2026-03-08T14:51:46.504Z
+    - id: run-cloud-mount-008
+      scope: wide
+      work_items:
+        - id: fix-mount-path-separator
+          intent: fix-cross-platform-findings
+          mode: confirm
+        - id: fix-windows-headless-mounts
+          intent: fix-cross-platform-findings
+          mode: confirm
+      started: 2026-03-08T14:57:12.239Z
+      completed: 2026-03-08T15:05:38.736Z

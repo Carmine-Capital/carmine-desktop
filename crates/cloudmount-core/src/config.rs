@@ -153,6 +153,9 @@ pub struct UserGeneralSettings {
     pub sync_interval_secs: Option<u64>,
     #[serde(default)]
     pub metadata_ttl_secs: Option<u64>,
+    // Stored as String (not PathBuf) so it round-trips cleanly through TOML.
+    // Win32 normalises both `/` and `\` separators, so forward-slash paths from
+    // TOML are safe on Windows without explicit conversion.
     #[serde(default)]
     pub cache_dir: Option<String>,
     #[serde(default)]
@@ -205,6 +208,8 @@ pub struct EffectiveConfig {
     pub cache_max_size: String,
     pub sync_interval_secs: u64,
     pub metadata_ttl_secs: u64,
+    /// String (not PathBuf) for TOML round-trip safety. Win32 normalises both
+    /// `/` and `\` separators, so forward-slash paths are safe on Windows.
     pub cache_dir: Option<String>,
     pub log_level: String,
     pub notifications: bool,
@@ -264,25 +269,20 @@ fn validate_mount_point(mount_point: &str, existing_mounts: &[MountConfig]) -> c
     let expanded = expand_mount_point(mount_point);
     let path = std::path::Path::new(&expanded);
 
-    let system_dirs = [
-        "/",
-        "/bin",
-        "/sbin",
-        "/usr",
-        "/etc",
-        "/var",
-        "/dev",
-        "/proc",
-        "/sys",
-        "/boot",
-        "/lib",
-        "/lib64",
-        "/tmp",
+    #[cfg(unix)]
+    let system_dirs: &[&str] = &[
+        "/", "/bin", "/sbin", "/usr", "/etc", "/var", "/dev", "/proc", "/sys", "/boot", "/lib",
+        "/lib64", "/tmp",
+    ];
+    #[cfg(windows)]
+    let system_dirs: &[&str] = &[
         "C:\\",
         "C:\\Windows",
         "C:\\Program Files",
         "C:\\Program Files (x86)",
     ];
+    #[cfg(not(any(unix, windows)))]
+    let system_dirs: &[&str] = &[];
     if system_dirs.iter().any(|d| path == std::path::Path::new(d)) {
         return Err(crate::Error::Config(format!(
             "cannot use system directory as mount point: {expanded}"
@@ -319,13 +319,14 @@ pub fn derive_mount_point(
                 .unwrap_or_else(|_| ".".to_string())
         });
 
+    let base = std::path::Path::new(&home).join(root_dir);
     match mount_type {
         "sharepoint" => {
             let site = site_name.unwrap_or("SharePoint");
             let lib = lib_name.unwrap_or("Documents");
-            format!("{home}/{root_dir}/{site}/{lib}")
+            base.join(site).join(lib).to_string_lossy().into_owned()
         }
-        _ => format!("{home}/{root_dir}/OneDrive"),
+        _ => base.join("OneDrive").to_string_lossy().into_owned(),
     }
 }
 
@@ -342,15 +343,27 @@ pub fn expand_mount_point(template: &str) -> String {
                 .unwrap_or_else(|_| ".".to_string())
         });
 
-    let result = if let Some(rest) = template.strip_prefix("~/") {
-        format!("{home}/{rest}")
+    if let Some(rest) = template.strip_prefix("~/") {
+        std::path::Path::new(&home)
+            .join(rest)
+            .to_string_lossy()
+            .into_owned()
     } else if template == "~" {
-        home.clone()
+        home
+    } else if let Some(rest) = template.strip_prefix("{home}") {
+        // {home} at start — rebuild via Path::join so separators are OS-native.
+        let rest = rest.trim_start_matches(['/', '\\']);
+        if rest.is_empty() {
+            home
+        } else {
+            std::path::Path::new(&home)
+                .join(rest)
+                .to_string_lossy()
+                .into_owned()
+        }
     } else {
-        template.to_string()
-    };
-
-    result.replace("{home}", &home)
+        template.replace("{home}", &home)
+    }
 }
 
 pub fn config_dir() -> PathBuf {
@@ -464,6 +477,21 @@ pub mod autostart {
 
     #[cfg(target_os = "linux")]
     fn enable(app_path: &str) -> crate::Result<()> {
+        // Probe for systemd availability before writing any files.
+        // On non-systemd distributions (Alpine/OpenRC, Void/runit, etc.) `systemctl`
+        // is absent; writing the .service file first would leave a stale artifact.
+        let systemd_available = std::process::Command::new("systemctl")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if !systemd_available {
+            return Err(crate::Error::Config(
+                "systemd is not available on this system".into(),
+            ));
+        }
+
         let service_dir = dirs::config_dir()
             .map(|d| d.join("systemd/user"))
             .ok_or_else(|| crate::Error::Config("no config dir".into()))?;
