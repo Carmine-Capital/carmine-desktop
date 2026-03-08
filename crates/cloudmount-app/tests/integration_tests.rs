@@ -10,7 +10,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use cloudmount_cache::CacheManager;
 use cloudmount_cache::disk::DiskCache;
 use cloudmount_cache::writeback::WriteBackBuffer;
-use cloudmount_core::config::{EffectiveConfig, PackagedDefaults, UserConfig};
+use cloudmount_core::config::{EffectiveConfig, UserConfig};
 use cloudmount_core::types::{DriveItem, FolderFacet};
 use cloudmount_graph::GraphClient;
 
@@ -379,300 +379,13 @@ async fn test_crash_recovery_pending_writes() -> cloudmount_core::Result<()> {
 }
 
 // ============================================================================
-// 11.9 — PRE-CONFIGURED BUILD (PackagedDefaults merge)
+// 11.9 — PRE-CONFIGURED BUILD (PackagedDefaults merge) — removed in pivot-to-product
 // ============================================================================
 
-#[test]
-fn test_preconfigured_build_loads_packaged_defaults() -> cloudmount_core::Result<()> {
-    let packaged_toml = r#"
-[tenant]
-id = "org-tenant-12345"
-client_id = "org-client-67890"
+// (tests removed: PackagedDefaults system has been removed)
 
-[branding]
-app_name = "Contoso CloudMount"
-
-[defaults]
-auto_start = true
-cache_max_size = "20GB"
-sync_interval_secs = 120
-metadata_ttl_secs = 300
-
-[[mounts]]
-id = "corp-onedrive"
-name = "Corporate OneDrive"
-type = "drive"
-mount_point = "/mnt/onedrive"
-enabled = true
-drive_id = "corp-drive-001"
-
-[[mounts]]
-id = "corp-sharepoint"
-name = "Engineering Docs"
-type = "sharepoint"
-mount_point = "/mnt/engineering"
-enabled = true
-site_id = "site-eng-001"
-library_name = "Documents"
-"#;
-
-    let packaged = PackagedDefaults::load(packaged_toml)?;
-
-    assert!(
-        packaged.has_packaged_config(),
-        "should detect pre-configured build"
-    );
-    assert_eq!(packaged.tenant_id(), Some("org-tenant-12345"));
-    assert_eq!(packaged.client_id(), Some("org-client-67890"));
-    assert_eq!(packaged.app_name(), "Contoso CloudMount");
-    assert_eq!(packaged.mounts.len(), 2);
-
-    // Merge with empty user config — packaged defaults dominate
-    let user = UserConfig::load("")?;
-    let effective = EffectiveConfig::build(&packaged, &user);
-
-    assert_eq!(effective.app_name, "Contoso CloudMount");
-    assert_eq!(effective.tenant_id, Some("org-tenant-12345".to_string()));
-    assert_eq!(effective.client_id, Some("org-client-67890".to_string()));
-    assert!(effective.auto_start);
-    assert_eq!(effective.cache_max_size, "20GB");
-    assert_eq!(effective.sync_interval_secs, 120);
-    assert_eq!(effective.metadata_ttl_secs, 300);
-    assert_eq!(effective.mounts.len(), 2);
-
-    let od = effective
-        .mounts
-        .iter()
-        .find(|m| m.id == "corp-onedrive")
-        .unwrap();
-    assert_eq!(od.name, "Corporate OneDrive");
-    assert_eq!(od.drive_id, Some("corp-drive-001".to_string()));
-    assert!(od.enabled);
-
-    let sp = effective
-        .mounts
-        .iter()
-        .find(|m| m.id == "corp-sharepoint")
-        .unwrap();
-    assert_eq!(sp.name, "Engineering Docs");
-    assert_eq!(sp.site_id, Some("site-eng-001".to_string()));
-
-    // Wizard would show simplified flow when packaged config exists
-    assert!(packaged.has_packaged_config());
-
-    Ok(())
-}
-
-// ============================================================================
-// 11.10 — UPDATE SCENARIO (user overrides preserved across packaged updates)
-// ============================================================================
-
-#[test]
-fn test_update_preserves_user_overrides() -> cloudmount_core::Result<()> {
-    // --- Phase 1: PackagedDefaults v1 with 2 mounts ---
-    let packaged_v1_toml = r#"
-[tenant]
-id = "tenant-v1"
-client_id = "client-v1"
-
-[branding]
-app_name = "OrgSync v1"
-
-[defaults]
-auto_start = false
-cache_max_size = "10GB"
-sync_interval_secs = 60
-
-[[mounts]]
-id = "pkg-drive"
-name = "Main Drive"
-type = "drive"
-mount_point = "/mnt/main"
-enabled = true
-drive_id = "drive-001"
-
-[[mounts]]
-id = "pkg-docs"
-name = "Shared Docs"
-type = "sharepoint"
-mount_point = "/mnt/docs"
-enabled = true
-site_id = "site-001"
-library_name = "Documents"
-"#;
-
-    // User config: overrides + dismissed mount + extra user mount + general settings
-    let user_toml = r#"
-dismissed_packaged_mounts = ["pkg-docs"]
-
-[general]
-auto_start = true
-cache_max_size = "25GB"
-sync_interval_secs = 180
-log_level = "debug"
-notifications = false
-
-[[mounts]]
-id = "user-personal"
-name = "Personal Backup"
-type = "drive"
-mount_point = "/mnt/personal"
-enabled = true
-drive_id = "user-drive-999"
-
-[[mount_overrides]]
-id = "pkg-drive"
-name = "My Custom Name"
-mount_point = "/mnt/custom-main"
-"#;
-
-    let packaged_v1 = PackagedDefaults::load(packaged_v1_toml)?;
-    let user = UserConfig::load(user_toml)?;
-    let effective_v1 = EffectiveConfig::build(&packaged_v1, &user);
-
-    // User overrides take precedence
-    assert!(effective_v1.auto_start);
-    assert_eq!(effective_v1.cache_max_size, "25GB");
-    assert_eq!(effective_v1.sync_interval_secs, 180);
-    assert_eq!(effective_v1.log_level, "debug");
-    assert!(!effective_v1.notifications);
-
-    // pkg-drive has user's override name + mount_point
-    let drive_v1 = effective_v1
-        .mounts
-        .iter()
-        .find(|m| m.id == "pkg-drive")
-        .unwrap();
-    assert_eq!(drive_v1.name, "My Custom Name");
-    assert_eq!(drive_v1.mount_point, "/mnt/custom-main");
-    assert_eq!(drive_v1.drive_id, Some("drive-001".to_string()));
-
-    // pkg-docs is dismissed — should not appear
-    assert!(
-        !effective_v1.mounts.iter().any(|m| m.id == "pkg-docs"),
-        "dismissed mount should be excluded"
-    );
-
-    // User's personal mount is present
-    assert!(effective_v1.mounts.iter().any(|m| m.id == "user-personal"));
-
-    // Total: 1 packaged (pkg-drive, not dismissed) + 1 user
-    assert_eq!(effective_v1.mounts.len(), 2);
-
-    // --- Phase 2: PackagedDefaults v2 adds a new mount ---
-    let packaged_v2_toml = r#"
-[tenant]
-id = "tenant-v2"
-client_id = "client-v2"
-
-[branding]
-app_name = "OrgSync v2"
-
-[defaults]
-auto_start = false
-cache_max_size = "15GB"
-sync_interval_secs = 90
-
-[[mounts]]
-id = "pkg-drive"
-name = "Main Drive (Updated)"
-type = "drive"
-mount_point = "/mnt/main-v2"
-enabled = true
-drive_id = "drive-001"
-
-[[mounts]]
-id = "pkg-docs"
-name = "Shared Docs (Updated)"
-type = "sharepoint"
-mount_point = "/mnt/docs-v2"
-enabled = true
-site_id = "site-001"
-library_name = "Documents"
-
-[[mounts]]
-id = "pkg-wiki"
-name = "Team Wiki"
-type = "sharepoint"
-mount_point = "/mnt/wiki"
-enabled = true
-site_id = "site-002"
-library_name = "Wiki Pages"
-"#;
-
-    let packaged_v2 = PackagedDefaults::load(packaged_v2_toml)?;
-    let effective_v2 = EffectiveConfig::build(&packaged_v2, &user);
-
-    // User general overrides STILL take precedence over v2 packaged defaults
-    assert!(
-        effective_v2.auto_start,
-        "user auto_start=true overrides pkg false"
-    );
-    assert_eq!(
-        effective_v2.cache_max_size, "25GB",
-        "user cache size preserved"
-    );
-    assert_eq!(
-        effective_v2.sync_interval_secs, 180,
-        "user sync interval preserved"
-    );
-    assert_eq!(effective_v2.log_level, "debug", "user log level preserved");
-    assert!(
-        !effective_v2.notifications,
-        "user notifications=false preserved"
-    );
-
-    // App name updates to v2 (branding comes from packaged, not user)
-    assert_eq!(effective_v2.app_name, "OrgSync v2");
-    assert_eq!(effective_v2.tenant_id, Some("tenant-v2".to_string()));
-
-    // pkg-drive: user override still applies over v2's updated name/path
-    let drive_v2 = effective_v2
-        .mounts
-        .iter()
-        .find(|m| m.id == "pkg-drive")
-        .unwrap();
-    assert_eq!(
-        drive_v2.name, "My Custom Name",
-        "user override name survives update"
-    );
-    assert_eq!(
-        drive_v2.mount_point, "/mnt/custom-main",
-        "user override mount_point survives update"
-    );
-    assert_eq!(drive_v2.drive_id, Some("drive-001".to_string()));
-
-    // pkg-docs: still dismissed by user
-    assert!(
-        !effective_v2.mounts.iter().any(|m| m.id == "pkg-docs"),
-        "dismissed mount stays hidden after update"
-    );
-
-    // pkg-wiki: NEW mount from v2 — should appear since user hasn't dismissed it
-    let wiki = effective_v2
-        .mounts
-        .iter()
-        .find(|m| m.id == "pkg-wiki")
-        .unwrap();
-    assert_eq!(wiki.name, "Team Wiki");
-    assert_eq!(wiki.mount_point, "/mnt/wiki");
-    assert_eq!(wiki.site_id, Some("site-002".to_string()));
-    assert!(wiki.enabled);
-
-    // User's personal mount survives
-    let personal = effective_v2
-        .mounts
-        .iter()
-        .find(|m| m.id == "user-personal")
-        .unwrap();
-    assert_eq!(personal.name, "Personal Backup");
-    assert_eq!(personal.drive_id, Some("user-drive-999".to_string()));
-
-    // Total: pkg-drive + pkg-wiki + user-personal = 3 (pkg-docs dismissed)
-    assert_eq!(effective_v2.mounts.len(), 3);
-
-    Ok(())
-}
+// Tests removed: PackagedDefaults system has been removed in pivot-to-product.
+// 11.10 — UPDATE SCENARIO also removed (packaged mount override/dismiss logic gone).
 
 // ============================================================================
 // 11.7 — CROSS-PLATFORM SMOKE TEST: macOS (FUSE)
@@ -800,23 +513,15 @@ async fn test_initialization_sequence() -> cloudmount_core::Result<()> {
     std::fs::create_dir_all(&base)?;
 
     // 1. Load config (same sequence as run_desktop)
-    let packaged = PackagedDefaults::load("")?;
-    assert_eq!(packaged.app_name(), "CloudMount");
-    assert!(!packaged.has_packaged_config());
-
     let user_config = UserConfig::load("")?;
-    let effective = EffectiveConfig::build(&packaged, &user_config);
-    assert_eq!(effective.app_name, "CloudMount");
+    let effective = EffectiveConfig::build(&user_config);
     assert_eq!(effective.cache_max_size, "5GB");
     assert_eq!(effective.sync_interval_secs, 60);
     assert_eq!(effective.root_dir, "Cloud");
 
-    // 2. Create AuthManager
-    let client_id = packaged
-        .client_id()
-        .unwrap_or("00000000-0000-0000-0000-000000000000");
+    // 2. Create AuthManager (CLIENT_ID is hardcoded in the app binary)
     let auth = Arc::new(AuthManager::new(
-        client_id.to_string(),
+        "8ebe3ef7-f509-4146-8fef-c9b5d7c22252".to_string(),
         None,
         Arc::new(|_url: &str| Ok(())),
     ));
@@ -1012,7 +717,7 @@ async fn test_sign_in_onedrive_discovery_and_mount_config() -> cloudmount_core::
 
     let has_onedrive = user_config.mounts.iter().any(|m| m.mount_type == "drive");
     assert!(!has_onedrive);
-    user_config.add_onedrive_mount(&drive.id, &mount_point)?;
+    user_config.add_onedrive_mount(&drive.id, &mount_point, None)?;
 
     assert_eq!(user_config.mounts.len(), 1);
     let mount = &user_config.mounts[0];
@@ -1022,8 +727,7 @@ async fn test_sign_in_onedrive_discovery_and_mount_config() -> cloudmount_core::
     assert_eq!(mount.name, "OneDrive");
 
     // Rebuild effective config
-    let packaged = PackagedDefaults::load("")?;
-    let effective = EffectiveConfig::build(&packaged, &user_config);
+    let effective = EffectiveConfig::build(&user_config);
     assert_eq!(effective.mounts.len(), 1);
     assert_eq!(effective.accounts.len(), 1);
     assert_eq!(effective.accounts[0].id, "user-drive-abc");
@@ -1049,7 +753,7 @@ async fn test_sign_out_clears_account_and_config() -> cloudmount_core::Result<()
             display_name: Some("Test User".to_string()),
             tenant_id: None,
         });
-    user_config.add_onedrive_mount("drive-to-remove", "/tmp/cloudmount-test-signout/OneDrive")?;
+    user_config.add_onedrive_mount("drive-to-remove", "/tmp/cloudmount-test-signout/OneDrive", None)?;
 
     assert_eq!(user_config.accounts.len(), 1);
     assert_eq!(user_config.mounts.len(), 1);
@@ -1065,7 +769,7 @@ async fn test_sign_out_clears_account_and_config() -> cloudmount_core::Result<()
     // 1. Stop all mounts (clear drive_ids)
     drive_ids.write().unwrap().clear();
 
-    // 2. Clear account metadata
+    // 2. Clear account metadata only — mounts are preserved for re-use on next sign-in
     user_config.accounts.clear();
 
     // 3. Save config
@@ -1081,18 +785,52 @@ async fn test_sign_out_clears_account_and_config() -> cloudmount_core::Result<()
         reloaded.accounts.is_empty(),
         "accounts should be cleared after sign-out"
     );
-    // Mounts remain in config (they aren't deleted on sign-out, just stopped)
-    assert_eq!(reloaded.mounts.len(), 1);
-
-    // Rebuild effective config — no accounts
-    let packaged = PackagedDefaults::load("")?;
-    let effective = EffectiveConfig::build(&packaged, &reloaded);
-    assert!(effective.accounts.is_empty());
+    assert_eq!(
+        reloaded.mounts.len(),
+        1,
+        "mounts should be preserved after sign-out"
+    );
 
     // drive_ids should be empty (mounts stopped)
     assert!(drive_ids.read().unwrap().is_empty());
 
     cleanup(&base);
+    Ok(())
+}
+
+// ============================================================================
+// 15.9 — ACCOUNT-SCOPED MOUNTS: only mounts matching account_id are active
+// ============================================================================
+
+#[tokio::test]
+async fn test_account_scoped_mounts_filtered() -> cloudmount_core::Result<()> {
+    let mut user_config = UserConfig::load("")?;
+
+    // Add two mounts for different accounts
+    user_config.add_onedrive_mount("drive-account-a", "/mnt/a/OneDrive", Some("account-a".to_string()))?;
+    user_config.add_onedrive_mount("drive-account-b", "/mnt/b/OneDrive", Some("account-b".to_string()))?;
+
+    assert_eq!(user_config.mounts.len(), 2);
+
+    // Simulate active account = "account-a" filtering
+    let active_account = "account-a";
+    let filtered: Vec<_> = user_config
+        .mounts
+        .iter()
+        .filter(|m| m.account_id.as_deref() == Some(active_account))
+        .collect();
+
+    assert_eq!(filtered.len(), 1, "only account-a mount should be active");
+    assert_eq!(filtered[0].drive_id, Some("drive-account-a".to_string()));
+
+    // When no account is signed in, no mounts should be active
+    let no_account_filtered: Vec<_> = user_config
+        .mounts
+        .iter()
+        .filter(|m| m.account_id.as_deref() == Some("nonexistent"))
+        .collect();
+    assert!(no_account_filtered.is_empty());
+
     Ok(())
 }
 

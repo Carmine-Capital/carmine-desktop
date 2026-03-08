@@ -5,34 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'">
   <title>CloudMount Settings</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #1a1a1a; }
-    .tabs { display: flex; background: white; border-bottom: 1px solid #ddd; }
-    .tab { padding: 0.75rem 1.5rem; cursor: pointer; border-bottom: 2px solid transparent; }
-    .tab.active { border-bottom-color: #0078d4; color: #0078d4; }
-    .panel { display: none; padding: 1.5rem; }
-    .panel.active { display: block; }
-    .field { margin-bottom: 1rem; }
-    .field label { display: block; font-size: 0.875rem; color: #666; margin-bottom: 0.25rem; }
-    .field input, .field select { width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.875rem; }
-    .field input[type="checkbox"] { width: auto; }
-    .mount-list { list-style: none; }
-    .mount-item { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background: white; border-radius: 4px; margin-bottom: 0.5rem; border: 1px solid #e0e0e0; }
-    .mount-name { font-weight: 500; }
-    .mount-path { font-size: 0.8rem; color: #666; }
-    button { background: #0078d4; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-size: 0.875rem; }
-    button:hover { background: #106ebe; }
-    button.danger { background: #d13438; }
-    button.danger:hover { background: #a4262c; }
-    button:disabled { opacity: 0.6; cursor: not-allowed; pointer-events: none; }
-    .actions { margin-top: 1rem; display: flex; gap: 0.5rem; }
-    #account-email { font-size: 1rem; margin-bottom: 1rem; }
-    #status-bar { position: fixed; bottom: 0; left: 0; right: 0; padding: 0.75rem 1.5rem; font-size: 0.875rem; transform: translateY(100%); transition: transform 0.2s ease, opacity 0.2s ease; opacity: 0; z-index: 100; }
-    #status-bar.visible { transform: translateY(0); opacity: 1; }
-    #status-bar.visible.success { background: #107c10; color: white; }
-    #status-bar.visible.error { background: #d13438; color: white; }
-  </style>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="tabs">
@@ -64,7 +37,7 @@
   </div>
 
   <div id="mounts" class="panel">
-    <ul class="mount-list" id="mount-list"></ul>
+    <ul class="mount-list settings-mounts" id="mount-list"></ul>
     <div class="actions">
       <button onclick="addMount()">Add Mount</button>
     </div>
@@ -73,7 +46,7 @@
   <div id="account" class="panel">
     <p id="account-email">Not signed in</p>
     <div class="actions">
-      <button class="danger" onclick="signOut()">Sign Out</button>
+      <button class="btn-danger" onclick="signOut()">Sign Out</button>
     </div>
   </div>
 
@@ -102,11 +75,12 @@
     </div>
     <div class="actions">
       <button onclick="saveAdvanced()">Save</button>
-      <button class="danger" onclick="clearCache()">Clear Cache</button>
+      <button class="btn-danger" onclick="clearCache()">Clear Cache</button>
     </div>
   </div>
 
   <div id="status-bar"></div>
+  <script src="ui.js"></script>
   <script src="settings.js"></script>
 </body>
 </html>

@@ -1,5 +1,3 @@
-#![cfg(feature = "desktop")]
-
 use std::sync::Mutex;
 
 use tauri::{
@@ -77,10 +75,10 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
 
     match id {
         "sign_in" => {
-            open_or_focus_window(app, "wizard", "Setup", "wizard.html");
+            open_or_focus_wizard(app, false);
         }
         "add_mount" => {
-            open_or_focus_window(app, "wizard", "Setup", "wizard.html");
+            open_or_focus_wizard(app, true);
         }
         "settings" => {
             open_or_focus_window(app, "settings", "Settings", "settings.html");
@@ -98,7 +96,7 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             });
         }
         "re_authenticate" => {
-            open_or_focus_window(app, "wizard", "Setup", "wizard.html");
+            open_or_focus_wizard(app, false);
         }
         "sign_out" => {
             let app = app.clone();
@@ -131,6 +129,24 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             crate::graceful_shutdown(app);
         }
         _ => {}
+    }
+}
+
+pub fn open_or_focus_wizard(app: &AppHandle, add_mount: bool) {
+    if let Some(win) = app.get_webview_window("wizard") {
+        if add_mount {
+            let _ = win.eval("goToAddMount()");
+        }
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
+    } else {
+        let _ = WebviewWindowBuilder::new(app, "wizard", WebviewUrl::App("wizard.html".into()))
+            .title("Setup")
+            .inner_size(800.0, 600.0)
+            .min_inner_size(640.0, 480.0)
+            .center()
+            .build();
     }
 }
 
@@ -192,7 +208,7 @@ pub fn update_tray_menu(app: &AppHandle) {
                 )
             })
             .collect();
-        let name = app_state.packaged.app_name().to_string();
+        let name = "CloudMount".to_string();
         let degraded = app_state
             .auth_degraded
             .load(std::sync::atomic::Ordering::Relaxed);

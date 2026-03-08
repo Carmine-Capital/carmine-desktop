@@ -3,4 +3,4 @@
 AGENTS.md
 crates/*/AGENTS.md
 .env
-build/defaults.toml
+/node_modules

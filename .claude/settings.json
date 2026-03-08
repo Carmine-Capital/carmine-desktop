@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -q 'Cargo\\.lock'; then echo 'Blocked: Cargo.lock is auto-managed. Edit Cargo.toml instead.' >&2; exit 2; fi"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -q '\\.rs\"'; then toolbox run -c cloudmount-build cargo fmt --all; fi"
+          }
+        ]
+      }
+    ]
+  }
+}

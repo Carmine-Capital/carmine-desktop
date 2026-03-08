@@ -5,85 +5,72 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'">
   <title>CloudMount Setup</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #1a1a1a; display: flex; flex-direction: column; min-height: 100vh; }
-    .container { max-width: 480px; margin: auto; padding: 2rem; text-align: center; }
-    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
-    p { color: #666; margin-bottom: 1.5rem; }
-    button { background: #0078d4; color: white; border: none; padding: 0.75rem 2rem; border-radius: 6px; font-size: 1rem; cursor: pointer; }
-    button:hover { background: #106ebe; }
-    .step { display: none; }
-    .step.active { display: block; }
-    .mount-list { text-align: left; margin: 1rem 0; }
-    .mount-item { padding: 0.5rem; background: white; border-radius: 4px; margin-bottom: 0.5rem; }
-    .spinner { display: inline-block; width: 2rem; height: 2rem; border: 3px solid #ddd; border-top-color: #0078d4; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 1rem; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .url-box { display: flex; align-items: center; gap: 0.5rem; margin: 1rem 0; }
-    .url-input { flex: 1; padding: 0.5rem; font-size: 0.8rem; font-family: monospace; border: 1px solid #ccc; border-radius: 4px; background: #fff; color: #333; min-width: 0; }
-    .btn-secondary { background: #6c757d; }
-    .btn-secondary:hover { background: #5a6268; }
-    .error-msg { color: #c00; margin-top: 1rem; }
-    .sp-result-row { background: white; border: 1px solid #e0e0e0; border-radius: 4px; padding: 0.625rem 0.75rem; margin-bottom: 0.5rem; cursor: pointer; text-align: left; }
-    .sp-result-row:hover { background: #f0f6ff; border-color: #0078d4; }
-    .sp-result-url { font-size: 0.75rem; color: #888; margin-top: 0.2rem; }
-    .sp-back-link { display: inline-block; margin-bottom: 1rem; color: #0078d4; cursor: pointer; font-size: 0.875rem; text-decoration: underline; background: none; border: none; padding: 0; }
-    .sp-back-link:hover { background: none; color: #005a9e; }
-    .sp-search-row { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
-    .sp-search-row input { flex: 1; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.875rem; }
-    .sp-search-row button { padding: 0.5rem 1rem; font-size: 0.875rem; }
-  </style>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="container">
+  <div class="wizard-container">
     <div id="step-welcome" class="step active">
-      <h1 id="app-title">CloudMount</h1>
-      <p>Mount your OneDrive and SharePoint files as local folders.</p>
-      <div id="preconfigured-mounts" class="mount-list" style="display:none"></div>
-      <button id="sign-in-btn">Sign in with Microsoft</button>
+      <div class="welcome-hero">
+        <h1>CloudMount</h1>
+        <p>Mount your OneDrive and SharePoint files as local folders.</p>
+        <button id="sign-in-btn">Sign in with Microsoft</button>
+      </div>
     </div>
+
     <div id="step-signing-in" class="step">
-      <div class="spinner"></div>
+      <div class="spinner step-signing-in-spinner"></div>
       <h1>Waiting for login&hellip;</h1>
       <p>A browser window should have opened. If not, copy the URL below and open it manually.</p>
       <div class="url-box">
         <input id="auth-url" class="url-input" type="text" readonly>
-        <button id="copy-btn">Copy URL</button>
+        <button id="copy-btn" class="btn-secondary btn-sm">Copy URL</button>
       </div>
       <div id="auth-error" class="error-msg" style="display:none"></div>
       <button id="cancel-btn" class="btn-secondary" style="margin-top:1rem">Cancel</button>
     </div>
-    <div id="step-source" class="step">
-      <h1>Select Source</h1>
-      <p>What would you like to mount?</p>
-      <button id="source-drive-btn">OneDrive</button>
-      <button id="source-sp-btn">SharePoint Site</button>
-      <div id="source-error" class="error-msg" style="display:none"></div>
-    </div>
-    <div id="step-sharepoint" class="step">
-      <button id="sp-back-btn" class="sp-back-link">&larr; Back</button>
-      <h1>Select SharePoint Site</h1>
-      <p>Search for a SharePoint site to mount.</p>
-      <div class="sp-search-row">
-        <input id="sp-search" type="text" placeholder="Search sites&hellip;">
-        <button id="sp-search-btn">Search</button>
+
+    <div id="step-sources" class="step">
+      <h1>Add Cloud Sources</h1>
+      <p>Select what to mount on your computer.</p>
+      <div id="sources-loading" class="sources-spinner"><div class="spinner"></div></div>
+      <div id="sources-onedrive-section" style="display:none">
+        <label class="source-card" id="onedrive-card">
+          <input type="checkbox" id="onedrive-check" checked>
+          <div class="source-card-info">
+            <div class="source-card-name" id="onedrive-drive-name">OneDrive</div>
+            <div class="source-card-sub">~/Cloud/OneDrive</div>
+          </div>
+        </label>
       </div>
-      <div id="sp-spinner" class="spinner" style="display:none"></div>
-      <div id="sp-error" class="error-msg" style="display:none"></div>
-      <div id="sp-sites"></div>
-      <div id="sp-libraries" style="display:none">
-        <button id="sp-back-sites-btn" class="sp-back-link">&larr; Back to sites</button>
-        <h2 style="margin-bottom:0.75rem;font-size:1.1rem">Select Library</h2>
-        <div id="sp-lib-list"></div>
+      <div id="sources-sp-section" style="display:none">
+        <div class="section-heading">SharePoint Libraries</div>
+        <div class="sp-search-row">
+          <input id="sources-sp-search" type="text" placeholder="Search sites&hellip;">
+        </div>
+        <div id="sources-sp-spinner" class="spinner" style="display:none"></div>
+        <div id="sources-sp-error" class="error-msg" style="display:none"></div>
+        <div id="sources-sp-sites"></div>
+        <div id="sources-sp-libraries" style="display:none">
+          <button id="sources-sp-back-sites" class="sp-back-link">&larr; Back to sites</button>
+          <div id="sources-sp-lib-list"></div>
+        </div>
       </div>
+      <div id="sources-added-section" style="display:none">
+        <div class="section-heading">Added</div>
+        <div id="sources-added-list"></div>
+      </div>
+      <div id="sources-error" class="error-msg" style="display:none"></div>
+      <button id="get-started-btn" disabled style="margin-top:1.5rem">Get started</button>
     </div>
-    <div id="step-done" class="step">
+
+    <div id="step-success" class="step">
       <h1>All Set</h1>
       <p>Your drives are mounted and ready to use.</p>
       <ul id="done-mount-list" class="mount-list" style="list-style:none"></ul>
       <button id="wizard-close-btn">Close</button>
     </div>
   </div>
+  <script src="ui.js"></script>
   <script src="wizard.js"></script>
 </body>
 </html>

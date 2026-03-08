@@ -1,5 +1,3 @@
-#![cfg(feature = "desktop")]
-
 use std::sync::atomic::Ordering;
 
 use serde::Serialize;
@@ -7,8 +5,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use cloudmount_cache::sync::run_delta_sync;
 use cloudmount_core::config::{
-    AccountMetadata, EffectiveConfig, autostart, config_file_path, derive_mount_point,
-    expand_mount_point,
+    AccountMetadata, EffectiveConfig, autostart, config_file_path, expand_mount_point,
 };
 
 use crate::AppState;
@@ -48,6 +45,13 @@ pub struct SiteInfo {
 pub struct DriveInfo {
     pub id: String,
     pub name: String,
+}
+
+#[tauri::command]
+pub fn is_authenticated(app: AppHandle) -> bool {
+    app.state::<AppState>()
+        .authenticated
+        .load(Ordering::Relaxed)
 }
 
 #[tauri::command]
@@ -134,23 +138,12 @@ async fn complete_sign_in(app: &AppHandle) -> Result<(), String> {
             });
         }
 
-        let has_onedrive = user_config.mounts.iter().any(|m| m.mount_type == "drive");
-        if !has_onedrive {
-            let root_dir = {
-                let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-                config.root_dir.clone()
-            };
-            let mount_point = derive_mount_point(&root_dir, "drive", None, None);
-            user_config
-                .add_onedrive_mount(&drive.id, &mount_point)
-                .map_err(|e| e.to_string())?;
-        }
-
         user_config
             .save_to_file(&config_file_path())
             .map_err(|e| e.to_string())?;
     }
 
+    *state.account_id.lock().map_err(|e| e.to_string())? = Some(drive.id.clone());
     rebuild_effective_config(app)?;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     if !crate::fuse_available() {
@@ -183,6 +176,8 @@ pub async fn sign_out(app: AppHandle) -> Result<(), String> {
         tracing::error!("auth sign_out failed: {e}");
         errors.push(e.to_string());
     }
+
+    *state.account_id.lock().unwrap() = None;
 
     match state.user_config.lock() {
         Ok(mut user_config) => {
@@ -256,12 +251,13 @@ pub fn add_mount(
     site_id: Option<String>,
     site_name: Option<String>,
     library_name: Option<String>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let state = app.state::<AppState>();
     let mount_id;
 
     {
         let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
+        let account_id = user_config.accounts.first().map(|a| a.id.clone());
 
         match mount_type.as_str() {
             "sharepoint" => {
@@ -270,18 +266,22 @@ pub fn add_mount(
                 let sn = site_name.unwrap_or_default();
                 let ln = library_name.unwrap_or_default();
                 user_config
-                    .add_sharepoint_mount(&sid, &did, &sn, &ln, &mount_point)
+                    .add_sharepoint_mount(&sid, &did, &sn, &ln, &mount_point, account_id)
                     .map_err(|e| e.to_string())?;
             }
             _ => {
                 let did = drive_id.ok_or("drive_id required for OneDrive mount")?;
                 user_config
-                    .add_onedrive_mount(&did, &mount_point)
+                    .add_onedrive_mount(&did, &mount_point, account_id)
                     .map_err(|e| e.to_string())?;
             }
         }
 
-        mount_id = user_config.mounts.last().map(|m| m.id.clone());
+        mount_id = user_config
+            .mounts
+            .last()
+            .map(|m| m.id.clone())
+            .ok_or_else(|| "mount was not saved".to_string())?;
 
         user_config
             .save_to_file(&config_file_path())
@@ -290,19 +290,20 @@ pub fn add_mount(
 
     rebuild_effective_config(&app)?;
 
-    if state.authenticated.load(Ordering::Relaxed)
-        && let Some(id) = &mount_id
-    {
-        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-        if let Some(mount_config) = config.mounts.iter().find(|m| &m.id == id)
-            && let Err(e) = crate::start_mount(&app, mount_config)
-        {
-            tracing::error!("failed to start new mount: {e}");
+    if state.authenticated.load(Ordering::Relaxed) {
+        let mount_config_opt = {
+            let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+            config.mounts.iter().find(|m| m.id == mount_id).cloned()
+        };
+        if let Some(mount_config) = mount_config_opt {
+            if let Err(e) = crate::start_mount(&app, &mount_config) {
+                tracing::error!("failed to start new mount: {e}");
+            }
         }
     }
 
     crate::tray::update_tray_menu(&app);
-    Ok(())
+    Ok(mount_id)
 }
 
 #[tauri::command]
@@ -339,9 +340,12 @@ pub fn toggle_mount(app: AppHandle, id: String) -> Result<Option<bool>, String> 
         && let Some(enabled) = result
     {
         if enabled {
-            let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-            if let Some(mount_config) = config.mounts.iter().find(|m| m.id == id) {
-                let _ = crate::start_mount(&app, mount_config);
+            let mount_config_opt = {
+                let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+                config.mounts.iter().find(|m| m.id == id).cloned()
+            };
+            if let Some(mount_config) = mount_config_opt {
+                let _ = crate::start_mount(&app, &mount_config);
             }
         } else {
             let _ = crate::stop_mount(&app, &id);
@@ -361,7 +365,7 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsInfo, String> {
         .first()
         .and_then(|a| a.email.clone().or_else(|| a.display_name.clone()));
     Ok(SettingsInfo {
-        app_name: config.app_name.clone(),
+        app_name: "CloudMount".to_string(),
         auto_start: config.auto_start,
         cache_max_size: config.cache_max_size.clone(),
         sync_interval_secs: config.sync_interval_secs,
@@ -498,11 +502,18 @@ pub async fn refresh_mount(app: AppHandle, id: String) -> Result<(), String> {
             .ok_or_else(|| format!("mount '{id}' not found or has no drive_id"))?
     };
 
-    let inodes = state.inodes.clone();
+    let (cache, inodes) = {
+        let mount_caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+        mount_caches
+            .get(&drive_id)
+            .map(|(c, i)| (c.clone(), i.clone()))
+            .ok_or_else(|| format!("no active cache for drive '{drive_id}'"))?
+    };
+
     let inode_allocator: std::sync::Arc<dyn Fn(&str) -> u64 + Send + Sync> =
         std::sync::Arc::new(move |item_id: &str| inodes.allocate(item_id));
 
-    run_delta_sync(&state.graph, &state.cache, &drive_id, &inode_allocator)
+    run_delta_sync(&state.graph, &cache, &drive_id, &inode_allocator)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -513,9 +524,20 @@ pub async fn refresh_mount(app: AppHandle, id: String) -> Result<(), String> {
 pub async fn clear_cache(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
 
+    // Collect cache references before stopping — stop_mount removes entries from mount_caches.
+    let caches: Vec<std::sync::Arc<cloudmount_cache::CacheManager>> = state
+        .mount_caches
+        .lock()
+        .map_err(|e| e.to_string())?
+        .values()
+        .map(|(c, _)| c.clone())
+        .collect();
+
     crate::stop_all_mounts(&app);
 
-    state.cache.clear().await.map_err(|e| e.to_string())?;
+    for cache in &caches {
+        cache.clear().await.map_err(|e| e.to_string())?;
+    }
     tracing::info!("cache cleared");
 
     if state.authenticated.load(Ordering::Relaxed) {
@@ -528,14 +550,71 @@ pub async fn clear_cache(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn open_wizard(app: AppHandle) -> Result<(), String> {
-    crate::tray::open_or_focus_window(&app, "wizard", "Setup", "wizard.html");
+    crate::tray::open_or_focus_wizard(&app, true);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_drive_info(app: AppHandle) -> Result<DriveInfo, String> {
+    let state = app.state::<AppState>();
+    let drive = state
+        .graph
+        .get_my_drive()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(DriveInfo {
+        id: drive.id,
+        name: drive.name,
+    })
+}
+
+#[tauri::command]
+pub async fn get_followed_sites(app: AppHandle) -> Result<Vec<SiteInfo>, String> {
+    let state = app.state::<AppState>();
+    // MSA accounts don't support followed sites — propagate error so frontend hides SP section
+    let sites = state.graph.get_followed_sites().await.map_err(|e| {
+        tracing::info!("get_followed_sites unavailable (MSA account?): {e}");
+        e.to_string()
+    })?;
+    Ok(sites
+        .into_iter()
+        .map(|s| SiteInfo {
+            id: s.id,
+            display_name: s.display_name.unwrap_or_default(),
+            web_url: s.web_url.unwrap_or_default(),
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn complete_wizard(_app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
 fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let user_config = state.user_config.lock().map_err(|e| e.to_string())?;
-    let new_effective = EffectiveConfig::build(&state.packaged, &user_config);
+    let account_id = state.account_id.lock().map_err(|e| e.to_string())?.clone();
+    let mut new_effective = EffectiveConfig::build(&user_config);
+    new_effective.mounts = match &account_id {
+        Some(aid) => new_effective
+            .mounts
+            .into_iter()
+            .filter(|m| {
+                if m.account_id.as_deref() == Some(aid.as_str()) {
+                    true
+                } else {
+                    tracing::warn!(
+                        mount_id = %m.id,
+                        mount_name = %m.name,
+                        "skipping mount: account_id does not match signed-in account"
+                    );
+                    false
+                }
+            })
+            .collect(),
+        None => Vec::new(),
+    };
     let mut effective = state.effective_config.lock().map_err(|e| e.to_string())?;
     *effective = new_effective;
     Ok(())

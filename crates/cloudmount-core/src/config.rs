@@ -1,114 +1,10 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_APP_NAME: &str = "CloudMount";
 const DEFAULT_CACHE_MAX_SIZE: &str = "5GB";
 const DEFAULT_SYNC_INTERVAL_SECS: u64 = 60;
 const DEFAULT_METADATA_TTL_SECS: u64 = 60;
 const DEFAULT_ROOT_DIR: &str = "Cloud";
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct PackagedDefaults {
-    #[serde(default)]
-    pub tenant: Option<TenantConfig>,
-    #[serde(default)]
-    pub branding: Option<BrandingConfig>,
-    #[serde(default)]
-    pub defaults: Option<DefaultSettings>,
-    #[serde(default)]
-    pub mounts: Vec<PackagedMount>,
-}
-
-impl PackagedDefaults {
-    pub fn load(toml_str: &str) -> crate::Result<Self> {
-        let stripped = strip_comment_only_toml(toml_str);
-        if stripped.is_empty() {
-            return Ok(Self::default());
-        }
-        toml::from_str(&stripped)
-            .map_err(|e| crate::Error::Config(format!("failed to parse packaged defaults: {e}")))
-    }
-
-    pub fn app_name(&self) -> &str {
-        self.branding
-            .as_ref()
-            .and_then(|b| b.app_name.as_deref())
-            .unwrap_or(DEFAULT_APP_NAME)
-    }
-
-    pub fn tenant_id(&self) -> Option<&str> {
-        self.tenant.as_ref().and_then(|t| t.id.as_deref())
-    }
-
-    pub fn client_id(&self) -> Option<&str> {
-        self.tenant.as_ref().and_then(|t| t.client_id.as_deref())
-    }
-
-    pub fn has_packaged_config(&self) -> bool {
-        self.tenant.is_some() || !self.mounts.is_empty()
-    }
-}
-
-fn strip_comment_only_toml(input: &str) -> String {
-    input
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            !trimmed.is_empty() && !trimmed.starts_with('#')
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TenantConfig {
-    #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default)]
-    pub client_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrandingConfig {
-    #[serde(default)]
-    pub app_name: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DefaultSettings {
-    #[serde(default)]
-    pub auto_start: Option<bool>,
-    #[serde(default)]
-    pub cache_max_size: Option<String>,
-    #[serde(default)]
-    pub sync_interval_secs: Option<u64>,
-    #[serde(default)]
-    pub metadata_ttl_secs: Option<u64>,
-    #[serde(default)]
-    pub root_dir: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PackagedMount {
-    pub id: String,
-    pub name: String,
-    #[serde(rename = "type")]
-    pub mount_type: String,
-    pub mount_point: String,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub drive_id: Option<String>,
-    #[serde(default)]
-    pub site_id: Option<String>,
-    #[serde(default)]
-    pub library_name: Option<String>,
-}
-
-fn default_true() -> bool {
-    true
-}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UserConfig {
@@ -116,10 +12,6 @@ pub struct UserConfig {
     pub general: Option<UserGeneralSettings>,
     #[serde(default)]
     pub mounts: Vec<MountConfig>,
-    #[serde(default)]
-    pub mount_overrides: Vec<MountOverride>,
-    #[serde(default)]
-    pub dismissed_packaged_mounts: Vec<String>,
     #[serde(default)]
     pub accounts: Vec<AccountMetadata>,
 }
@@ -187,6 +79,7 @@ impl UserConfig {
         site_name: &str,
         library_name: &str,
         mount_point: &str,
+        account_id: Option<String>,
     ) -> crate::Result<()> {
         validate_mount_point(mount_point, &self.mounts)?;
 
@@ -197,7 +90,7 @@ impl UserConfig {
             mount_type: "sharepoint".to_string(),
             mount_point: mount_point.to_string(),
             enabled: true,
-            account_id: None,
+            account_id,
             drive_id: Some(drive_id.to_string()),
             site_id: Some(site_id.to_string()),
             site_name: Some(site_name.to_string()),
@@ -206,7 +99,12 @@ impl UserConfig {
         Ok(())
     }
 
-    pub fn add_onedrive_mount(&mut self, drive_id: &str, mount_point: &str) -> crate::Result<()> {
+    pub fn add_onedrive_mount(
+        &mut self,
+        drive_id: &str,
+        mount_point: &str,
+        account_id: Option<String>,
+    ) -> crate::Result<()> {
         validate_mount_point(mount_point, &self.mounts)?;
 
         let id = format!("od-{}", uuid::Uuid::new_v4());
@@ -216,7 +114,7 @@ impl UserConfig {
             mount_type: "drive".to_string(),
             mount_point: mount_point.to_string(),
             enabled: true,
-            account_id: None,
+            account_id,
             drive_id: Some(drive_id.to_string()),
             site_id: None,
             site_name: None,
@@ -236,23 +134,12 @@ impl UserConfig {
             mount.enabled = !mount.enabled;
             return Some(mount.enabled);
         }
-        if let Some(ov) = self.mount_overrides.iter_mut().find(|o| o.id == id) {
-            let new_val = !ov.enabled.unwrap_or(true);
-            ov.enabled = Some(new_val);
-            return Some(new_val);
-        }
         None
-    }
-
-    pub fn restore_default_mounts(&mut self) {
-        self.dismissed_packaged_mounts.clear();
     }
 
     pub fn reset_all(&mut self) {
         self.general = None;
         self.mounts.clear();
-        self.mount_overrides.clear();
-        self.dismissed_packaged_mounts.clear();
     }
 }
 
@@ -297,15 +184,8 @@ pub struct MountConfig {
     pub library_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MountOverride {
-    pub id: String,
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub mount_point: Option<String>,
-    #[serde(default)]
-    pub enabled: Option<bool>,
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -321,9 +201,6 @@ pub struct AccountMetadata {
 
 #[derive(Debug, Clone)]
 pub struct EffectiveConfig {
-    pub app_name: String,
-    pub tenant_id: Option<String>,
-    pub client_id: Option<String>,
     pub auto_start: bool,
     pub cache_max_size: String,
     pub sync_interval_secs: u64,
@@ -337,33 +214,25 @@ pub struct EffectiveConfig {
 }
 
 impl EffectiveConfig {
-    pub fn build(packaged: &PackagedDefaults, user: &UserConfig) -> Self {
+    pub fn build(user: &UserConfig) -> Self {
         let user_general = user.general.as_ref();
-        let pkg_defaults = packaged.defaults.as_ref();
 
-        let auto_start = user_general
-            .and_then(|g| g.auto_start)
-            .or_else(|| pkg_defaults.and_then(|d| d.auto_start))
-            .unwrap_or(false);
+        let auto_start = user_general.and_then(|g| g.auto_start).unwrap_or(false);
 
         let cache_max_size = user_general
             .and_then(|g| g.cache_max_size.clone())
-            .or_else(|| pkg_defaults.and_then(|d| d.cache_max_size.clone()))
             .unwrap_or_else(|| DEFAULT_CACHE_MAX_SIZE.to_string());
 
         let sync_interval_secs = user_general
             .and_then(|g| g.sync_interval_secs)
-            .or_else(|| pkg_defaults.and_then(|d| d.sync_interval_secs))
             .unwrap_or(DEFAULT_SYNC_INTERVAL_SECS);
 
         let metadata_ttl_secs = user_general
             .and_then(|g| g.metadata_ttl_secs)
-            .or_else(|| pkg_defaults.and_then(|d| d.metadata_ttl_secs))
             .unwrap_or(DEFAULT_METADATA_TTL_SECS);
 
         let root_dir = user_general
             .and_then(|g| g.root_dir.clone())
-            .or_else(|| pkg_defaults.and_then(|d| d.root_dir.clone()))
             .unwrap_or_else(|| DEFAULT_ROOT_DIR.to_string());
 
         let cache_dir = user_general.and_then(|g| g.cache_dir.clone());
@@ -372,12 +241,7 @@ impl EffectiveConfig {
             .unwrap_or_else(|| "info".to_string());
         let notifications = user_general.and_then(|g| g.notifications).unwrap_or(true);
 
-        let mounts = merge_mounts(packaged, user);
-
         Self {
-            app_name: packaged.app_name().to_string(),
-            tenant_id: packaged.tenant_id().map(String::from),
-            client_id: packaged.client_id().map(String::from),
             auto_start,
             cache_max_size,
             sync_interval_secs,
@@ -386,57 +250,10 @@ impl EffectiveConfig {
             log_level,
             notifications,
             root_dir,
-            mounts,
+            mounts: user.mounts.clone(),
             accounts: user.accounts.clone(),
         }
     }
-}
-
-fn merge_mounts(packaged: &PackagedDefaults, user: &UserConfig) -> Vec<MountConfig> {
-    let mut result: Vec<MountConfig> = Vec::new();
-
-    let overrides: HashMap<&str, &MountOverride> = user
-        .mount_overrides
-        .iter()
-        .map(|o| (o.id.as_str(), o))
-        .collect();
-
-    for pm in &packaged.mounts {
-        if user.dismissed_packaged_mounts.contains(&pm.id) {
-            continue;
-        }
-
-        let mut mount = MountConfig {
-            id: pm.id.clone(),
-            name: pm.name.clone(),
-            mount_type: pm.mount_type.clone(),
-            mount_point: pm.mount_point.clone(),
-            enabled: pm.enabled,
-            account_id: None,
-            drive_id: pm.drive_id.clone(),
-            site_id: pm.site_id.clone(),
-            site_name: None,
-            library_name: pm.library_name.clone(),
-        };
-
-        if let Some(ov) = overrides.get(pm.id.as_str()) {
-            if let Some(ref name) = ov.name {
-                mount.name = name.clone();
-            }
-            if let Some(ref mp) = ov.mount_point {
-                mount.mount_point = mp.clone();
-            }
-            if let Some(enabled) = ov.enabled {
-                mount.enabled = enabled;
-            }
-        }
-
-        result.push(mount);
-    }
-
-    result.extend(user.mounts.iter().cloned());
-
-    result
 }
 
 fn validate_mount_point(mount_point: &str, existing_mounts: &[MountConfig]) -> crate::Result<()> {
@@ -513,7 +330,7 @@ pub fn derive_mount_point(
 }
 
 pub fn expand_mount_point(template: &str) -> String {
-    if !template.contains("{home}") {
+    if !template.contains("{home}") && !template.starts_with("~/") && template != "~" {
         return template.to_string();
     }
 
@@ -525,7 +342,15 @@ pub fn expand_mount_point(template: &str) -> String {
                 .unwrap_or_else(|_| ".".to_string())
         });
 
-    template.replace("{home}", &home)
+    let result = if let Some(rest) = template.strip_prefix("~/") {
+        format!("{home}/{rest}")
+    } else if template == "~" {
+        home.clone()
+    } else {
+        template.to_string()
+    };
+
+    result.replace("{home}", &home)
 }
 
 pub fn config_dir() -> PathBuf {

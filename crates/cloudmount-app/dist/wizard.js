@@ -3,7 +3,12 @@ const { listen } = window.__TAURI__.event;
 
 let signingIn = false;
 let activeListeners = [];
-let selectedSite = null;
+let onedriveDriveId = null;
+let sourcesSpSearchTimer = null;
+let sourcesSelectedSite = null;
+let addMountMode = false;
+
+// -- sign-in flow --
 
 async function startSignIn() {
   if (signingIn) return;
@@ -63,13 +68,13 @@ async function copyAuthUrl() {
 }
 
 async function onSignInComplete() {
-  const mounts = await invoke('list_mounts');
-  if (mounts.length > 0) {
-    renderMountList(mounts);
-    showStep('step-done');
-  } else {
-    showStep('step-source');
-  }
+  showStep('step-sources');
+  await loadSources();
+}
+
+async function goToAddMount() {
+  addMountMode = true;
+  await onSignInComplete();
 }
 
 function cleanupListeners() {
@@ -77,69 +82,89 @@ function cleanupListeners() {
   activeListeners = [];
 }
 
-// -- step-source: source selection --
+// -- step-sources: loading drive info and followed sites --
 
-async function selectSource(type) {
-  if (type === 'sharepoint') {
-    document.getElementById('sp-search').value = '';
-    document.getElementById('sp-error').style.display = 'none';
-    document.getElementById('sp-error').textContent = '';
-    document.getElementById('sp-sites').innerHTML = '';
-    document.getElementById('sp-libraries').style.display = 'none';
-    document.getElementById('sp-spinner').style.display = 'none';
-    showStep('step-sharepoint');
-    return;
+async function loadSources() {
+  document.getElementById('sources-loading').style.display = 'block';
+  document.getElementById('sources-onedrive-section').style.display = 'none';
+  document.getElementById('sources-sp-section').style.display = 'none';
+  document.getElementById('sources-error').style.display = 'none';
+
+  const [driveResult, sitesResult] = await Promise.allSettled([
+    invoke('get_drive_info'),
+    invoke('get_followed_sites'),
+  ]);
+
+  document.getElementById('sources-loading').style.display = 'none';
+
+  if (driveResult.status === 'fulfilled') {
+    const drive = driveResult.value;
+    onedriveDriveId = drive.id;
+    document.getElementById('onedrive-drive-name').textContent = drive.name || 'OneDrive';
+    document.getElementById('sources-onedrive-section').style.display = 'block';
   }
 
-  // OneDrive path
-  const errEl = document.getElementById('source-error');
-  errEl.style.display = 'none';
-  errEl.textContent = '';
-
-  let mounts;
-  try {
-    mounts = await invoke('list_mounts');
-  } catch (e) {
-    errEl.textContent = e.toString();
-    errEl.style.display = 'block';
-    return;
+  if (addMountMode) {
+    document.getElementById('sources-onedrive-section').style.display = 'none';
+    const btn = document.getElementById('get-started-btn');
+    btn.textContent = 'Close';
+    btn.disabled = false;
   }
 
-  const driveMount = mounts.find(m => m.mount_type === 'drive');
-  if (!driveMount || !driveMount.drive_id) {
-    errEl.textContent = 'OneDrive is not yet available \u2014 please wait a moment and try again';
-    errEl.style.display = 'block';
-    return;
+  if (sitesResult.status === 'fulfilled') {
+    document.getElementById('sources-sp-section').style.display = 'block';
+    renderFollowedSites(sitesResult.value);
   }
 
-  const driveCount = mounts.filter(m => m.mount_type === 'drive').length;
-  const mountPoint = '~/Cloud/OneDrive ' + (driveCount + 1) + '/';
-
-  try {
-    await invoke('add_mount', {
-      mountType: 'drive',
-      driveId: driveMount.drive_id,
-      mountPoint,
-    });
-    await refreshAndFinish();
-  } catch (e) {
-    errEl.textContent = e.toString();
+  if (driveResult.status === 'rejected' && sitesResult.status === 'rejected') {
+    const errEl = document.getElementById('sources-error');
+    errEl.textContent = 'Could not load account data \u2014 please try signing in again.';
     errEl.style.display = 'block';
   }
+
+  updateGetStartedBtn();
 }
 
-// -- step-sharepoint: site search --
+function renderFollowedSites(sites) {
+  const sitesEl = document.getElementById('sources-sp-sites');
+  sitesEl.innerHTML = '';
+  sites.forEach(site => {
+    const row = document.createElement('div');
+    row.className = 'sp-result-row';
+    const name = document.createElement('div');
+    name.textContent = site.display_name;
+    const url = document.createElement('div');
+    url.className = 'sp-result-url';
+    url.textContent = site.web_url;
+    row.appendChild(name);
+    row.appendChild(url);
+    row.onclick = () => selectSiteInSources(site);
+    sitesEl.appendChild(row);
+  });
+}
 
-async function searchSites() {
-  const query = document.getElementById('sp-search').value.trim();
-  const spinner = document.getElementById('sp-spinner');
-  const errEl = document.getElementById('sp-error');
-  const sitesEl = document.getElementById('sp-sites');
+// -- step-sources: SharePoint search (debounced) --
+
+function onSourcesSpSearchInput() {
+  clearTimeout(sourcesSpSearchTimer);
+  const query = document.getElementById('sources-sp-search').value.trim();
+  if (!query) {
+    // Restore followed sites on empty query
+    loadSources();
+    return;
+  }
+  sourcesSpSearchTimer = setTimeout(() => searchSitesInSources(query), 300);
+}
+
+async function searchSitesInSources(query) {
+  const spinner = document.getElementById('sources-sp-spinner');
+  const errEl = document.getElementById('sources-sp-error');
+  const sitesEl = document.getElementById('sources-sp-sites');
 
   errEl.style.display = 'none';
   errEl.textContent = '';
   sitesEl.innerHTML = '';
-  document.getElementById('sp-libraries').style.display = 'none';
+  document.getElementById('sources-sp-libraries').style.display = 'none';
   spinner.style.display = 'inline-block';
 
   let sites;
@@ -159,28 +184,16 @@ async function searchSites() {
     return;
   }
 
-  sites.forEach(site => {
-    const row = document.createElement('div');
-    row.className = 'sp-result-row';
-    const name = document.createElement('div');
-    name.textContent = site.display_name;
-    const url = document.createElement('div');
-    url.className = 'sp-result-url';
-    url.textContent = site.web_url;
-    row.appendChild(name);
-    row.appendChild(url);
-    row.onclick = () => selectSite(site);
-    sitesEl.appendChild(row);
-  });
+  renderFollowedSites(sites);
 }
 
-// -- step-sharepoint: site selection and library listing --
+// -- step-sources: site and library selection --
 
-async function selectSite(site) {
-  selectedSite = site;
-  const spinner = document.getElementById('sp-spinner');
-  const errEl = document.getElementById('sp-error');
-  const libList = document.getElementById('sp-lib-list');
+async function selectSiteInSources(site) {
+  sourcesSelectedSite = site;
+  const spinner = document.getElementById('sources-sp-spinner');
+  const errEl = document.getElementById('sources-sp-error');
+  const libList = document.getElementById('sources-sp-lib-list');
 
   spinner.style.display = 'inline-block';
   errEl.style.display = 'none';
@@ -198,35 +211,25 @@ async function selectSite(site) {
   }
   spinner.style.display = 'none';
 
-  if (libraries.length === 1) {
-    await confirmMount(site, libraries[0]);
-    return;
-  }
-
   libraries.forEach(lib => {
     const row = document.createElement('div');
     row.className = 'sp-result-row';
     row.textContent = lib.name;
-    row.onclick = () => confirmMount(selectedSite, lib);
+    row.onclick = () => mountLibraryInSources(sourcesSelectedSite, lib);
     libList.appendChild(row);
   });
-  document.getElementById('sp-libraries').style.display = 'block';
+  document.getElementById('sources-sp-libraries').style.display = 'block';
 }
 
-function showSitesBack() {
-  document.getElementById('sp-libraries').style.display = 'none';
-}
-
-// -- step-sharepoint: mount confirmation --
-
-async function confirmMount(site, library) {
-  const spinner = document.getElementById('sp-spinner');
-  const errEl = document.getElementById('sp-error');
+async function mountLibraryInSources(site, library) {
+  const spinner = document.getElementById('sources-sp-spinner');
+  const errEl = document.getElementById('sources-sp-error');
   spinner.style.display = 'inline-block';
 
   const mountPoint = '~/Cloud/' + site.display_name + ' - ' + library.name + '/';
+  let mountId;
   try {
-    await invoke('add_mount', {
+    mountId = await invoke('add_mount', {
       mountType: 'sharepoint',
       mountPoint,
       driveId: library.id,
@@ -241,18 +244,86 @@ async function confirmMount(site, library) {
     return;
   }
   spinner.style.display = 'none';
-  await refreshAndFinish();
+
+  // Append to added-sources list
+  addSourceEntry(library.name + ' (' + site.display_name + ')', mountId);
+
+  // Reset SP browser to site list
+  document.getElementById('sources-sp-libraries').style.display = 'none';
+  document.getElementById('sources-sp-lib-list').innerHTML = '';
+  sourcesSelectedSite = null;
+
+  updateGetStartedBtn();
 }
 
-async function refreshAndFinish() {
+function addSourceEntry(label, mountId) {
+  const section = document.getElementById('sources-added-section');
+  const list = document.getElementById('sources-added-list');
+
+  const row = document.createElement('div');
+  row.className = 'added-source-row';
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'added-source-name';
+  nameEl.textContent = label;
+
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'btn-remove';
+  removeBtn.textContent = 'Remove';
+  removeBtn.onclick = async () => {
+    if (mountId) {
+      try { await invoke('remove_mount', { id: mountId }); } catch (_) {}
+    }
+    list.removeChild(row);
+    if (list.children.length === 0) section.style.display = 'none';
+    updateGetStartedBtn();
+  };
+
+  row.appendChild(nameEl);
+  row.appendChild(removeBtn);
+  list.appendChild(row);
+  section.style.display = 'block';
+}
+
+// -- step-sources: Get started --
+
+function updateGetStartedBtn() {
+  if (addMountMode) return;
+  const onedriveChecked = document.getElementById('onedrive-check') &&
+    document.getElementById('onedrive-check').checked &&
+    document.getElementById('sources-onedrive-section').style.display !== 'none';
+  const hasAdded = document.getElementById('sources-added-list').children.length > 0;
+  document.getElementById('get-started-btn').disabled = !(onedriveChecked || hasAdded);
+}
+
+async function getStarted() {
+  const errEl = document.getElementById('sources-error');
+  errEl.style.display = 'none';
+
+  const onedriveSection = document.getElementById('sources-onedrive-section');
+  const onedriveChecked = document.getElementById('onedrive-check') &&
+    document.getElementById('onedrive-check').checked &&
+    onedriveSection.style.display !== 'none';
+
+  if (onedriveChecked && onedriveDriveId) {
+    try {
+      await invoke('add_mount', {
+        mountType: 'drive',
+        driveId: onedriveDriveId,
+        mountPoint: '~/Cloud/OneDrive',
+      });
+    } catch (e) {
+      errEl.textContent = e.toString();
+      errEl.style.display = 'block';
+      return;
+    }
+  }
+
+  try {
+    await invoke('complete_wizard');
+  } catch (_) {}
+
   const mounts = await invoke('list_mounts');
-  renderMountList(mounts);
-  showStep('step-done');
-}
-
-// -- step-done: mount list rendering --
-
-function renderMountList(mounts) {
   const list = document.getElementById('done-mount-list');
   list.innerHTML = '';
   mounts.forEach(m => {
@@ -261,7 +332,10 @@ function renderMountList(mounts) {
     li.textContent = m.name + ' \u2192 ' + m.mount_point;
     list.appendChild(li);
   });
+  showStep('step-success');
 }
+
+// -- utilities --
 
 function showStep(id) {
   document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
@@ -269,41 +343,28 @@ function showStep(id) {
 }
 
 async function init() {
-  try {
-    const settings = await invoke('get_settings');
-    document.getElementById('app-title').textContent = settings.app_name;
-    document.title = settings.app_name + ' Setup';
-
-    const mounts = await invoke('list_mounts');
-    if (mounts.length > 0) {
-      const list = document.getElementById('preconfigured-mounts');
-      list.style.display = 'block';
-      mounts.forEach(m => {
-        const div = document.createElement('div');
-        div.className = 'mount-item';
-        div.textContent = m.name + ' \u2192 ' + m.mount_point;
-        list.appendChild(div);
-      });
-    }
-  } catch (e) { console.error(e); }
-
   document.getElementById('sign-in-btn').addEventListener('click', startSignIn);
   document.getElementById('copy-btn').addEventListener('click', copyAuthUrl);
   document.getElementById('cancel-btn').addEventListener('click', cancelSignIn);
-  document.getElementById('source-drive-btn').addEventListener('click', () => selectSource('drive'));
-  document.getElementById('source-sp-btn').addEventListener('click', () => selectSource('sharepoint'));
-  document.getElementById('sp-back-btn').addEventListener('click', () => showStep('step-source'));
-  document.getElementById('sp-search-btn').addEventListener('click', searchSites);
-  document.getElementById('sp-back-sites-btn').addEventListener('click', showSitesBack);
+  document.getElementById('sources-sp-back-sites').addEventListener('click', () => {
+    document.getElementById('sources-sp-libraries').style.display = 'none';
+  });
+  document.getElementById('sources-sp-search').addEventListener('input', onSourcesSpSearchInput);
+  document.getElementById('onedrive-check').addEventListener('change', updateGetStartedBtn);
+  document.getElementById('get-started-btn').addEventListener('click', () => {
+    if (addMountMode) {
+      window.__TAURI__.window.getCurrentWindow().close();
+    } else {
+      getStarted();
+    }
+  });
   document.getElementById('wizard-close-btn').addEventListener('click', () => {
     window.__TAURI__.window.getCurrentWindow().close();
   });
 
-  const spSearch = document.getElementById('sp-search');
-  if (spSearch) {
-    spSearch.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') searchSites();
-    });
+  const authenticated = await invoke('is_authenticated');
+  if (authenticated) {
+    await goToAddMount();
   }
 }
 init();

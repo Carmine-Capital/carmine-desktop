@@ -1,5 +1,3 @@
-#![cfg(feature = "desktop")]
-
 use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
 
@@ -21,6 +19,30 @@ pub fn mount_success(app: &AppHandle, name: &str, path: &str) {
         app,
         "Mount Ready",
         &format!("{name} is now available at {path}"),
+    );
+}
+
+pub fn mount_not_found(app: &AppHandle, name: &str) {
+    send(
+        app,
+        "Mount Removed",
+        &format!("'{name}' is no longer accessible and has been removed from your configuration"),
+    );
+}
+
+pub fn mount_orphaned(app: &AppHandle, name: &str) {
+    send(
+        app,
+        "Mount Removed",
+        &format!("'{name}' was deleted or moved and has been removed from your configuration"),
+    );
+}
+
+pub fn mount_access_denied(app: &AppHandle, name: &str) {
+    send(
+        app,
+        "Mount Skipped",
+        &format!("No access to '{name}' \u{2014} check your permissions"),
     );
 }
 
@@ -70,11 +92,8 @@ pub fn update_not_configured(app: &AppHandle) {
     );
 }
 
-fn app_display_name(app: &AppHandle) -> String {
-    use tauri::Manager;
-    app.try_state::<crate::AppState>()
-        .map(|s| s.packaged.app_name().to_string())
-        .unwrap_or_else(|| "CloudMount".to_string())
+fn app_display_name(_app: &AppHandle) -> String {
+    "CloudMount".to_string()
 }
 
 fn send(app: &AppHandle, title: &str, body: &str) {

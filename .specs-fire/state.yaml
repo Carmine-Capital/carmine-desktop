@@ -1,0 +1,216 @@
+project:
+  name: cloudmount
+  description: Mounts Microsoft OneDrive and SharePoint document libraries as
+    local filesystems on Linux, macOS, and Windows
+  created: 2026-03-08T00:00:00Z
+  fire_version: 0.1.8
+workspace:
+  type: brownfield
+  structure: monorepo
+  autonomy_bias: balanced
+  run_scope_preference: single
+  run_scope_history: []
+  scanned_at: 2026-03-08T00:00:00Z
+  parts:
+    - id: cloudmount-app
+      path: crates/cloudmount-app
+      language: rust
+      test_cmd: toolbox run --container cloudmount-build cargo test -p cloudmount-app
+      linter: clippy
+    - id: cloudmount-auth
+      path: crates/cloudmount-auth
+      language: rust
+      test_cmd: toolbox run --container cloudmount-build cargo test -p cloudmount-auth
+      linter: clippy
+    - id: cloudmount-cache
+      path: crates/cloudmount-cache
+      language: rust
+      test_cmd: toolbox run --container cloudmount-build cargo test -p cloudmount-cache
+      linter: clippy
+    - id: cloudmount-core
+      path: crates/cloudmount-core
+      language: rust
+      test_cmd: toolbox run --container cloudmount-build cargo test -p cloudmount-core
+      linter: clippy
+    - id: cloudmount-graph
+      path: crates/cloudmount-graph
+      language: rust
+      test_cmd: toolbox run --container cloudmount-build cargo test -p cloudmount-graph
+      linter: clippy
+    - id: cloudmount-vfs
+      path: crates/cloudmount-vfs
+      language: rust
+      test_cmd: toolbox run --container cloudmount-build cargo test -p cloudmount-vfs
+      linter: clippy
+intents:
+  - id: ui-dark-premium-redesign
+    title: Dark Premium UI Redesign
+    status: completed
+    work_items:
+      - id: design-system-setup
+        title: Create shared design system (tokens, Inter font, shared CSS/JS)
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-003
+        completed_at: 2026-03-08T12:32:30.662Z
+      - id: wizard-dark-redesign
+        title: Apply dark premium design to wizard
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on:
+          - design-system-setup
+        run_id: run-cloud-mount-003
+        completed_at: 2026-03-08T12:32:30.662Z
+      - id: settings-dark-redesign
+        title: Apply dark premium design to settings
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on:
+          - design-system-setup
+        run_id: run-cloud-mount-003
+        completed_at: 2026-03-08T12:32:30.662Z
+  - id: fix-wizard-add-mount-ux
+    title: Fix wizard add-mount mode UX
+    status: completed
+    work_items:
+      - id: wizard-add-mount-mode-ui
+        title: Replace "Get started" with "Close" in add-mount wizard mode
+        complexity: low
+        mode: autopilot
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-002
+        completed_at: 2026-03-08T11:35:09.615Z
+  - id: fix-multi-mount-inode-collision
+    title: Fix UNIQUE constraint failure when mounting multiple drives simultaneously
+    status: completed
+    work_items:
+      - id: per-mount-cache-isolation
+        title: Isolate CacheManager and InodeTable per mount
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-001
+        completed_at: 2026-03-08T10:40:13.872Z
+  - id: fix-sign-out-clears-mounts
+    title: Fix sign-out to clear mount configuration
+    status: completed
+    work_items:
+      - id: clear-mounts-on-sign-out
+        title: Clear mounts list in sign_out command
+        complexity: low
+        mode: autopilot
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-004
+        completed_at: 2026-03-08T13:34:49.509Z
+  - id: feat-account-scoped-mounts
+    title: Account-scoped mount configuration
+    status: completed
+    work_items:
+      - id: add-account-id-to-mount-config
+        title: Add account_id field to mount config schema
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-006
+        completed_at: 2026-03-08T14:23:11.793Z
+      - id: filter-mounts-by-account-on-sign-in
+        title: Filter mounts by account_id on sign-in and sign-out
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on:
+          - add-account-id-to-mount-config
+        run_id: run-cloud-mount-006
+        completed_at: 2026-03-08T14:23:11.793Z
+  - id: feat-mount-validation
+    title: Mount validation before start and on delta sync
+    status: completed
+    work_items:
+      - id: validate-mount-before-start
+        title: Validate mount resource exists before starting
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-005
+        completed_at: 2026-03-08T13:59:52.788Z
+      - id: handle-orphaned-mount-in-delta-sync
+        title: Handle orphaned mount detection in delta sync
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on:
+          - validate-mount-before-start
+        run_id: run-cloud-mount-005
+        completed_at: 2026-03-08T13:59:52.788Z
+runs:
+  active: []
+  completed:
+    - id: run-cloud-mount-001
+      scope: single
+      work_items:
+        - id: per-mount-cache-isolation
+          intent: fix-multi-mount-inode-collision
+          mode: confirm
+      started: 2026-03-08T10:25:02.060Z
+      completed: 2026-03-08T10:40:13.872Z
+    - id: run-cloud-mount-002
+      scope: single
+      work_items:
+        - id: wizard-add-mount-mode-ui
+          intent: fix-wizard-add-mount-ux
+          mode: autopilot
+      started: 2026-03-08T11:32:19.537Z
+      completed: 2026-03-08T11:35:09.615Z
+    - id: run-cloud-mount-003
+      scope: wide
+      work_items:
+        - id: design-system-setup
+          intent: ui-dark-premium-redesign
+          mode: confirm
+        - id: wizard-dark-redesign
+          intent: ui-dark-premium-redesign
+          mode: confirm
+        - id: settings-dark-redesign
+          intent: ui-dark-premium-redesign
+          mode: confirm
+      started: 2026-03-08T12:12:21.913Z
+      completed: 2026-03-08T12:32:30.662Z
+    - id: run-cloud-mount-004
+      scope: single
+      work_items:
+        - id: clear-mounts-on-sign-out
+          intent: fix-sign-out-clears-mounts
+          mode: autopilot
+      started: 2026-03-08T13:33:22.792Z
+      completed: 2026-03-08T13:34:49.509Z
+    - id: run-cloud-mount-005
+      scope: wide
+      work_items:
+        - id: validate-mount-before-start
+          intent: feat-mount-validation
+          mode: confirm
+        - id: handle-orphaned-mount-in-delta-sync
+          intent: feat-mount-validation
+          mode: confirm
+      started: 2026-03-08T13:41:46.696Z
+      completed: 2026-03-08T13:59:52.788Z
+    - id: run-cloud-mount-006
+      scope: wide
+      work_items:
+        - id: add-account-id-to-mount-config
+          intent: feat-account-scoped-mounts
+          mode: confirm
+        - id: filter-mounts-by-account-on-sign-in
+          intent: feat-account-scoped-mounts
+          mode: confirm
+      started: 2026-03-08T14:06:57.740Z
+      completed: 2026-03-08T14:23:11.793Z

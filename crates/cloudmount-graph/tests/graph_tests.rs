@@ -362,6 +362,73 @@ async fn error_500_retries_then_fails() {
     }
 }
 
+// --- check_drive_exists tests ---
+
+#[tokio::test]
+async fn check_drive_exists_returns_ok_on_200() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/drives/d1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "d1",
+            "name": "OneDrive",
+            "driveType": "documentLibrary",
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let result = client.check_drive_exists("d1").await;
+
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn check_drive_exists_returns_404_error() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/drives/d1"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "error": { "code": "itemNotFound", "message": "The resource could not be found." }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let err = client.check_drive_exists("d1").await.unwrap_err();
+
+    match err {
+        cloudmount_core::Error::GraphApi { status, .. } => assert_eq!(status, 404),
+        other => panic!("expected GraphApi 404, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn check_drive_exists_returns_403_error() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/drives/d1"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({
+            "error": { "code": "accessDenied", "message": "Access denied." }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let err = client.check_drive_exists("d1").await.unwrap_err();
+
+    match err {
+        cloudmount_core::Error::GraphApi { status, .. } => assert_eq!(status, 403),
+        other => panic!("expected GraphApi 403, got: {other:?}"),
+    }
+}
+
 // --- copy_item tests ---
 
 #[tokio::test]

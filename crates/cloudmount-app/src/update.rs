@@ -1,5 +1,3 @@
-#![cfg(feature = "desktop")]
-
 use std::sync::Mutex;
 use tauri::AppHandle;
 use tauri_plugin_updater::UpdaterExt;

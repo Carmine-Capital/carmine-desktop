@@ -1,17 +1,5 @@
 const { invoke } = window.__TAURI__.core;
 
-let _statusTimer = null;
-
-function showStatus(message, type) {
-  const bar = document.getElementById('status-bar');
-  if (_statusTimer) { clearTimeout(_statusTimer); _statusTimer = null; }
-  bar.textContent = typeof message === 'string' ? message : String(message);
-  bar.className = 'visible ' + type;
-  if (type === 'success') {
-    _statusTimer = setTimeout(() => { bar.className = ''; }, 3000);
-  }
-}
-
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -62,11 +50,11 @@ async function loadMounts() {
       toggleBtn.onclick = () => toggleMount(m.id);
       const removeBtn = document.createElement('button');
       removeBtn.id = 'remove-btn-' + m.id;
-      removeBtn.className = 'danger';
+      removeBtn.className = 'btn-danger';
       removeBtn.textContent = 'Remove';
       removeBtn.onclick = () => removeMount(m.id);
+      actions.className = 'mount-actions';
       actions.appendChild(toggleBtn);
-      actions.appendChild(document.createTextNode(' '));
       actions.appendChild(removeBtn);
 
       li.appendChild(info);
@@ -134,7 +122,8 @@ async function toggleMount(id) {
 }
 
 async function removeMount(id) {
-  if (!confirm('Remove this mount? This cannot be undone.')) return;
+  const ok = await window.__TAURI__.dialog.confirm('Remove this mount? This cannot be undone.', { title: 'Remove Mount', kind: 'warning' });
+  if (!ok) return;
   const btn = document.getElementById('remove-btn-' + id);
   btn.disabled = true;
   btn.textContent = 'Removing\u2026';
@@ -158,7 +147,8 @@ async function addMount() {
 }
 
 async function signOut() {
-  if (!confirm('Sign out? All mounts will stop.')) return;
+  const ok = await window.__TAURI__.dialog.confirm('Sign out? All mounts will stop.', { title: 'Sign Out', kind: 'warning' });
+  if (!ok) return;
   const btn = document.querySelector('#account button');
   btn.disabled = true;
   btn.textContent = 'Signing out\u2026';
@@ -173,7 +163,7 @@ async function signOut() {
 }
 
 async function clearCache() {
-  const btn = document.querySelector('#advanced .actions button.danger');
+  const btn = document.querySelector('#advanced .actions .btn-danger');
   btn.disabled = true;
   btn.textContent = 'Clearing\u2026';
   try {
