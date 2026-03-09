@@ -895,6 +895,10 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         .cloned()
         .unwrap_or_else(|| tokio::runtime::Handle::current());
 
+    let (event_tx, mut event_rx) =
+        tokio::sync::mpsc::unbounded_channel::<cloudmount_vfs::core_ops::VfsEvent>();
+
+    let rt_events = rt.clone();
     let handle = cloudmount_vfs::CfMountHandle::mount(
         state.graph.clone(),
         mount_cache.clone(),
@@ -903,8 +907,24 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         &std::path::PathBuf::from(&mountpoint),
         rt,
         drive_id.to_string(),
+        Some(event_tx),
     )
     .map_err(|e| e.to_string())?;
+
+    // Spawn a task to forward VFS events to desktop notifications
+    let app_handle = app.clone();
+    rt_events.spawn(async move {
+        while let Some(event) = event_rx.recv().await {
+            match event {
+                cloudmount_vfs::core_ops::VfsEvent::ConflictDetected {
+                    file_name,
+                    conflict_name,
+                } => {
+                    notify::conflict_detected(&app_handle, &file_name, &conflict_name);
+                }
+            }
+        }
+    });
 
     state
         .mount_caches

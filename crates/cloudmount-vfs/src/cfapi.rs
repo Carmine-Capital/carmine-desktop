@@ -15,7 +15,7 @@ use nt_time::FileTime;
 use tokio::runtime::Handle;
 use tokio::task::block_in_place;
 
-use crate::core_ops::CoreOps;
+use crate::core_ops::{CoreOps, VfsEvent};
 use crate::inode::{InodeTable, ROOT_INODE};
 use cloudmount_cache::CacheManager;
 use cloudmount_core::types::DriveItem;
@@ -39,9 +39,14 @@ impl CloudMountCfFilter {
         drive_id: String,
         rt: Handle,
         mount_path: PathBuf,
+        event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
     ) -> Self {
+        let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt);
+        if let Some(tx) = event_tx {
+            ops = ops.with_event_sender(tx);
+        }
         Self {
-            core: CoreOps::new(graph, cache, inodes, drive_id, rt),
+            core: ops,
             mount_path,
         }
     }
@@ -529,6 +534,7 @@ impl CfMountHandle {
         mount_path: &Path,
         rt: Handle,
         account_name: String,
+        event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
     ) -> cloudmount_core::Result<Self> {
         let sync_root_id = build_sync_root_id(&account_name)?;
 
@@ -563,6 +569,7 @@ impl CfMountHandle {
             drive_id.clone(),
             rt.clone(),
             mount_path.to_path_buf(),
+            event_tx,
         );
 
         let connection = Session::new().connect(mount_path, filter).map_err(|e| {
