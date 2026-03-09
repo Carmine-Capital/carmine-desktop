@@ -32,39 +32,66 @@ impl InodeTable {
     }
 
     pub fn allocate(&self, item_id: &str) -> u64 {
-        if let Some(&inode) = self.item_to_inode.read().unwrap().get(item_id) {
+        if let Some(&inode) = self
+            .item_to_inode
+            .read()
+            .expect("inode table lock poisoned")
+            .get(item_id)
+        {
             return inode;
         }
 
         let inode = self.next_inode.fetch_add(1, Ordering::Relaxed);
         self.inode_to_item
             .write()
-            .unwrap()
+            .expect("inode table lock poisoned")
             .insert(inode, item_id.to_string());
         self.item_to_inode
             .write()
-            .unwrap()
+            .expect("inode table lock poisoned")
             .insert(item_id.to_string(), inode);
         inode
     }
 
     pub fn get_item_id(&self, inode: u64) -> Option<String> {
-        self.inode_to_item.read().unwrap().get(&inode).cloned()
+        self.inode_to_item
+            .read()
+            .expect("inode table lock poisoned")
+            .get(&inode)
+            .cloned()
     }
 
     pub fn get_inode(&self, item_id: &str) -> Option<u64> {
-        self.item_to_inode.read().unwrap().get(item_id).copied()
+        self.item_to_inode
+            .read()
+            .expect("inode table lock poisoned")
+            .get(item_id)
+            .copied()
     }
 
     pub fn remove_by_item_id(&self, item_id: &str) {
-        if let Some(inode) = self.item_to_inode.write().unwrap().remove(item_id) {
-            self.inode_to_item.write().unwrap().remove(&inode);
+        if let Some(inode) = self
+            .item_to_inode
+            .write()
+            .expect("inode table lock poisoned")
+            .remove(item_id)
+        {
+            self.inode_to_item
+                .write()
+                .expect("inode table lock poisoned")
+                .remove(&inode);
         }
     }
 
     pub fn reassign(&self, inode: u64, new_item_id: &str) {
-        let mut i2item = self.inode_to_item.write().unwrap();
-        let mut item2i = self.item_to_inode.write().unwrap();
+        let mut i2item = self
+            .inode_to_item
+            .write()
+            .expect("inode table lock poisoned");
+        let mut item2i = self
+            .item_to_inode
+            .write()
+            .expect("inode table lock poisoned");
 
         if let Some(old_item_id) = i2item.get(&inode).cloned() {
             item2i.remove(&old_item_id);
@@ -77,11 +104,11 @@ impl InodeTable {
     pub fn set_root(&self, item_id: &str) {
         self.inode_to_item
             .write()
-            .unwrap()
+            .expect("inode table lock poisoned")
             .insert(ROOT_INODE, item_id.to_string());
         self.item_to_inode
             .write()
-            .unwrap()
+            .expect("inode table lock poisoned")
             .insert(item_id.to_string(), ROOT_INODE);
     }
 }

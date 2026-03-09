@@ -1,4 +1,33 @@
 const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
+
+let _savedValues = {};
+
+function snapshotValues() {
+  _savedValues = {
+    auto_start: document.getElementById('auto-start').checked,
+    notifications: document.getElementById('notifications').checked,
+    sync_interval: document.getElementById('sync-interval').value,
+    cache_dir: document.getElementById('cache-dir').value,
+    cache_max_size: document.getElementById('cache-max-size').value,
+    metadata_ttl: document.getElementById('metadata-ttl').value,
+    log_level: document.getElementById('log-level').value,
+  };
+}
+
+function checkDirty() {
+  const dirty =
+    _savedValues.auto_start !== document.getElementById('auto-start').checked ||
+    _savedValues.notifications !== document.getElementById('notifications').checked ||
+    _savedValues.sync_interval !== document.getElementById('sync-interval').value ||
+    _savedValues.cache_dir !== document.getElementById('cache-dir').value ||
+    _savedValues.cache_max_size !== document.getElementById('cache-max-size').value ||
+    _savedValues.metadata_ttl !== document.getElementById('metadata-ttl').value ||
+    _savedValues.log_level !== document.getElementById('log-level').value;
+
+  const badge = document.getElementById('unsaved-badge');
+  if (badge) badge.style.display = dirty ? 'block' : 'none';
+}
 
 const tabs = Array.from(document.querySelectorAll('.tab'));
 
@@ -51,6 +80,7 @@ async function loadSettings() {
     document.getElementById('metadata-ttl').value = String(s.metadata_ttl_secs);
     document.getElementById('log-level').value = s.log_level;
     document.getElementById('account-email').textContent = s.account_display || 'Not signed in';
+    snapshotValues();
   } catch (e) {
     console.error(e);
     showStatus('Failed to load settings', 'error');
@@ -107,6 +137,11 @@ async function loadMounts() {
 }
 
 async function saveGeneral() {
+  const syncInterval = parseInt(document.getElementById('sync-interval').value);
+  if (isNaN(syncInterval) || syncInterval <= 0) {
+    showStatus('Sync interval must be a positive number', 'error');
+    return;
+  }
   const btn = document.querySelector('#general .actions button');
   btn.disabled = true;
   btn.textContent = 'Saving\u2026';
@@ -114,19 +149,26 @@ async function saveGeneral() {
     await invoke('save_settings', {
       autoStart: document.getElementById('auto-start').checked,
       notifications: document.getElementById('notifications').checked,
-      syncIntervalSecs: parseInt(document.getElementById('sync-interval').value),
+      syncIntervalSecs: syncInterval,
     });
     btn.disabled = false;
     btn.textContent = 'Save';
+    snapshotValues();
+    checkDirty();
     showStatus('Settings saved', 'success');
   } catch (e) {
     btn.disabled = false;
     btn.textContent = 'Save';
-    showStatus(e, 'error');
+    showStatus(formatError(e), 'error');
   }
 }
 
 async function saveAdvanced() {
+  const metadataTtl = parseInt(document.getElementById('metadata-ttl').value);
+  if (isNaN(metadataTtl) || metadataTtl <= 0) {
+    showStatus('Metadata TTL must be a positive number', 'error');
+    return;
+  }
   const btn = document.getElementById('btn-save-advanced');
   btn.disabled = true;
   btn.textContent = 'Saving\u2026';
@@ -134,16 +176,18 @@ async function saveAdvanced() {
     await invoke('save_settings', {
       cacheDir: document.getElementById('cache-dir').value || null,
       cacheMaxSize: document.getElementById('cache-max-size').value,
-      metadataTtlSecs: parseInt(document.getElementById('metadata-ttl').value),
+      metadataTtlSecs: metadataTtl,
       logLevel: document.getElementById('log-level').value,
     });
     btn.disabled = false;
     btn.textContent = 'Save';
+    snapshotValues();
+    checkDirty();
     showStatus('Settings saved', 'success');
   } catch (e) {
     btn.disabled = false;
     btn.textContent = 'Save';
-    showStatus(e, 'error');
+    showStatus(formatError(e), 'error');
   }
 }
 
@@ -159,7 +203,7 @@ async function toggleMount(id) {
   } catch (e) {
     btn.disabled = false;
     btn.textContent = origLabel;
-    showStatus(e, 'error');
+    showStatus(formatError(e), 'error');
   }
 }
 
@@ -176,7 +220,7 @@ async function removeMount(id) {
   } catch (e) {
     btn.disabled = false;
     btn.textContent = 'Remove';
-    showStatus(e, 'error');
+    showStatus(formatError(e), 'error');
   }
 }
 
@@ -184,7 +228,7 @@ async function addMount() {
   try {
     await invoke('open_wizard');
   } catch (e) {
-    showStatus(e.toString(), 'error');
+    showStatus(formatError(e), 'error');
   }
 }
 
@@ -196,11 +240,13 @@ async function signOut() {
   btn.textContent = 'Signing out\u2026';
   try {
     await invoke('sign_out');
+    btn.disabled = false;
+    btn.textContent = 'Sign Out';
     showStatus('Signed out', 'success');
   } catch (e) {
     btn.disabled = false;
     btn.textContent = 'Sign Out';
-    showStatus(e, 'error');
+    showStatus(formatError(e), 'error');
   }
 }
 
@@ -216,15 +262,25 @@ async function clearCache() {
   } catch (e) {
     btn.disabled = false;
     btn.textContent = 'Clear Cache';
-    showStatus('Failed to clear cache: ' + e, 'error');
+    showStatus('Failed to clear cache: ' + formatError(e), 'error');
   }
 }
 
-loadSettings();
-loadMounts();
+loadSettings().catch(e => showStatus(formatError(e), 'error'));
+loadMounts().catch(e => showStatus(formatError(e), 'error'));
 
 document.getElementById('btn-save-general').addEventListener('click', saveGeneral);
 document.getElementById('btn-save-advanced').addEventListener('click', saveAdvanced);
 document.getElementById('btn-add-mount').addEventListener('click', addMount);
 document.getElementById('btn-sign-out').addEventListener('click', signOut);
 document.getElementById('btn-clear-cache').addEventListener('click', clearCache);
+
+['auto-start', 'notifications', 'sync-interval', 'log-level'].forEach(id =>
+  document.getElementById(id).addEventListener('change', checkDirty));
+['cache-dir', 'cache-max-size', 'metadata-ttl'].forEach(id =>
+  document.getElementById(id).addEventListener('input', checkDirty));
+
+listen('refresh-settings', () => {
+  loadSettings();
+  loadMounts();
+});

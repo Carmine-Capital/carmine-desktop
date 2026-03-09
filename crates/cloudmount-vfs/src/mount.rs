@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tokio::runtime::Handle;
 
+use crate::core_ops::VfsEvent;
 use crate::fuse_fs::CloudMountFs;
 use crate::inode::{InodeTable, ROOT_INODE};
 use cloudmount_cache::CacheManager;
@@ -17,9 +18,9 @@ pub fn cleanup_stale_mount(path: &str) -> bool {
         Ok(_) => true, // Path exists and is accessible — not stale
         Err(e) => {
             let raw = e.raw_os_error();
-            // ENOTCONN (107) = "Transport endpoint is not connected"
-            // EIO (5) = "Input/output error"
-            if raw == Some(107) || raw == Some(5) {
+            // ENOTCONN = "Transport endpoint is not connected"
+            // EIO = "Input/output error"
+            if raw == Some(libc::ENOTCONN) || raw == Some(libc::EIO) {
                 tracing::warn!(
                     "stale FUSE mount detected at {path} (errno {:?}), attempting cleanup",
                     raw.unwrap()
@@ -92,6 +93,7 @@ impl MountHandle {
         drive_id: String,
         mountpoint: &str,
         rt: Handle,
+        event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
     ) -> cloudmount_core::Result<Self> {
         let root_item =
             tokio::task::block_in_place(|| rt.block_on(graph.get_item(&drive_id, "root")))
@@ -115,6 +117,7 @@ impl MountHandle {
             inodes.clone(),
             drive_id.clone(),
             rt.clone(),
+            event_tx.clone(),
         );
 
         let session = match fs.mount(mountpoint, true) {
@@ -127,6 +130,7 @@ impl MountHandle {
                     inodes,
                     drive_id.clone(),
                     rt.clone(),
+                    event_tx,
                 );
                 fs.mount(mountpoint, false)?
             }

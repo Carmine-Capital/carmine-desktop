@@ -19,7 +19,7 @@ use crate::core_ops::CoreOps;
 use crate::inode::{InodeTable, ROOT_INODE};
 use cloudmount_cache::CacheManager;
 use cloudmount_core::types::DriveItem;
-use cloudmount_graph::GraphClient;
+use cloudmount_graph::{GraphClient, SMALL_FILE_LIMIT};
 
 const PROVIDER_NAME: &str = "CloudMount";
 const PROVIDER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -276,22 +276,52 @@ impl SyncFilter for CloudMountCfFilter {
         }
 
         let abs_path = request.path();
-        let disk_content = match std::fs::read(&abs_path) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-
         let item_id = match self.core.inodes().get_item_id(ino) {
             Some(id) => id,
             None => return,
         };
 
         let drive_id = self.core.drive_id();
-        let _ = self.core.rt().block_on(self.core.cache().writeback.write(
-            drive_id,
-            &item_id,
-            &disk_content,
-        ));
+
+        // For large files, use chunked reading to avoid loading everything into memory.
+        // SMALL_FILE_LIMIT (4MB) is the same threshold used for simple vs session upload.
+        let file_size = match std::fs::metadata(&abs_path) {
+            Ok(m) => m.len(),
+            Err(_) => return,
+        };
+
+        if file_size <= SMALL_FILE_LIMIT as u64 {
+            let disk_content = match std::fs::read(&abs_path) {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+            let _ = self.core.rt().block_on(self.core.cache().writeback.write(
+                drive_id,
+                &item_id,
+                &disk_content,
+            ));
+        } else {
+            use std::io::Read;
+            let file = match std::fs::File::open(&abs_path) {
+                Ok(f) => f,
+                Err(_) => return,
+            };
+            let mut reader = std::io::BufReader::with_capacity(SMALL_FILE_LIMIT, file);
+            let mut buf = vec![0u8; SMALL_FILE_LIMIT];
+            let mut all_content = Vec::with_capacity(file_size as usize);
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => all_content.extend_from_slice(&buf[..n]),
+                    Err(_) => return,
+                }
+            }
+            let _ = self.core.rt().block_on(self.core.cache().writeback.write(
+                drive_id,
+                &item_id,
+                &all_content,
+            ));
+        }
 
         self.mark_placeholder_pending(&abs_path);
 
@@ -408,6 +438,11 @@ impl SyncFilter for CloudMountCfFilter {
     fn state_changed(&self, changes: Vec<PathBuf>) {
         for path in &changes {
             tracing::debug!("state changed: {}", path.display());
+            if let Some(rel_path) = self.relative_path(path) {
+                if let Some((ino, _)) = self.core.resolve_path(&rel_path) {
+                    self.core.cache().memory.invalidate(ino);
+                }
+            }
         }
     }
 }

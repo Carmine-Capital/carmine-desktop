@@ -19,6 +19,7 @@ struct AuthState {
     access_token: Option<String>,
     refresh_token: Option<String>,
     expires_at: Option<DateTime<Utc>>,
+    account_id: Option<String>,
 }
 
 impl AuthManager {
@@ -40,6 +41,24 @@ impl AuthManager {
         }
     }
 
+    /// Set the account_id for token storage. Call after discovering the user
+    /// identity (e.g., from Graph API) so that subsequent store/delete
+    /// operations use the correct identifier.
+    pub async fn set_account_id(&self, id: &str) {
+        let mut state = self.state.write().await;
+        state.account_id = Some(id.to_string());
+    }
+
+    /// Returns the storage key for token operations: account_id if set,
+    /// otherwise falls back to client_id for backward compatibility.
+    async fn storage_key(&self) -> String {
+        let state = self.state.read().await;
+        state
+            .account_id
+            .clone()
+            .unwrap_or_else(|| self.client_id.clone())
+    }
+
     pub async fn access_token(&self) -> cloudmount_core::Result<String> {
         let state = self.state.read().await;
         if let Some(ref token) = state.access_token
@@ -54,8 +73,8 @@ impl AuthManager {
         self.refresh().await
     }
 
-    pub async fn try_restore(&self, _account_id: &str) -> cloudmount_core::Result<bool> {
-        let tokens = match crate::storage::load_tokens(&self.client_id)? {
+    pub async fn try_restore(&self, account_id: &str) -> cloudmount_core::Result<bool> {
+        let tokens = match crate::storage::load_tokens(account_id)? {
             Some(t) => t,
             None => return Ok(false),
         };
@@ -64,6 +83,7 @@ impl AuthManager {
         state.access_token = Some(tokens.access_token.clone());
         state.refresh_token = Some(tokens.refresh_token.clone());
         state.expires_at = Some(tokens.expires_at);
+        state.account_id = Some(account_id.to_string());
         drop(state);
 
         let buffer = chrono::Duration::minutes(5);
@@ -102,12 +122,15 @@ impl AuthManager {
     }
 
     pub async fn sign_out(&self) -> cloudmount_core::Result<()> {
+        let storage_key = self.storage_key().await;
+
         let mut state = self.state.write().await;
         state.access_token = None;
         state.refresh_token = None;
         state.expires_at = None;
+        state.account_id = None;
 
-        if let Err(e) = crate::storage::delete_tokens(&self.client_id) {
+        if let Err(e) = crate::storage::delete_tokens(&storage_key) {
             tracing::warn!("failed to delete stored tokens: {e}");
         }
 
@@ -148,12 +171,14 @@ impl AuthManager {
         )
         .await?;
 
+        let storage_key = self.storage_key().await;
+
         let mut state = self.state.write().await;
         state.access_token = Some(tokens.access_token.clone());
         state.refresh_token = Some(tokens.refresh_token.clone());
         state.expires_at = Some(tokens.expires_at);
 
-        crate::storage::store_tokens(&self.client_id, &tokens)?;
+        crate::storage::store_tokens(&storage_key, &tokens)?;
 
         Ok(())
     }
@@ -171,13 +196,15 @@ impl AuthManager {
             crate::oauth::refresh_token(&self.client_id, self.tenant_id.as_deref(), &refresh_token)
                 .await?;
 
+        let storage_key = self.storage_key().await;
+
         let access = tokens.access_token.clone();
         let mut state = self.state.write().await;
         state.access_token = Some(tokens.access_token.clone());
         state.refresh_token = Some(tokens.refresh_token.clone());
         state.expires_at = Some(tokens.expires_at);
 
-        crate::storage::store_tokens(&self.client_id, &tokens)?;
+        crate::storage::store_tokens(&storage_key, &tokens)?;
 
         Ok(access)
     }

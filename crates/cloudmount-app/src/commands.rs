@@ -126,6 +126,9 @@ async fn complete_sign_in(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     tracing::info!("discovered OneDrive: {} ({})", drive.name, drive.id);
 
+    // Set account_id on AuthManager so subsequent store/delete use the correct key
+    state.auth.set_account_id(&drive.id).await;
+
     {
         let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
 
@@ -138,8 +141,9 @@ async fn complete_sign_in(app: &AppHandle) -> Result<(), String> {
             });
         }
 
+        let cfg_path = config_file_path().map_err(|e| e.to_string())?;
         user_config
-            .save_to_file(&config_file_path())
+            .save_to_file(&cfg_path)
             .map_err(|e| e.to_string())?;
     }
 
@@ -182,9 +186,17 @@ pub async fn sign_out(app: AppHandle) -> Result<(), String> {
     match state.user_config.lock() {
         Ok(mut user_config) => {
             user_config.accounts.clear();
-            if let Err(e) = user_config.save_to_file(&config_file_path()) {
-                tracing::error!("failed to save config after sign-out: {e}");
-                errors.push(e.to_string());
+            match config_file_path() {
+                Ok(cfg_path) => {
+                    if let Err(e) = user_config.save_to_file(&cfg_path) {
+                        tracing::error!("failed to save config after sign-out: {e}");
+                        errors.push(e.to_string());
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("config path unavailable: {e}");
+                    errors.push(e.to_string());
+                }
             }
         }
         Err(e) => {
@@ -283,8 +295,9 @@ pub fn add_mount(
             .map(|m| m.id.clone())
             .ok_or_else(|| "mount was not saved".to_string())?;
 
+        let cfg_path = config_file_path().map_err(|e| e.to_string())?;
         user_config
-            .save_to_file(&config_file_path())
+            .save_to_file(&cfg_path)
             .map_err(|e| e.to_string())?;
     }
 
@@ -314,8 +327,9 @@ pub fn remove_mount(app: AppHandle, id: String) -> Result<bool, String> {
 
     let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
     let removed = user_config.remove_mount(&id);
+    let cfg_path = config_file_path().map_err(|e| e.to_string())?;
     user_config
-        .save_to_file(&config_file_path())
+        .save_to_file(&cfg_path)
         .map_err(|e| e.to_string())?;
     drop(user_config);
 
@@ -329,8 +343,9 @@ pub fn toggle_mount(app: AppHandle, id: String) -> Result<Option<bool>, String> 
     let state = app.state::<AppState>();
     let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
     let result = user_config.toggle_mount(&id);
+    let cfg_path = config_file_path().map_err(|e| e.to_string())?;
     user_config
-        .save_to_file(&config_file_path())
+        .save_to_file(&cfg_path)
         .map_err(|e| e.to_string())?;
     drop(user_config);
 
@@ -422,8 +437,9 @@ pub fn save_settings(
             general.root_dir = Some(v);
         }
 
+        let cfg_path = config_file_path().map_err(|e| e.to_string())?;
         user_config
-            .save_to_file(&config_file_path())
+            .save_to_file(&cfg_path)
             .map_err(|e| e.to_string())?;
     }
 
@@ -589,6 +605,25 @@ pub async fn get_followed_sites(app: AppHandle) -> Result<Vec<SiteInfo>, String>
 #[tauri::command]
 pub async fn complete_wizard(_app: AppHandle) -> Result<(), String> {
     Ok(())
+}
+
+#[tauri::command]
+pub fn check_fuse_available() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        crate::fuse_available()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        true // Windows uses CfApi, always available after preflight
+    }
+}
+
+#[tauri::command]
+pub fn get_default_mount_root(app: AppHandle) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+    Ok(expand_mount_point(&format!("~/{}/", config.root_dir)))
 }
 
 fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {

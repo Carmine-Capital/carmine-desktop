@@ -28,7 +28,7 @@ impl CacheManager {
 
         let sqlite = SqliteStore::open(&db_path)?;
         let memory = MemoryCache::new(ttl_secs);
-        let disk = DiskCache::new(cache_dir.join("content"), max_cache_bytes, &db_path);
+        let disk = DiskCache::new(cache_dir.join("content"), max_cache_bytes, &db_path)?;
         let writeback = WriteBackBuffer::new(cache_dir);
 
         Ok(Self {

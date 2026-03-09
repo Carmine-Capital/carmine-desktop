@@ -7,6 +7,24 @@ use url::Url;
 
 const SCOPES: &str = "User.Read Files.ReadWrite.All Sites.Read.All offline_access";
 
+/// Minimal styled HTML prefix for the OAuth callback page shown in the browser.
+const CALLBACK_HTML_PREFIX: &str = concat!(
+    "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">",
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+    "<title>CloudMount</title>",
+    "<style>",
+    "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;",
+    "background:#0f1117;color:#e4e4e7}",
+    ".card{text-align:center;padding:3rem;border-radius:12px;",
+    "background:#1a1b23;border:1px solid #2a2b35;max-width:400px}",
+    "h1{margin:0 0 .5rem;font-size:1.5rem;color:#fff}",
+    ".subtitle{color:#a1a1aa;margin:0;line-height:1.5}",
+    ".brand{font-size:.85rem;color:#71717a;margin-bottom:1.5rem}",
+    "</style></head><body><div class=\"card\">",
+    "<div class=\"brand\">CloudMount</div>",
+);
+
 pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: String,
@@ -135,8 +153,8 @@ async fn wait_for_callback(
                     let _ = tx.send(String::new());
                 }
                 let body = format!(
-                    "<html><body><h2>Authentication Failed</h2><p>{}: {desc}</p></body></html>",
-                    error.1
+                    "{}<h1>Authentication Failed</h1><p class=\"subtitle\">{}: {desc}</p></div></body></html>",
+                    CALLBACK_HTML_PREFIX, error.1
                 );
                 return Ok::<_, hyper::Error>(
                     Response::builder()
@@ -156,7 +174,10 @@ async fn wait_for_callback(
                 let _ = tx.send(code);
             }
 
-            let body = "<html><body><h2>Authentication Successful</h2><p>You can close this window.</p></body></html>";
+            let body = format!(
+                "{}<h1>Signed In</h1><p class=\"subtitle\">You can close this tab and return to CloudMount.</p></div></body></html>",
+                CALLBACK_HTML_PREFIX
+            );
             Ok(Response::builder()
                 .header("Content-Type", "text/html")
                 .body(Full::new(Bytes::from(body)))

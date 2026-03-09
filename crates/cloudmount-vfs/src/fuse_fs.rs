@@ -10,7 +10,7 @@ use fuser::{
 };
 use tokio::runtime::Handle;
 
-use crate::core_ops::{CoreOps, VfsError};
+use crate::core_ops::{CoreOps, VfsError, VfsEvent};
 use crate::inode::InodeTable;
 use cloudmount_cache::CacheManager;
 use cloudmount_core::types::DriveItem;
@@ -33,14 +33,15 @@ impl CloudMountFs {
         inodes: Arc<InodeTable>,
         drive_id: String,
         rt: Handle,
+        event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
     ) -> Self {
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
-        Self {
-            ops: CoreOps::new(graph, cache, inodes, drive_id, rt),
-            uid,
-            gid,
+        let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt);
+        if let Some(tx) = event_tx {
+            ops = ops.with_event_sender(tx);
         }
+        Self { ops, uid, gid }
     }
 
     pub fn mount(
@@ -123,6 +124,9 @@ impl CloudMountFs {
             VfsError::NotFound => Errno::ENOENT,
             VfsError::NotADirectory => Errno::ENOTDIR,
             VfsError::DirectoryNotEmpty => Errno::ENOTEMPTY,
+            VfsError::PermissionDenied => Errno::EACCES,
+            VfsError::TimedOut => Errno::ETIMEDOUT,
+            VfsError::QuotaExceeded => Errno::ENOSPC,
             VfsError::IoError(_) => Errno::EIO,
         }
     }
@@ -431,10 +435,19 @@ impl Filesystem for CloudMountFs {
     }
 
     fn statfs(&self, _req: &Request, _ino: INodeNo, reply: ReplyStatfs) {
-        // Report large free space; real quota could be fetched from Drive.quota in the future
-        let blocks = 1 << 30; // ~1 PB at 1K blocks
-        let bfree = blocks;
-        let bavail = blocks;
+        let (blocks, bfree, bavail) = match self.ops.get_quota() {
+            Some(quota) => {
+                let total = quota.total.unwrap_or(0).max(0) as u64;
+                let remaining = quota.remaining.unwrap_or(total as i64).max(0) as u64;
+                let blk = total / BLOCK_SIZE as u64;
+                let free = remaining / BLOCK_SIZE as u64;
+                (blk, free, free)
+            }
+            None => {
+                let fallback = 1u64 << 30;
+                (fallback, fallback, fallback)
+            }
+        };
         reply.statfs(blocks, bfree, bavail, 0, 0, BLOCK_SIZE, 255, BLOCK_SIZE);
     }
 

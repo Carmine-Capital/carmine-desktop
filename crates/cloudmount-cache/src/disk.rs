@@ -12,10 +12,20 @@ pub struct DiskCache {
 }
 
 impl DiskCache {
-    pub fn new(base_dir: PathBuf, max_size_bytes: u64, db_path: &Path) -> Self {
-        let conn = Connection::open(db_path).expect("failed to open cache tracker db");
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
-            .expect("failed to set tracker pragmas");
+    pub fn new(
+        base_dir: PathBuf,
+        max_size_bytes: u64,
+        db_path: &Path,
+    ) -> cloudmount_core::Result<Self> {
+        let conn = Connection::open(db_path).map_err(|e| {
+            cloudmount_core::Error::Cache(format!("failed to open cache tracker db: {e}"))
+        })?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout = 5000;",
+        )
+        .map_err(|e| {
+            cloudmount_core::Error::Cache(format!("failed to set tracker pragmas: {e}"))
+        })?;
 
         // Migrate: if cache_entries was created with incompatible schema (cache_path NOT NULL),
         // drop and recreate. Tracker data is unreliable from those installs anyway.
@@ -41,16 +51,18 @@ impl DiskCache {
                 PRIMARY KEY (drive_id, item_id)
             );",
         )
-        .expect("failed to create cache_entries table");
+        .map_err(|e| {
+            cloudmount_core::Error::Cache(format!("failed to create cache_entries table: {e}"))
+        })?;
 
         // Migration: add etag column for DBs created with old schema
         let _ = conn.execute_batch("ALTER TABLE cache_entries ADD COLUMN etag TEXT");
 
-        Self {
+        Ok(Self {
             base_dir,
             max_size_bytes: AtomicU64::new(max_size_bytes),
             tracker: Mutex::new(conn),
-        }
+        })
     }
 
     fn content_path(&self, drive_id: &str, item_id: &str) -> PathBuf {
@@ -106,9 +118,13 @@ impl DiskCache {
                 .await
                 .map_err(|e| cloudmount_core::Error::Cache(format!("mkdir failed: {e}")))?;
         }
-        fs::write(&path, content)
+        let tmp_path = path.with_extension("tmp");
+        fs::write(&tmp_path, content)
             .await
             .map_err(|e| cloudmount_core::Error::Cache(format!("write cache failed: {e}")))?;
+        fs::rename(&tmp_path, &path)
+            .await
+            .map_err(|e| cloudmount_core::Error::Cache(format!("rename cache failed: {e}")))?;
 
         let file_size = content.len() as i64;
         if let Ok(conn) = self.tracker.lock() {
@@ -130,10 +146,14 @@ impl DiskCache {
 
     pub async fn remove(&self, drive_id: &str, item_id: &str) -> cloudmount_core::Result<()> {
         let path = self.content_path(drive_id, item_id);
-        if path.exists() {
-            fs::remove_file(&path)
-                .await
-                .map_err(|e| cloudmount_core::Error::Cache(format!("remove cache failed: {e}")))?;
+        match fs::remove_file(&path).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(cloudmount_core::Error::Cache(format!(
+                    "remove cache failed: {e}"
+                )));
+            }
         }
         if let Ok(conn) = self.tracker.lock() {
             let _ = conn.execute(
@@ -145,13 +165,18 @@ impl DiskCache {
     }
 
     pub async fn clear(&self) -> cloudmount_core::Result<()> {
-        if self.base_dir.exists() {
-            fs::remove_dir_all(&self.base_dir)
-                .await
-                .map_err(|e| cloudmount_core::Error::Cache(format!("clear cache failed: {e}")))?;
-            fs::create_dir_all(&self.base_dir).await.map_err(|e| {
-                cloudmount_core::Error::Cache(format!("recreate cache dir failed: {e}"))
-            })?;
+        match fs::remove_dir_all(&self.base_dir).await {
+            Ok(()) => {
+                fs::create_dir_all(&self.base_dir).await.map_err(|e| {
+                    cloudmount_core::Error::Cache(format!("recreate cache dir failed: {e}"))
+                })?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(cloudmount_core::Error::Cache(format!(
+                    "clear cache failed: {e}"
+                )));
+            }
         }
         if let Ok(conn) = self.tracker.lock() {
             let _ = conn.execute("DELETE FROM cache_entries", []);
@@ -231,9 +256,7 @@ impl DiskCache {
                 break;
             }
             let path = self.content_path(&drive_id, &item_id);
-            if path.exists() {
-                let _ = fs::remove_file(&path).await;
-            }
+            let _ = fs::remove_file(&path).await;
             if let Ok(conn) = self.tracker.lock() {
                 let _ = conn.execute(
                     "DELETE FROM cache_entries WHERE drive_id = ?1 AND item_id = ?2",

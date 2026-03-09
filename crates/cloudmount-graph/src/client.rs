@@ -122,6 +122,12 @@ impl GraphClient {
         self.get_json(&format!("{base_url}/me/drive")).await
     }
 
+    pub async fn get_drive(&self, drive_id: &str) -> cloudmount_core::Result<Drive> {
+        let base_url = &self.base_url;
+        self.get_json(&format!("{base_url}/drives/{drive_id}"))
+            .await
+    }
+
     /// Single-attempt check that a drive exists. No retry — 404/403 are definitive.
     pub async fn check_drive_exists(&self, drive_id: &str) -> cloudmount_core::Result<()> {
         let base_url = &self.base_url;

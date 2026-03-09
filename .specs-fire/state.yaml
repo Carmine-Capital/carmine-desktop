@@ -269,9 +269,119 @@ intents:
         depends_on: []
         run_id: run-cloud-mount-011
         completed_at: 2026-03-09T17:36:44.931Z
+  - id: fix-comprehensive-review
+    title: Fix Comprehensive Review Findings
+    status: completed
+    work_items:
+      - id: fix-vfs-data-safety
+        title: Fix VFS data-loss paths (conflict, flush, buffer, crash recovery)
+        complexity: high
+        mode: validate
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-016
+        completed_at: 2026-03-09T19:42:01.676Z
+      - id: fix-vfs-cross-platform
+        title: Fix VFS cross-platform bugs (errno, case-insensitive, CfApi)
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-013
+        completed_at: 2026-03-09T19:18:09.376Z
+      - id: fix-cache-reliability
+        title: Fix cache reliability (set_interval, DiskCache panic, atomic writes)
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-012
+        completed_at: 2026-03-09T19:19:25.110Z
+      - id: fix-auth-security
+        title: Harden auth (token perms, account_id, try_restore, machine_password)
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-014
+        completed_at: 2026-03-09T19:19:35.757Z
+      - id: fix-ci-build-quality
+        title: CI clippy all platforms, workspace deps, test portability
+        complexity: low
+        mode: autopilot
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-015
+        completed_at: 2026-03-09T19:09:36.620Z
+      - id: fix-frontend-errors
+        title: Error handling — friendly messages, init catch, loading states,
+          validation
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-017
+        completed_at: 2026-03-09T19:19:35.168Z
+      - id: fix-frontend-accessibility
+        title: Focus indicators, select arrow, aria-labels, contrast, overflow
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-018
+        completed_at: 2026-03-09T19:26:47.364Z
+      - id: fix-tray-notifications
+        title: Fix dead tray items, notification click actions, win.eval to events
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-019
+        completed_at: 2026-03-09T19:25:03.465Z
+      - id: fix-vfs-ux
+        title: Conflict notification+naming, statfs quota, error mapping, copy blocking
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on:
+          - fix-vfs-data-safety
+        run_id: run-cloud-mount-023
+        completed_at: 2026-03-09T20:15:00.000Z
+      - id: fix-wizard-ux
+        title: Sanitize paths, back navigation, FUSE pre-check, auth timeout UX
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-020
+        completed_at: 2026-03-09T19:32:14.891Z
+      - id: fix-headless-windows
+        title: Skip empty delta-sync, don't create unused dirs, parse_cache_size cleanup
+        complexity: low
+        mode: autopilot
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-021
+        completed_at: 2026-03-09T19:31:18.537Z
+      - id: ux-info-polish
+        title: OAuth page, wizard success, dirty-state, empty states, docs
+        complexity: low
+        mode: autopilot
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-022
+        completed_at: 2026-03-09T19:31:02.228Z
 runs:
   active: []
   completed:
+    - id: run-cloud-mount-023
+      scope: single
+      work_items:
+        - id: fix-vfs-ux
+          intent: fix-comprehensive-review
+          mode: confirm
+      started: 2026-03-09T19:48:49.697Z
+      completed: 2026-03-09T20:15:00.000Z
     - id: run-cloud-mount-001
       scope: single
       work_items:
@@ -396,3 +506,91 @@ runs:
           mode: confirm
       started: 2026-03-09T17:08:40.754Z
       completed: 2026-03-09T17:36:44.931Z
+    - id: run-cloud-mount-015
+      scope: single
+      work_items:
+        - id: fix-ci-build-quality
+          intent: fix-comprehensive-review
+          mode: autopilot
+      started: 2026-03-09T19:05:39.021Z
+      completed: 2026-03-09T19:09:36.620Z
+    - id: run-cloud-mount-013
+      scope: single
+      work_items:
+        - id: fix-vfs-cross-platform
+          intent: fix-comprehensive-review
+          mode: confirm
+      started: 2026-03-09T19:03:19.916Z
+      completed: 2026-03-09T19:18:09.376Z
+    - id: run-cloud-mount-012
+      scope: single
+      work_items:
+        - id: fix-cache-reliability
+          intent: fix-comprehensive-review
+          mode: confirm
+      started: 2026-03-09T19:03:10.030Z
+      completed: 2026-03-09T19:19:25.110Z
+    - id: run-cloud-mount-017
+      scope: single
+      work_items:
+        - id: fix-frontend-errors
+          intent: fix-comprehensive-review
+          mode: confirm
+      started: 2026-03-09T19:15:05.090Z
+      completed: 2026-03-09T19:19:35.168Z
+    - id: run-cloud-mount-014
+      scope: single
+      work_items:
+        - id: fix-auth-security
+          intent: fix-comprehensive-review
+          mode: confirm
+      started: 2026-03-09T19:05:19.971Z
+      completed: 2026-03-09T19:19:35.757Z
+    - id: run-cloud-mount-019
+      scope: single
+      work_items:
+        - id: fix-tray-notifications
+          intent: fix-comprehensive-review
+          mode: confirm
+      started: 2026-03-09T19:20:39.873Z
+      completed: 2026-03-09T19:25:03.465Z
+    - id: run-cloud-mount-018
+      scope: single
+      work_items:
+        - id: fix-frontend-accessibility
+          intent: fix-comprehensive-review
+          mode: confirm
+      started: 2026-03-09T19:16:16.397Z
+      completed: 2026-03-09T19:26:47.364Z
+    - id: run-cloud-mount-022
+      scope: single
+      work_items:
+        - id: ux-info-polish
+          intent: fix-comprehensive-review
+          mode: autopilot
+      started: 2026-03-09T19:26:14.709Z
+      completed: 2026-03-09T19:31:02.228Z
+    - id: run-cloud-mount-021
+      scope: single
+      work_items:
+        - id: fix-headless-windows
+          intent: fix-comprehensive-review
+          mode: autopilot
+      started: 2026-03-09T19:25:52.386Z
+      completed: 2026-03-09T19:31:18.537Z
+    - id: run-cloud-mount-020
+      scope: single
+      work_items:
+        - id: fix-wizard-ux
+          intent: fix-comprehensive-review
+          mode: confirm
+      started: 2026-03-09T19:25:47.776Z
+      completed: 2026-03-09T19:32:14.891Z
+    - id: run-cloud-mount-016
+      scope: single
+      work_items:
+        - id: fix-vfs-data-safety
+          intent: fix-comprehensive-review
+          mode: validate
+      started: 2026-03-09T19:13:17.374Z
+      completed: 2026-03-09T19:42:01.676Z

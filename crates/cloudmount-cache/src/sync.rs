@@ -11,7 +11,7 @@ use cloudmount_graph::GraphClient;
 pub struct DeltaSyncTimer {
     cancel: CancellationToken,
     handle: Option<JoinHandle<()>>,
-    interval_secs: AtomicU64,
+    interval_secs: Arc<AtomicU64>,
 }
 
 impl DeltaSyncTimer {
@@ -24,11 +24,12 @@ impl DeltaSyncTimer {
     ) -> Self {
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
-        let interval = AtomicU64::new(interval_secs);
+        let interval = Arc::new(AtomicU64::new(interval_secs));
+        let interval_clone = interval.clone();
 
         let handle = tokio::spawn(async move {
             loop {
-                let wait = Duration::from_secs(interval_secs);
+                let wait = Duration::from_secs(interval_clone.load(Ordering::Relaxed));
                 tokio::select! {
                     _ = cancel_clone.cancelled() => break,
                     _ = tokio::time::sleep(wait) => {}

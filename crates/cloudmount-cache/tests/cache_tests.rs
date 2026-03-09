@@ -352,7 +352,7 @@ async fn test_disk_cache_put_get_roundtrip() -> cloudmount_core::Result<()> {
     let _ = std::fs::remove_dir_all(&cache_dir);
     std::fs::create_dir_all(&cache_dir)?;
 
-    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
+    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path)?;
     let content = b"test file content";
 
     cache.put("drive1", "item1", content, None).await?;
@@ -371,7 +371,7 @@ async fn test_disk_cache_remove() -> cloudmount_core::Result<()> {
     let _ = std::fs::remove_dir_all(&cache_dir);
     std::fs::create_dir_all(&cache_dir)?;
 
-    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
+    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path)?;
     let content = b"test file content";
 
     cache.put("drive1", "item1", content, None).await?;
@@ -390,7 +390,7 @@ async fn test_disk_cache_clear() -> cloudmount_core::Result<()> {
     let _ = std::fs::remove_dir_all(&cache_dir);
     std::fs::create_dir_all(&cache_dir)?;
 
-    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
+    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path)?;
 
     cache.put("drive1", "item1", b"content1", None).await?;
     cache.put("drive1", "item2", b"content2", None).await?;
@@ -411,7 +411,7 @@ async fn test_disk_cache_total_size() -> cloudmount_core::Result<()> {
     let _ = std::fs::remove_dir_all(&cache_dir);
     std::fs::create_dir_all(&cache_dir)?;
 
-    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
+    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path)?;
 
     cache.put("drive1", "item1", b"12345", None).await?;
     cache.put("drive1", "item2", b"1234567890", None).await?;
@@ -429,7 +429,7 @@ async fn test_disk_cache_lru_eviction() -> cloudmount_core::Result<()> {
     let _ = std::fs::remove_dir_all(&cache_dir);
     std::fs::create_dir_all(&cache_dir)?;
 
-    let cache = DiskCache::new(cache_dir.join("content"), 50, &db_path);
+    let cache = DiskCache::new(cache_dir.join("content"), 50, &db_path)?;
 
     cache
         .put("drive1", "item1", b"12345678901234567890", None)
@@ -515,6 +515,71 @@ async fn test_writeback_list_pending() -> cloudmount_core::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_writeback_write_persists_to_disk_immediately() -> cloudmount_core::Result<()> {
+    let cache_dir = std::env::temp_dir().join("test_writeback_persist_on_write");
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    std::fs::create_dir_all(&cache_dir)?;
+
+    let buffer = WriteBackBuffer::new(cache_dir.clone());
+    let content = b"crash-safe content";
+
+    // write() should persist to disk immediately (Fix 5)
+    buffer.write("drive1", "item1", content).await?;
+
+    // Verify the file exists on disk without calling persist() explicitly
+    let pending_path = cache_dir.join("pending").join("drive1").join("item1");
+    assert!(
+        pending_path.exists(),
+        "write() should persist to disk immediately for crash safety"
+    );
+
+    // Verify content matches
+    let disk_content = tokio::fs::read(&pending_path).await?;
+    assert_eq!(disk_content, content);
+
+    // A new buffer instance (simulating restart) should be able to read the content
+    let buffer2 = WriteBackBuffer::new(cache_dir);
+    let recovered = buffer2.read("drive1", "item1").await;
+    assert!(
+        recovered.is_some(),
+        "content should survive process restart"
+    );
+    assert_eq!(recovered.unwrap(), content);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_writeback_local_colon_id_roundtrips() -> cloudmount_core::Result<()> {
+    let cache_dir = std::env::temp_dir().join("test_writeback_colon_id");
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    std::fs::create_dir_all(&cache_dir)?;
+
+    let buffer = WriteBackBuffer::new(cache_dir.clone());
+    let content = b"local file content";
+    let local_id = "local:1709913612345678";
+
+    // Write with a colon-containing item_id (illegal filename char on Windows)
+    buffer.write("drive1", local_id, content).await?;
+
+    // list_pending should return the original unsanitized item_id
+    let pending = buffer.list_pending().await?;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0], ("drive1".to_string(), local_id.to_string()));
+
+    // read should find the content by original item_id
+    let data = buffer.read("drive1", local_id).await;
+    assert_eq!(data.as_deref(), Some(content.as_slice()));
+
+    // remove should work by original item_id
+    buffer.remove("drive1", local_id).await?;
+    let pending = buffer.list_pending().await?;
+    assert!(pending.is_empty());
+
+    Ok(())
+}
+
 // ============================================================================
 // DISK CACHE ETAG TRACKING TESTS
 // ============================================================================
@@ -526,7 +591,7 @@ async fn test_disk_cache_put_with_etag_get_with_etag_returns_it() -> cloudmount_
     let _ = std::fs::remove_dir_all(&cache_dir);
     std::fs::create_dir_all(&cache_dir)?;
 
-    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
+    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path)?;
     let content = b"test file content";
 
     cache
@@ -550,7 +615,7 @@ async fn test_disk_cache_put_without_etag_get_with_etag_returns_none() -> cloudm
     let _ = std::fs::remove_dir_all(&cache_dir);
     std::fs::create_dir_all(&cache_dir)?;
 
-    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
+    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path)?;
 
     cache.put("drive1", "item1", b"content", None).await?;
     let result = cache.get_with_etag("drive1", "item1").await;
@@ -569,7 +634,7 @@ async fn test_disk_cache_etag_updated_on_reput() -> cloudmount_core::Result<()> 
     let _ = std::fs::remove_dir_all(&cache_dir);
     std::fs::create_dir_all(&cache_dir)?;
 
-    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
+    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path)?;
 
     cache.put("drive1", "item1", b"v1", Some("etag-1")).await?;
     cache.put("drive1", "item1", b"v2", Some("etag-2")).await?;
@@ -612,7 +677,7 @@ async fn test_disk_cache_schema_migration_adds_etag_column() -> cloudmount_core:
     }
 
     // Open DiskCache which should migrate
-    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path);
+    let cache = DiskCache::new(cache_dir.join("content"), 1_000_000, &db_path)?;
 
     // Should be able to put with etag and get it back
     cache

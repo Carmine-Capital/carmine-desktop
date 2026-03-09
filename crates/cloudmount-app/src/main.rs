@@ -75,9 +75,73 @@ type SyncSnapshotRow = (String, String, String, Arc<CacheManager>, Arc<InodeTabl
 
 const CLIENT_ID: &str = "8ebe3ef7-f509-4146-8fef-c9b5d7c22252";
 
+/// Annotated default configuration printed by `--print-default-config`.
+const DEFAULT_CONFIG_TOML: &str = "\
+# CloudMount configuration
+# Location: ~/.config/cloudmount/config.toml
+
+[general]
+# Start CloudMount on login (systemd user unit / launchd / registry)
+# auto_start = false
+
+# Show desktop notifications for sync events and errors
+# notifications = true
+
+# How often to poll Microsoft Graph for changes (seconds)
+# sync_interval_secs = 60
+
+# How long cached metadata is valid before re-fetching (seconds)
+# metadata_ttl_secs = 60
+
+# Maximum disk cache size (e.g. \"5GB\", \"500MB\")
+# cache_max_size = \"5GB\"
+
+# Override the default cache directory
+# cache_dir = \"/path/to/cache\"
+
+# Log level: trace, debug, info, warn, error
+# log_level = \"info\"
+
+# Mount root directory name inside your home folder (~/Cloud/)
+# root_dir = \"Cloud\"
+
+# Mounts are managed through the GUI or added manually:
+#
+# [[mounts]]
+# id = \"od-xxxxxxxx\"
+# name = \"OneDrive\"
+# type = \"drive\"
+# mount_point = \"~/Cloud/OneDrive\"
+# enabled = true
+# drive_id = \"...\"
+#
+# [[mounts]]
+# id = \"sp-xxxxxxxx\"
+# name = \"Contoso - Documents\"
+# type = \"sharepoint\"
+# mount_point = \"~/Cloud/Contoso - Documents\"
+# enabled = true
+# drive_id = \"...\"
+# site_id = \"...\"
+# site_name = \"Contoso\"
+# library_name = \"Documents\"
+";
+
 /// CloudMount — mount Microsoft OneDrive and SharePoint as local filesystems.
 #[derive(Parser, Debug)]
-#[command(version, about)]
+#[command(
+    version,
+    about,
+    after_help = "\
+SIGNALS (Unix only):
+  SIGHUP    Trigger re-authentication in headless mode.
+            Useful when a refresh token expires on a remote server.
+
+EXAMPLES:
+  cloudmount --headless                    Run without GUI
+  cloudmount --print-default-config        Show annotated default configuration
+  kill -HUP $(pidof cloudmount)            Re-authenticate a running instance"
+)]
 struct CliArgs {
     /// Azure AD client ID
     #[arg(long, env = "CLOUDMOUNT_CLIENT_ID")]
@@ -98,6 +162,10 @@ struct CliArgs {
     /// Run without GUI (even if desktop feature is enabled)
     #[arg(long)]
     headless: bool,
+
+    /// Print annotated default configuration and exit
+    #[arg(long)]
+    print_default_config: bool,
 }
 
 struct RuntimeOverrides {
@@ -126,7 +194,7 @@ pub struct AppState {
     pub tokio_handle: std::sync::OnceLock<tokio::runtime::Handle>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", feature = "desktop"))]
+#[allow(dead_code)] // Used conditionally across platform×feature combos; no platform-specific code
 fn parse_cache_size(size_str: &str) -> u64 {
     let s = size_str.trim().to_uppercase();
     let (num_part, multiplier) = if let Some(n) = s.strip_suffix("GB") {
@@ -148,7 +216,7 @@ struct Components {
 
 /// Returns true if FUSE is available on the current system.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn fuse_available() -> bool {
+pub(crate) fn fuse_available() -> bool {
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("fusermount3")
@@ -278,6 +346,11 @@ fn main() {
 
     let args = CliArgs::parse();
 
+    if args.print_default_config {
+        print!("{}", DEFAULT_CONFIG_TOML);
+        return;
+    }
+
     // Configure tracing: CLI --log-level > CLOUDMOUNT_LOG_LEVEL (already handled by clap env) > RUST_LOG > "info"
     let filter = if let Some(ref level) = args.log_level {
         EnvFilter::new(level)
@@ -288,7 +361,12 @@ fn main() {
 
     tracing::info!("CloudMount starting");
 
-    let config_path = args.config.unwrap_or_else(config_file_path);
+    let config_path = args.config.unwrap_or_else(|| {
+        config_file_path().unwrap_or_else(|e| {
+            eprintln!("fatal: no config directory available: {e}");
+            std::process::exit(1);
+        })
+    });
     let user_config = UserConfig::load_from_file(&config_path).unwrap_or_else(|e| {
         tracing::warn!("failed to load user config: {e}");
         UserConfig::default()
@@ -331,7 +409,7 @@ fn main() {
 #[cfg(feature = "desktop")]
 fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: RuntimeOverrides) {
     let app_name = "CloudMount".to_string();
-    let first_run = !config_file_path().exists();
+    let first_run = config_file_path().map(|p| !p.exists()).unwrap_or(true);
 
     // Desktop, non-Linux: the opener uses tauri_plugin_opener which requires the AppHandle.
     // (Linux desktop uses xdg-open directly; headless mode uses open::that — neither needs this.)
@@ -411,6 +489,8 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::refresh_mount,
             commands::clear_cache,
             commands::open_wizard,
+            commands::check_fuse_available,
+            commands::get_default_mount_root,
         ])
         .setup(move |app| {
             // Populate the opener's AppHandle slot now that the app is running.
@@ -560,8 +640,15 @@ fn remove_mount_from_config(app: &tauri::AppHandle, mount_id: &str) {
             }
         };
         user_config.remove_mount(mount_id);
-        if let Err(e) = user_config.save_to_file(&config_file_path()) {
-            tracing::warn!("failed to save config after removing mount '{mount_id}': {e}");
+        match config_file_path() {
+            Ok(cfg_path) => {
+                if let Err(e) = user_config.save_to_file(&cfg_path) {
+                    tracing::warn!("failed to save config after removing mount '{mount_id}': {e}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("config path unavailable: {e}");
+            }
         }
         EffectiveConfig::build(&user_config)
     };
@@ -680,6 +767,9 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         .cloned()
         .unwrap_or_else(|| tokio::runtime::Handle::current());
 
+    let (event_tx, mut event_rx) =
+        tokio::sync::mpsc::unbounded_channel::<cloudmount_vfs::core_ops::VfsEvent>();
+
     let handle = MountHandle::mount(
         state.graph.clone(),
         mount_cache.clone(),
@@ -687,8 +777,24 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         drive_id.to_string(),
         &mountpoint,
         rt,
+        Some(event_tx),
     )
     .map_err(|e| e.to_string())?;
+
+    // Spawn a task to forward VFS events to desktop notifications
+    let app_handle = app.clone();
+    tokio::spawn(async move {
+        while let Some(event) = event_rx.recv().await {
+            match event {
+                cloudmount_vfs::core_ops::VfsEvent::ConflictDetected {
+                    file_name,
+                    conflict_name,
+                } => {
+                    notify::conflict_detected(&app_handle, &file_name, &conflict_name);
+                }
+            }
+        }
+    });
 
     state
         .mount_caches
@@ -976,54 +1082,15 @@ fn run_crash_recovery(app: &tauri::AppHandle) {
         None => return, // No mounts active; nothing to recover.
     };
 
+    let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        let pending = match cache.writeback.list_pending().await {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!("crash recovery: failed to list pending writes: {e}");
-                return;
-            }
-        };
-
-        if pending.is_empty() {
-            return;
-        }
-
-        tracing::info!("crash recovery: {} pending writes found", pending.len());
-
-        for (drive_id, item_id) in &pending {
-            // local:* files have no server-side metadata — unrecoverable after restart
-            if item_id.starts_with("local:") {
-                let _ = cache.writeback.remove(drive_id, item_id).await;
-                tracing::warn!(
-                    "crash recovery: discarded unrecoverable local file {drive_id}/{item_id}"
-                );
-                continue;
-            }
-
-            let content = match cache.writeback.read(drive_id, item_id).await {
-                Some(c) => c,
-                None => continue,
-            };
-
-            match graph
-                .upload(
-                    drive_id,
-                    "",
-                    Some(item_id.as_str()),
-                    item_id,
-                    bytes::Bytes::from(content),
-                )
-                .await
-            {
-                Ok(_) => {
-                    let _ = cache.writeback.remove(drive_id, item_id).await;
-                    tracing::info!("crash recovery: uploaded {drive_id}/{item_id}");
-                }
-                Err(e) => {
-                    tracing::warn!("crash recovery: upload failed for {drive_id}/{item_id}: {e}");
-                }
-            }
+        let recovered =
+            cloudmount_vfs::recover_pending_writes(&cache, &graph, "crash recovery").await;
+        if recovered > 0 {
+            let path = cloudmount_core::config::config_dir()
+                .map(|d| d.join("recovered"))
+                .unwrap_or_default();
+            notify::files_recovered(&app_handle, recovered, &path.display().to_string());
         }
     });
 }
@@ -1133,8 +1200,15 @@ fn run_headless(
                                 }
                             }
 
-                            if let Err(e) = user_config.save_to_file(&config_file_path()) {
-                                tracing::warn!("failed to save config: {e}");
+                            match config_file_path() {
+                                Ok(cfg_path) => {
+                                    if let Err(e) = user_config.save_to_file(&cfg_path) {
+                                        tracing::warn!("failed to save config: {e}");
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!("config path unavailable: {e}");
+                                }
                             }
 
                             effective = EffectiveConfig::build(&user_config);
@@ -1188,26 +1262,23 @@ fn run_headless(
             }
 
             #[cfg(any(target_os = "linux", target_os = "macos"))]
-            let drive_id = mount_config.drive_id.as_deref().unwrap();
-
-            let mountpoint = expand_mount_point(&mount_config.mount_point);
-
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
-            if !cloudmount_vfs::cleanup_stale_mount(&mountpoint) {
-                tracing::error!(
-                    "mount '{}': stale FUSE mount at {mountpoint} could not be cleaned up, skipping",
-                    mount_config.name
-                );
-                continue;
-            }
-
-            if let Err(e) = std::fs::create_dir_all(&mountpoint) {
-                tracing::error!("create mountpoint failed for '{}': {e}", mount_config.name);
-                continue;
-            }
-
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
+                let drive_id = mount_config.drive_id.as_deref().unwrap();
+                let mountpoint = expand_mount_point(&mount_config.mount_point);
+
+                if !cloudmount_vfs::cleanup_stale_mount(&mountpoint) {
+                    tracing::error!(
+                        "mount '{}': stale FUSE mount at {mountpoint} could not be cleaned up, skipping",
+                        mount_config.name
+                    );
+                    continue;
+                }
+
+                if let Err(e) = std::fs::create_dir_all(&mountpoint) {
+                    tracing::error!("create mountpoint failed for '{}': {e}", mount_config.name);
+                    continue;
+                }
+
                 let safe_id = drive_id.replace('!', "_");
                 let db_path = effective_cache_dir.join(format!("drive-{safe_id}.db"));
                 let mount_cache = match CacheManager::new(
@@ -1235,6 +1306,7 @@ fn run_headless(
                     drive_id.to_string(),
                     &mountpoint,
                     rt_handle.clone(),
+                    None,
                 ) {
                     Ok(handle) => {
                         tracing::info!("mount '{}' started at {mountpoint}", mount_config.name);
@@ -1267,98 +1339,60 @@ fn run_headless(
             let recovery_graph = graph.clone();
             let recovery_cache = recovery_cache.clone();
             tokio::spawn(async move {
-                match recovery_cache.writeback.list_pending().await {
-                    Ok(pending) if !pending.is_empty() => {
-                        tracing::info!("crash recovery: {} pending writes found", pending.len());
-                        for (drive_id, item_id) in &pending {
-                            // local:* files have no server-side metadata — unrecoverable after restart
-                            if item_id.starts_with("local:") {
-                                let _ =
-                                    recovery_cache.writeback.remove(drive_id, item_id).await;
-                                tracing::warn!("crash recovery: discarded unrecoverable local file {drive_id}/{item_id}");
-                                continue;
-                            }
-                            if let Some(content) =
-                                recovery_cache.writeback.read(drive_id, item_id).await
-                            {
-                                match recovery_graph
-                                    .upload(
-                                        drive_id,
-                                        "",
-                                        Some(item_id.as_str()),
-                                        item_id,
-                                        bytes::Bytes::from(content),
-                                    )
-                                    .await
-                                {
-                                    Ok(_) => {
-                                        let _ = recovery_cache
-                                            .writeback
-                                            .remove(drive_id, item_id)
-                                            .await;
-                                        tracing::info!(
-                                            "crash recovery: uploaded {drive_id}/{item_id}"
-                                        );
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "crash recovery: upload failed for {drive_id}/{item_id}: {e}"
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("crash recovery: failed to list pending writes: {e}");
-                    }
-                    _ => {}
-                }
+                cloudmount_vfs::recover_pending_writes(
+                    &recovery_cache,
+                    &recovery_graph,
+                    "crash recovery",
+                )
+                .await;
             });
         }
 
-        // Delta sync loop
+        // Delta sync loop — skip when no mounts are active (e.g. Windows headless)
         let auth_degraded = Arc::new(AtomicBool::new(false));
         let cancel = CancellationToken::new();
-        let sync_cancel = cancel.clone();
-        let sync_graph = graph.clone();
-        let sync_entries = mount_entries.clone();
-        let sync_interval = effective.sync_interval_secs;
-        let sync_degraded = auth_degraded.clone();
 
-        tokio::spawn(async move {
-            use std::sync::atomic::Ordering;
+        if !mount_entries.is_empty() {
+            let sync_cancel = cancel.clone();
+            let sync_graph = graph.clone();
+            let sync_entries = mount_entries.clone();
+            let sync_interval = effective.sync_interval_secs;
+            let sync_degraded = auth_degraded.clone();
 
-            loop {
-                for (drive_id, cache, inodes) in &sync_entries {
-                    let inodes = inodes.clone();
-                    let inode_allocator: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
-                        Arc::new(move |item_id: &str| inodes.allocate(item_id));
-                    match run_delta_sync(&sync_graph, cache, drive_id, &inode_allocator).await {
-                        Ok(()) => {}
-                        Err(cloudmount_core::Error::Auth(ref msg))
-                            if msg.contains("re-authentication required") =>
-                        {
-                            if !sync_degraded.load(Ordering::Relaxed) {
-                                sync_degraded.store(true, Ordering::Relaxed);
-                                tracing::warn!(
-                                    "Re-authentication required \u{2014} cached files remain accessible"
-                                );
+            tokio::spawn(async move {
+                use std::sync::atomic::Ordering;
+
+                loop {
+                    for (drive_id, cache, inodes) in &sync_entries {
+                        let inodes = inodes.clone();
+                        let inode_allocator: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
+                            Arc::new(move |item_id: &str| inodes.allocate(item_id));
+                        match run_delta_sync(&sync_graph, cache, drive_id, &inode_allocator).await {
+                            Ok(()) => {}
+                            Err(cloudmount_core::Error::Auth(ref msg))
+                                if msg.contains("re-authentication required") =>
+                            {
+                                if !sync_degraded.load(Ordering::Relaxed) {
+                                    sync_degraded.store(true, Ordering::Relaxed);
+                                    tracing::warn!(
+                                        "Re-authentication required \u{2014} cached files remain accessible"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("delta sync failed for drive {drive_id}: {e}");
                             }
                         }
-                        Err(e) => {
-                            tracing::error!("delta sync failed for drive {drive_id}: {e}");
-                        }
+                    }
+
+                    let wait = std::time::Duration::from_secs(sync_interval);
+                    tokio::select! {
+                        _ = sync_cancel.cancelled() => break,
+                        _ = tokio::time::sleep(wait) => {}
                     }
                 }
-
-                let wait = std::time::Duration::from_secs(sync_interval);
-                tokio::select! {
-                    _ = sync_cancel.cancelled() => break,
-                    _ = tokio::time::sleep(wait) => {}
-                }
-            }
-        });
+            });
+        }
 
         tracing::info!("CloudMount headless mode running \u{2014} {mount_count} mount(s) active");
 
@@ -1390,51 +1424,12 @@ fn run_headless(
                             if let Some(rc) = hup_cache.clone() {
                                 let rg = hup_graph.clone();
                                 tokio::spawn(async move {
-                                    match rc.writeback.list_pending().await {
-                                        Ok(pending) if !pending.is_empty() => {
-                                            tracing::info!(
-                                                "flushing {} pending writes after re-auth",
-                                                pending.len()
-                                            );
-                                            for (drive_id, item_id) in &pending {
-                                                if item_id.starts_with("local:") {
-                                                    let _ =
-                                                        rc.writeback.remove(drive_id, item_id).await;
-                                                    continue;
-                                                }
-                                                if let Some(content) =
-                                                    rc.writeback.read(drive_id, item_id).await
-                                                {
-                                                    match rg
-                                                        .upload(
-                                                            drive_id,
-                                                            "",
-                                                            Some(item_id.as_str()),
-                                                            item_id,
-                                                            bytes::Bytes::from(content),
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(_) => {
-                                                            let _ = rc
-                                                                .writeback
-                                                                .remove(drive_id, item_id)
-                                                                .await;
-                                                            tracing::info!(
-                                                                "re-auth recovery: uploaded {drive_id}/{item_id}"
-                                                            );
-                                                        }
-                                                        Err(e) => {
-                                                            tracing::warn!(
-                                                                "re-auth recovery: upload failed for {drive_id}/{item_id}: {e}"
-                                                            );
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        _ => {}
-                                    }
+                                    cloudmount_vfs::recover_pending_writes(
+                                        &rc,
+                                        &rg,
+                                        "re-auth recovery",
+                                    )
+                                    .await;
                                 });
                             }
                         }

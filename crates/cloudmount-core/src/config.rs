@@ -366,14 +366,18 @@ pub fn expand_mount_point(template: &str) -> String {
     }
 }
 
-pub fn config_dir() -> PathBuf {
+pub fn config_dir() -> crate::Result<PathBuf> {
     dirs::config_dir()
         .map(|d| d.join("cloudmount"))
-        .unwrap_or_else(|| PathBuf::from(".cloudmount"))
+        .ok_or_else(|| {
+            crate::Error::Config(
+                "no config directory available (dirs::config_dir returned None)".into(),
+            )
+        })
 }
 
-pub fn config_file_path() -> PathBuf {
-    config_dir().join("config.toml")
+pub fn config_file_path() -> crate::Result<PathBuf> {
+    config_dir().map(|d| d.join("config.toml"))
 }
 
 pub fn cache_dir() -> PathBuf {

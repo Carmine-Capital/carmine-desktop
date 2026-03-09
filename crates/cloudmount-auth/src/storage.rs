@@ -66,7 +66,7 @@ pub fn delete_tokens(account_id: &str) -> cloudmount_core::Result<()> {
         }
     }
 
-    let path = encrypted_token_path(account_id);
+    let path = encrypted_token_path(account_id)?;
     if path.exists() {
         std::fs::remove_file(&path).map_err(|e| {
             cloudmount_core::Error::Auth(format!("failed to delete token file: {e}"))
@@ -130,11 +130,30 @@ fn load_tokens_keyring(account_id: &str) -> cloudmount_core::Result<Option<Token
     deserialize_tokens(&password).map(Some)
 }
 
-fn encrypted_token_path(account_id: &str) -> PathBuf {
+/// Sanitize account_id for use in filenames — prevent path traversal.
+fn sanitize_account_id(account_id: &str) -> String {
+    account_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '@' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn encrypted_token_path(account_id: &str) -> cloudmount_core::Result<PathBuf> {
     let config_dir = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
+        .ok_or_else(|| {
+            cloudmount_core::Error::Auth(
+                "no config directory available (dirs::config_dir returned None)".to_string(),
+            )
+        })?
         .join("cloudmount");
-    config_dir.join(format!("tokens_{account_id}.enc"))
+    let safe_id = sanitize_account_id(account_id);
+    Ok(config_dir.join(format!("tokens_{safe_id}.enc")))
 }
 
 fn derive_key(password: &[u8], salt: &[u8]) -> cloudmount_core::Result<Zeroizing<[u8; 32]>> {
@@ -149,6 +168,64 @@ fn derive_key(password: &[u8], salt: &[u8]) -> cloudmount_core::Result<Zeroizing
     Ok(key)
 }
 
+/// Read platform-specific machine ID for use as key derivation entropy.
+#[cfg(target_os = "linux")]
+fn machine_id() -> Option<String> {
+    std::fs::read_to_string("/etc/machine-id")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+#[cfg(target_os = "macos")]
+fn machine_id() -> Option<String> {
+    std::process::Command::new("ioreg")
+        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+        .output()
+        .ok()
+        .and_then(|out| {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            for line in stdout.lines() {
+                if let Some(rest) = line.trim().strip_prefix("\"IOPlatformUUID\"") {
+                    if let Some(value) = rest.split('"').nth(1) {
+                        if !value.is_empty() {
+                            return Some(value.to_string());
+                        }
+                    }
+                }
+            }
+            None
+        })
+}
+
+#[cfg(target_os = "windows")]
+fn machine_id() -> Option<String> {
+    std::process::Command::new("reg")
+        .args([
+            "query",
+            r"HKLM\SOFTWARE\Microsoft\Cryptography",
+            "/v",
+            "MachineGuid",
+        ])
+        .output()
+        .ok()
+        .and_then(|out| {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 3 && parts[0] == "MachineGuid" {
+                    return Some(parts[2].to_string());
+                }
+            }
+            None
+        })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn machine_id() -> Option<String> {
+    None
+}
+
 fn machine_password() -> Vec<u8> {
     let username = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
@@ -156,11 +233,12 @@ fn machine_password() -> Vec<u8> {
     let home = dirs::config_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown".to_string());
-    format!("cloudmount-fallback-{username}@{home}").into_bytes()
+    let mid = machine_id().unwrap_or_default();
+    format!("cloudmount-fallback-{username}@{home}:{mid}").into_bytes()
 }
 
 fn store_tokens_encrypted(account_id: &str, serialized: &str) -> cloudmount_core::Result<()> {
-    let path = encrypted_token_path(account_id);
+    let path = encrypted_token_path(account_id)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| cloudmount_core::Error::Auth(format!("mkdir config dir failed: {e}")))?;
@@ -181,15 +259,34 @@ fn store_tokens_encrypted(account_id: &str, serialized: &str) -> cloudmount_core
     output.extend_from_slice(&nonce);
     output.extend_from_slice(&ciphertext);
 
-    std::fs::write(&path, &output)
-        .map_err(|e| cloudmount_core::Error::Auth(format!("write token file failed: {e}")))?;
+    // Write with restrictive permissions: 0600 on Unix (owner read/write only).
+    // On Windows, %APPDATA% default ACL is already user-only.
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| cloudmount_core::Error::Auth(format!("write token file failed: {e}")))?;
+        file.write_all(&output)
+            .map_err(|e| cloudmount_core::Error::Auth(format!("write token file failed: {e}")))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&path, &output)
+            .map_err(|e| cloudmount_core::Error::Auth(format!("write token file failed: {e}")))?;
+    }
 
     tracing::warn!("tokens stored in encrypted file (less secure than OS keychain)");
     Ok(())
 }
 
 fn load_tokens_encrypted(account_id: &str) -> cloudmount_core::Result<Option<TokenResponse>> {
-    let path = encrypted_token_path(account_id);
+    let path = encrypted_token_path(account_id)?;
     if !path.exists() {
         return Ok(None);
     }
@@ -221,4 +318,18 @@ fn load_tokens_encrypted(account_id: &str) -> cloudmount_core::Result<Option<Tok
         .map_err(|e| cloudmount_core::Error::Auth(format!("invalid UTF-8 in tokens: {e}")))?;
 
     deserialize_tokens(&text).map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_account_id_strips_path_traversal() {
+        assert_eq!(sanitize_account_id("normal-user_123"), "normal-user_123");
+        assert_eq!(sanitize_account_id("user@domain.com"), "user@domain.com");
+        assert_eq!(sanitize_account_id("../../etc/passwd"), ".._.._etc_passwd");
+        assert_eq!(sanitize_account_id("a/b\\c"), "a_b_c");
+        assert_eq!(sanitize_account_id(""), "");
+    }
 }

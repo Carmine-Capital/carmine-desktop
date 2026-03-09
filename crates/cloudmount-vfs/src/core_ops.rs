@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use chrono::Utc;
@@ -17,19 +17,36 @@ use tokio::sync::watch;
 
 use crate::inode::InodeTable;
 use cloudmount_cache::CacheManager;
-use cloudmount_core::types::{DriveItem, FileFacet, ParentReference};
+use cloudmount_core::types::{DriveItem, DriveQuota, FileFacet, ParentReference};
 use cloudmount_graph::{CopyStatus, GraphClient, SMALL_FILE_LIMIT};
+
+/// Compare item names for child lookup.
+/// Windows (NTFS/CfApi) uses OrdinalIgnoreCase — ASCII case-insensitive.
+/// FUSE on Linux/macOS uses exact (case-sensitive) comparison.
+#[cfg(target_os = "windows")]
+fn names_match(stored: &str, query: &str) -> bool {
+    stored.eq_ignore_ascii_case(query)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn names_match(stored: &str, query: &str) -> bool {
+    stored == query
+}
 
 const COPY_POLL_INITIAL_MS: u64 = 500;
 const COPY_POLL_MAX_MS: u64 = 5000;
 const COPY_POLL_BACKOFF: u64 = 2;
-const COPY_MAX_POLL_DURATION_SECS: u64 = 300;
+const COPY_MAX_POLL_DURATION_SECS: u64 = 10;
 const COPY_POLL_MAX_RETRIES: u32 = 3;
 
 /// 2 MB threshold: if a read offset is within this distance of the download
 /// frontier, block and wait for the sequential download to catch up.
 /// Beyond this, issue an on-demand range request instead.
 const RANDOM_ACCESS_THRESHOLD: u64 = 2 * 1024 * 1024;
+
+/// Maximum file size for in-memory streaming buffer (256 MB).
+/// Files larger than this are downloaded to disk cache instead.
+const MAX_STREAMING_BUFFER_SIZE: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub enum DownloadProgress {
@@ -46,14 +63,19 @@ pub struct StreamingBuffer {
 }
 
 impl StreamingBuffer {
-    pub fn new(total_size: u64) -> Self {
+    pub fn new(total_size: u64) -> VfsResult<Self> {
+        if total_size == 0 || total_size > MAX_STREAMING_BUFFER_SIZE {
+            return Err(VfsError::IoError(format!(
+                "file too large for streaming buffer: {total_size} bytes (max {MAX_STREAMING_BUFFER_SIZE})"
+            )));
+        }
         let (tx, rx) = watch::channel(DownloadProgress::InProgress(0));
-        Self {
+        Ok(Self {
             data: tokio::sync::RwLock::new(vec![0u8; total_size as usize]),
             progress: tx,
             progress_rx: rx,
             total_size,
-        }
+        })
     }
 
     pub async fn append_chunk(&self, chunk: &[u8]) {
@@ -215,6 +237,30 @@ impl OpenFileTable {
     }
 }
 
+/// Events emitted by VFS operations for the app layer to handle.
+#[derive(Debug, Clone)]
+pub enum VfsEvent {
+    /// A conflict was detected and a conflict copy was uploaded.
+    ConflictDetected {
+        file_name: String,
+        conflict_name: String,
+    },
+}
+
+/// Generate a conflict filename that preserves the original extension.
+///
+/// `report.docx` → `report.conflict.1741...docx`
+/// `notes` → `notes.conflict.1741...`
+pub fn conflict_name(original: &str, timestamp: i64) -> String {
+    match original.rfind('.') {
+        Some(pos) => {
+            let (stem, ext) = original.split_at(pos);
+            format!("{stem}.conflict.{timestamp}{ext}")
+        }
+        None => format!("{original}.conflict.{timestamp}"),
+    }
+}
+
 /// Errors from core VFS operations.
 ///
 /// Each platform backend maps these to its own error type
@@ -227,8 +273,35 @@ pub enum VfsError {
     NotADirectory,
     /// Directory is not empty (FUSE: ENOTEMPTY)
     DirectoryNotEmpty,
+    /// Permission denied (FUSE: EACCES)
+    PermissionDenied,
+    /// Operation timed out (FUSE: ETIMEDOUT)
+    TimedOut,
+    /// Storage quota exceeded (FUSE: ENOSPC)
+    QuotaExceeded,
     /// I/O or network operation failed (FUSE: EIO, Windows: STATUS_DEVICE_NOT_READY)
     IoError(String),
+}
+
+impl VfsError {
+    /// Map a `cloudmount_core::Error` to a specific `VfsError` variant.
+    pub fn from_core_error(e: cloudmount_core::Error) -> Self {
+        match &e {
+            cloudmount_core::Error::GraphApi { status, message } => {
+                if message.to_lowercase().contains("quota") {
+                    return VfsError::QuotaExceeded;
+                }
+                match *status {
+                    403 => VfsError::PermissionDenied,
+                    404 => VfsError::NotFound,
+                    507 => VfsError::QuotaExceeded,
+                    _ => VfsError::IoError(e.to_string()),
+                }
+            }
+            cloudmount_core::Error::Network(_) => VfsError::TimedOut,
+            _ => VfsError::IoError(e.to_string()),
+        }
+    }
 }
 
 pub type VfsResult<T> = std::result::Result<T, VfsError>;
@@ -249,6 +322,8 @@ fn ensure_complete(entry: &mut OpenFile, rt: &Handle) -> VfsResult<()> {
     }
 }
 
+const QUOTA_CACHE_TTL_SECS: u64 = 60;
+
 /// Core VFS operations shared between platform backends.
 ///
 /// Encapsulates cache lookups, Graph API calls, inode management, and write-back logic.
@@ -261,6 +336,8 @@ pub struct CoreOps {
     drive_id: String,
     rt: Handle,
     open_files: OpenFileTable,
+    event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
+    quota_cache: std::sync::Mutex<Option<(Instant, DriveQuota)>>,
 }
 
 impl CoreOps {
@@ -278,6 +355,60 @@ impl CoreOps {
             drive_id,
             rt,
             open_files: OpenFileTable::new(),
+            event_tx: None,
+            quota_cache: std::sync::Mutex::new(None),
+        }
+    }
+
+    pub fn with_event_sender(mut self, tx: tokio::sync::mpsc::UnboundedSender<VfsEvent>) -> Self {
+        self.event_tx = Some(tx);
+        self
+    }
+
+    fn send_event(&self, event: VfsEvent) {
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(event);
+        }
+    }
+
+    /// Get the drive quota, using a cached value if fresh enough.
+    pub fn get_quota(&self) -> Option<DriveQuota> {
+        {
+            let cache = self.quota_cache.lock().unwrap();
+            if let Some((fetched_at, ref quota)) = *cache
+                && fetched_at.elapsed().as_secs() < QUOTA_CACHE_TTL_SECS
+            {
+                return Some(quota.clone());
+            }
+        }
+        match self.rt.block_on(self.graph.get_drive(&self.drive_id)) {
+            Ok(drive) => {
+                if let Some(quota) = drive.quota {
+                    let mut cache = self.quota_cache.lock().unwrap();
+                    *cache = Some((Instant::now(), quota.clone()));
+                    Some(quota)
+                } else {
+                    None
+                }
+            }
+            Err(e) => {
+                tracing::warn!("quota fetch failed: {e}");
+                None
+            }
+        }
+    }
+
+    /// Check if a remote item has been modified on the server compared to our cache.
+    fn has_server_conflict(&self, item: &DriveItem) -> bool {
+        let Some(cached_etag) = item.etag.as_deref() else {
+            return false;
+        };
+        match self
+            .rt
+            .block_on(self.graph.get_item(&self.drive_id, &item.id))
+        {
+            Ok(server_item) => server_item.etag.as_deref() != Some(cached_etag),
+            Err(_) => false,
         }
     }
 
@@ -352,17 +483,28 @@ impl CoreOps {
     /// Searches memory cache, SQLite, then falls back to Graph API.
     /// On Graph API fallback, also populates the parent's children list in memory cache.
     pub fn find_child(&self, parent_ino: u64, name: &str) -> Option<(u64, DriveItem)> {
-        if let Some(children_map) = self.cache.memory.get_children(parent_ino)
-            && let Some(&child_inode) = children_map.get(name)
-            && let Some(item) = self.lookup_item(child_inode)
-        {
-            return Some((child_inode, item));
+        if let Some(children_map) = self.cache.memory.get_children(parent_ino) {
+            // On Windows, NTFS uses case-insensitive names so we must iterate.
+            // On Linux/macOS, exact HashMap::get is sufficient.
+            #[cfg(not(target_os = "windows"))]
+            let child_ino = children_map.get(name).copied();
+            #[cfg(target_os = "windows")]
+            let child_ino = children_map
+                .iter()
+                .find(|(k, _)| names_match(k, name))
+                .map(|(_, &v)| v);
+
+            if let Some(child_inode) = child_ino
+                && let Some(item) = self.lookup_item(child_inode)
+            {
+                return Some((child_inode, item));
+            }
         }
 
         match self.cache.sqlite.get_children(parent_ino) {
             Ok(children) => {
                 for (_, item) in children {
-                    if item.name == name {
+                    if names_match(&item.name, name) {
                         let resolved_ino = self.inodes.allocate(&item.id);
                         self.cache.memory.insert(resolved_ino, item.clone());
                         return Some((resolved_ino, item));
@@ -387,7 +529,7 @@ impl CoreOps {
                     let child_inode = self.inodes.allocate(&item.id);
                     children_map.insert(item.name.clone(), child_inode);
                     self.cache.memory.insert(child_inode, item.clone());
-                    if item.name == name && found.is_none() {
+                    if names_match(&item.name, name) && found.is_none() {
                         found = Some((child_inode, item.clone()));
                     }
                 }
@@ -655,15 +797,27 @@ impl CoreOps {
                             server_item.etag
                         );
                         let timestamp = Utc::now().timestamp();
-                        let conflict_name = format!("{}.conflict.{timestamp}", item.name);
-                        if !parent_id.is_empty() {
-                            let _ = self.rt.block_on(self.graph.upload_small(
+                        let cname = conflict_name(&item.name, timestamp);
+                        if !parent_id.is_empty()
+                            && let Err(e) = self.rt.block_on(self.graph.upload_small(
                                 &self.drive_id,
                                 &parent_id,
-                                &conflict_name,
+                                &cname,
                                 Bytes::from(content.clone()),
-                            ));
+                            ))
+                        {
+                            tracing::error!(
+                                "conflict copy upload failed for {}, aborting flush: {e}",
+                                item.name
+                            );
+                            return Err(VfsError::IoError(format!(
+                                "conflict copy upload failed: {e}"
+                            )));
                         }
+                        self.send_event(VfsEvent::ConflictDetected {
+                            file_name: item.name.clone(),
+                            conflict_name: cname,
+                        });
                     }
                 }
                 Err(e) => {
@@ -798,7 +952,7 @@ impl CoreOps {
                 .insert(ino, DownloadState::Complete(content)))
         } else {
             // Large file: stream in background
-            let buffer = Arc::new(StreamingBuffer::new(file_size as u64));
+            let buffer = Arc::new(StreamingBuffer::new(file_size as u64)?);
             let buf_clone = buffer.clone();
             let graph = self.graph.clone();
             let cache = self.cache.clone();
@@ -1140,6 +1294,39 @@ impl CoreOps {
         if let Some((existing_ino, existing_item)) = self.find_child(new_parent_ino, new_name)
             && existing_item.id != item_id
         {
+            // Before deleting a remote file, check if it has different server content
+            // (different eTag or pending writes). Save as conflict copy if so.
+            if !existing_item.id.starts_with("local:")
+                && !existing_item.is_folder()
+                && (self.is_dirty(existing_ino) || self.has_server_conflict(&existing_item))
+            {
+                let timestamp = Utc::now().timestamp();
+                let cname = conflict_name(&existing_item.name, timestamp);
+                let parent_id = existing_item
+                    .parent_reference
+                    .as_ref()
+                    .and_then(|p| p.id.as_deref())
+                    .unwrap_or("");
+                if !parent_id.is_empty() {
+                    // Download current server content and upload as conflict copy
+                    if let Ok(content) = self.rt.block_on(
+                        self.graph
+                            .download_content(&self.drive_id, &existing_item.id),
+                    ) {
+                        let _ = self.rt.block_on(self.graph.upload_small(
+                            &self.drive_id,
+                            parent_id,
+                            &cname,
+                            content,
+                        ));
+                        self.send_event(VfsEvent::ConflictDetected {
+                            file_name: existing_item.name.clone(),
+                            conflict_name: cname,
+                        });
+                    }
+                }
+            }
+
             if !existing_item.id.starts_with("local:") {
                 let _ = self
                     .rt
@@ -1198,7 +1385,16 @@ impl CoreOps {
         let eligible = !src_item_id.starts_with("local:") && offset_in == 0 && len >= src_size;
 
         if eligible {
-            self.copy_file_range_server(ino_out, fh_out, &src_item)
+            match self.copy_file_range_server(ino_out, fh_out, &src_item) {
+                Ok(n) => Ok(n),
+                Err(VfsError::TimedOut) => {
+                    tracing::info!("server-side copy timed out, falling back to read/write copy");
+                    self.copy_file_range_fallback(
+                        fh_in, offset_in, fh_out, offset_out, len, ino_out,
+                    )
+                }
+                Err(e) => Err(e),
+            }
         } else {
             self.copy_file_range_fallback(fh_in, offset_in, fh_out, offset_out, len, ino_out)
         }
@@ -1240,16 +1436,19 @@ impl CoreOps {
             .map_err(|e| VfsError::IoError(format!("copy_item failed: {e}")))?;
 
         // Poll with exponential backoff
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let mut delay_ms = COPY_POLL_INITIAL_MS;
         let max_duration = std::time::Duration::from_secs(COPY_MAX_POLL_DURATION_SECS);
 
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            self.rt
+                .block_on(tokio::time::sleep(std::time::Duration::from_millis(
+                    delay_ms,
+                )));
 
             if start.elapsed() > max_duration {
                 tracing::warn!("server-side copy timed out after {COPY_MAX_POLL_DURATION_SECS}s");
-                return Err(VfsError::IoError("server-side copy timed out".into()));
+                return Err(VfsError::TimedOut);
             }
 
             let poll_result = {
@@ -1265,7 +1464,10 @@ impl CoreOps {
                             tracing::warn!(
                                 "copy poll retry {retries}/{COPY_POLL_MAX_RETRIES}: {e}"
                             );
-                            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                            self.rt
+                                .block_on(tokio::time::sleep(std::time::Duration::from_millis(
+                                    delay_ms,
+                                )));
                         }
                     }
                 }

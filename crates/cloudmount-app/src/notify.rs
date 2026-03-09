@@ -66,7 +66,7 @@ pub fn auth_expired(app: &AppHandle) {
     send(
         app,
         "Sign-in Expired",
-        "Sign-in expired. Click to re-authenticate.",
+        "Sign-in expired. Open CloudMount to re-authenticate.",
     );
 }
 
@@ -84,11 +84,39 @@ pub fn up_to_date(app: &AppHandle) {
     send(app, "Up to Date", &format!("{app_name} is up to date"));
 }
 
+pub fn update_check_failed(app: &AppHandle) {
+    send(
+        app,
+        "Update Check Failed",
+        "Could not check for updates. Try again later.",
+    );
+}
+
 pub fn update_not_configured(app: &AppHandle) {
     send(
         app,
         "Updates",
         "Update checking is not configured for this build",
+    );
+}
+
+pub fn conflict_detected(app: &AppHandle, file_name: &str, conflict_name: &str) {
+    send(
+        app,
+        "Sync Conflict",
+        &format!(
+            "'{file_name}' was modified on another device. Your version was saved as '{conflict_name}'."
+        ),
+    );
+}
+
+pub fn files_recovered(app: &AppHandle, count: usize, path: &str) {
+    send(
+        app,
+        "Files Recovered",
+        &format!(
+            "{count} unsaved file(s) recovered to {path}. These files were not uploaded before the last shutdown."
+        ),
     );
 }
 

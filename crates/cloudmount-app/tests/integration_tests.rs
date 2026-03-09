@@ -263,7 +263,7 @@ async fn test_cache_eviction_lru() -> cloudmount_core::Result<()> {
     std::fs::create_dir_all(&content_dir)?;
 
     // Max 50 bytes — each file is 20 bytes, so 3rd insert triggers eviction of oldest
-    let cache = DiskCache::new(content_dir, 50, &db_path);
+    let cache = DiskCache::new(content_dir, 50, &db_path)?;
 
     cache
         .put("d1", "oldest", b"AAAAAAAAAAAAAAAAAAAA", None)
@@ -473,6 +473,7 @@ async fn test_smoke_macos_fuse_mount_list_read_write_unmount() -> cloudmount_cor
         drive_id.to_string(),
         mountpoint.to_str().unwrap(),
         rt,
+        None,
     )?;
 
     sleep(Duration::from_millis(300)).await;

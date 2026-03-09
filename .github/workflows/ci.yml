@@ -50,7 +50,6 @@ jobs:
         run: cargo clippy --all-targets
 
       - name: Clippy (desktop)
-        if: runner.os == 'Linux'
         run: cargo clippy --all-targets --features desktop
 
       - name: Build

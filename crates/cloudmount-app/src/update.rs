@@ -143,6 +143,7 @@ pub async fn handle_manual_check(app: &AppHandle) {
         }
         Err(e) => {
             tracing::warn!("manual update check failed: {e}");
+            crate::notify::update_check_failed(app);
         }
     }
 }

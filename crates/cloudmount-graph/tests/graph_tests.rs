@@ -617,3 +617,54 @@ async fn poll_copy_status_sends_no_auth_header() {
         "poll request should not contain Authorization header"
     );
 }
+
+#[tokio::test]
+async fn get_drive_with_quota() {
+    let server = MockServer::start().await;
+    let client = make_client(&server.uri());
+
+    Mock::given(method("GET"))
+        .and(path("/drives/d1"))
+        .and(header("Authorization", "Bearer test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "d1",
+            "name": "My Drive",
+            "driveType": "personal",
+            "quota": {
+                "total": 5368709120i64,
+                "used": 1073741824i64,
+                "remaining": 4294967296i64
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let drive = client.get_drive("d1").await.unwrap();
+    assert_eq!(drive.id, "d1");
+    assert_eq!(drive.name, "My Drive");
+    let quota = drive.quota.unwrap();
+    assert_eq!(quota.total, Some(5368709120));
+    assert_eq!(quota.used, Some(1073741824));
+    assert_eq!(quota.remaining, Some(4294967296));
+}
+
+#[tokio::test]
+async fn get_drive_without_quota() {
+    let server = MockServer::start().await;
+    let client = make_client(&server.uri());
+
+    Mock::given(method("GET"))
+        .and(path("/drives/d2"))
+        .and(header("Authorization", "Bearer test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "d2",
+            "name": "Shared Library",
+            "driveType": "documentLibrary"
+        })))
+        .mount(&server)
+        .await;
+
+    let drive = client.get_drive("d2").await.unwrap();
+    assert_eq!(drive.id, "d2");
+    assert!(drive.quota.is_none());
+}

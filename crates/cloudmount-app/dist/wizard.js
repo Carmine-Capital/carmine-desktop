@@ -9,25 +9,85 @@ let sourcesSelectedSite = null;
 let addMountMode = false;
 let selectedLibraries = new Map(); // driveId → { site, library }
 let cachedFollowedSites = null;
+let defaultMountRoot = '~/Cloud';
+let countdownTimer = null;
+
+// -- path sanitization --
+
+function sanitizePath(name) {
+  return name.replace(/[/\\:*?"<>|]/g, '_').trim() || '_';
+}
+
+// -- auth countdown --
+
+const AUTH_TIMEOUT_SECS = 120;
+
+function startCountdown() {
+  stopCountdown();
+  let remaining = AUTH_TIMEOUT_SECS;
+  const el = document.getElementById('auth-countdown');
+  el.textContent = 'Time remaining: ' + remaining + 's';
+  el.className = 'auth-countdown';
+
+  countdownTimer = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      stopCountdown();
+      el.textContent = '';
+      return;
+    }
+    el.textContent = 'Time remaining: ' + remaining + 's';
+    if (remaining <= 30) {
+      el.className = 'auth-countdown warning';
+    }
+  }, 1000);
+}
+
+function stopCountdown() {
+  if (countdownTimer) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+  }
+  const el = document.getElementById('auth-countdown');
+  if (el) {
+    el.textContent = '';
+    el.className = 'auth-countdown';
+  }
+}
 
 // -- sign-in flow --
 
 async function startSignIn() {
   if (signingIn) return;
+
+  // FUSE pre-check: block sign-in if FUSE is unavailable
+  try {
+    const fuseOk = await invoke('check_fuse_available');
+    if (!fuseOk) {
+      showStatus('FUSE is not installed. Install libfuse3 (Linux) or macFUSE (macOS) to use CloudMount.', 'error');
+      return;
+    }
+  } catch (e) {
+    console.warn('FUSE check failed, proceeding:', e);
+  }
+
   signingIn = true;
   document.getElementById('auth-error').style.display = 'none';
   showStep('step-signing-in');
+  startCountdown();
 
   // Register event listeners before invoking so we don't miss events.
   activeListeners.push(await listen('auth-complete', async () => {
     if (!signingIn) return;
     signingIn = false;
+    stopCountdown();
     cleanupListeners();
     await onSignInComplete();
   }));
   activeListeners.push(await listen('auth-error', (event) => {
     if (!signingIn) return;
     signingIn = false;
+    stopCountdown();
     cleanupListeners();
     const errEl = document.getElementById('auth-error');
     errEl.textContent = 'Sign-in failed: ' + (event.payload || 'unknown error');
@@ -39,6 +99,7 @@ async function startSignIn() {
     document.getElementById('auth-url').value = authUrl;
   } catch (e) {
     signingIn = false;
+    stopCountdown();
     cleanupListeners();
     console.error('start_sign_in failed:', e);
     showStatus('Sign-in failed', 'error');
@@ -48,7 +109,8 @@ async function startSignIn() {
 
 async function cancelSignIn() {
   signingIn = false;
-  try { await invoke('cancel_sign_in'); } catch (_) {}
+  stopCountdown();
+  try { await invoke('cancel_sign_in'); } catch (e) { console.warn('cancel failed:', e); }
   cleanupListeners();
   showStep('step-welcome');
   document.getElementById('auth-url').value = '';
@@ -105,6 +167,7 @@ async function loadSources() {
     const drive = driveResult.value;
     onedriveDriveId = drive.id;
     document.getElementById('onedrive-drive-name').textContent = drive.name || 'OneDrive';
+    document.getElementById('onedrive-mount-path').textContent = defaultMountRoot + '/OneDrive';
     document.getElementById('sources-onedrive-section').style.display = 'block';
   }
 
@@ -125,6 +188,10 @@ async function loadSources() {
     const errEl = document.getElementById('sources-error');
     errEl.textContent = 'Could not load account data \u2014 please try signing in again.';
     errEl.style.display = 'block';
+  } else if (driveResult.status === 'rejected') {
+    showStatus('OneDrive info unavailable \u2014 SharePoint sites loaded', 'info');
+  } else if (sitesResult.status === 'rejected') {
+    showStatus('SharePoint sites unavailable \u2014 OneDrive loaded', 'info');
   }
 
   updateGetStartedBtn();
@@ -133,6 +200,13 @@ async function loadSources() {
 function renderFollowedSites(sites) {
   const sitesEl = document.getElementById('sources-sp-sites');
   sitesEl.innerHTML = '';
+  if (sites.length === 0) {
+    const hint = document.createElement('p');
+    hint.className = 'sp-empty-hint';
+    hint.textContent = 'No followed sites yet. Follow sites in SharePoint or use the search box above to find them.';
+    sitesEl.appendChild(hint);
+    return;
+  }
   sites.forEach(site => {
     const row = document.createElement('div');
     row.className = 'sp-result-row';
@@ -190,7 +264,7 @@ async function searchSitesInSources(query) {
     sites = await invoke('search_sites', { query });
   } catch (e) {
     spinner.style.display = 'none';
-    errEl.textContent = e.toString();
+    errEl.textContent = formatError(e);
     errEl.style.display = 'block';
     return;
   }
@@ -232,7 +306,7 @@ async function selectSiteInSources(site) {
     ]);
   } catch (e) {
     spinner.style.display = 'none';
-    errEl.textContent = e.toString();
+    errEl.textContent = formatError(e);
     errEl.style.display = 'block';
     return;
   }
@@ -333,7 +407,9 @@ async function confirmSelectedLibraries() {
     const [driveId, { site, library }] = entries[i];
     addBtn.textContent = 'Adding ' + (i + 1) + ' of ' + total + '\u2026';
 
-    const mountPoint = '~/Cloud/' + site.display_name + ' - ' + library.name + '/';
+    const safeSite = sanitizePath(site.display_name);
+    const safeLib = sanitizePath(library.name);
+    const mountPoint = defaultMountRoot + '/' + safeSite + ' - ' + safeLib + '/';
     try {
       const mountId = await invoke('add_mount', {
         mountType: 'sharepoint',
@@ -366,7 +442,7 @@ async function confirmSelectedLibraries() {
         }
       }
     } catch (e) {
-      errors.push(library.name + ': ' + e.toString());
+      errors.push(library.name + ': ' + formatError(e));
     }
   }
 
@@ -405,19 +481,23 @@ function addSourceEntry(label, mountId) {
   const removeBtn = document.createElement('button');
   removeBtn.className = 'btn-remove';
   removeBtn.textContent = 'Remove';
-  removeBtn.onclick = async () => {
+  removeBtn.addEventListener('click', async () => {
+    removeBtn.disabled = true;
+    removeBtn.textContent = 'Removing\u2026';
     if (mountId) {
       try {
         await invoke('remove_mount', { id: mountId });
       } catch (e) {
-        showStatus('Failed to remove mount', 'error');
+        removeBtn.disabled = false;
+        removeBtn.textContent = 'Remove';
+        showStatus(formatError(e), 'error');
         return;
       }
     }
     list.removeChild(row);
     if (list.children.length === 0) section.style.display = 'none';
     updateGetStartedBtn();
-  };
+  });
 
   row.appendChild(nameEl);
   row.appendChild(removeBtn);
@@ -455,10 +535,10 @@ async function getStarted() {
       await invoke('add_mount', {
         mountType: 'drive',
         driveId: onedriveDriveId,
-        mountPoint: '~/Cloud/OneDrive',
+        mountPoint: defaultMountRoot + '/OneDrive',
       });
     } catch (e) {
-      errEl.textContent = e.toString();
+      errEl.textContent = formatError(e);
       errEl.style.display = 'block';
       btn.disabled = false;
       btn.textContent = origLabel;
@@ -491,6 +571,26 @@ async function getStarted() {
   showStep('step-success');
 }
 
+// -- switch account --
+
+async function switchAccount() {
+  const btn = document.getElementById('switch-account-btn');
+  btn.disabled = true;
+  btn.textContent = 'Signing out\u2026';
+  try {
+    await invoke('sign_out');
+  } catch (e) {
+    console.warn('sign_out during switch failed:', e);
+  }
+  btn.disabled = false;
+  btn.textContent = 'Sign in with a different account';
+  addMountMode = false;
+  onedriveDriveId = null;
+  cachedFollowedSites = null;
+  selectedLibraries.clear();
+  showStep('step-welcome');
+}
+
 // -- utilities --
 
 const _stepTitles = {
@@ -507,6 +607,15 @@ function showStep(id) {
 }
 
 async function init() {
+  // Fetch platform-native mount root early
+  try {
+    defaultMountRoot = await invoke('get_default_mount_root');
+    // Remove trailing slash for clean path construction
+    defaultMountRoot = defaultMountRoot.replace(/[/\\]+$/, '');
+  } catch (e) {
+    console.warn('get_default_mount_root failed, using fallback:', e);
+  }
+
   document.getElementById('sign-in-btn').addEventListener('click', startSignIn);
   document.getElementById('copy-btn').addEventListener('click', copyAuthUrl);
   document.getElementById('cancel-btn').addEventListener('click', cancelSignIn);
@@ -528,10 +637,18 @@ async function init() {
   document.getElementById('wizard-close-btn').addEventListener('click', () => {
     window.__TAURI__.window.getCurrentWindow().close();
   });
+  document.getElementById('switch-account-btn').addEventListener('click', switchAccount);
 
-  const authenticated = await invoke('is_authenticated');
-  if (authenticated) {
-    await goToAddMount();
+  listen('navigate-add-mount', () => goToAddMount());
+
+  try {
+    const authenticated = await invoke('is_authenticated');
+    if (authenticated) {
+      await goToAddMount();
+    }
+  } catch (e) {
+    console.error('init failed:', e);
+    showStatus('Failed to initialize. Please restart.', 'error');
   }
 }
 init();

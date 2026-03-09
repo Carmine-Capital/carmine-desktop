@@ -2,6 +2,8 @@ pub mod core_ops;
 pub mod inode;
 pub(crate) mod pending;
 
+pub use pending::recover_pending_writes;
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod fuse_fs;
 

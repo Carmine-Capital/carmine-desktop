@@ -21,8 +21,9 @@
       <div class="spinner step-signing-in-spinner"></div>
       <h1>Waiting for login&hellip;</h1>
       <p>A browser window should have opened. If not, copy the URL below and open it manually.</p>
+      <div id="auth-countdown" class="auth-countdown" aria-live="polite"></div>
       <div class="url-box">
-        <input id="auth-url" class="url-input" type="text" readonly>
+        <input id="auth-url" class="url-input" type="text" readonly aria-label="Authentication URL">
         <button id="copy-btn" class="btn-secondary btn-sm">Copy URL</button>
       </div>
       <div id="auth-error" class="error-msg" role="alert" style="display:none"></div>
@@ -38,14 +39,14 @@
           <input type="checkbox" id="onedrive-check" checked>
           <div class="source-card-info">
             <div class="source-card-name" id="onedrive-drive-name">OneDrive</div>
-            <div class="source-card-sub">~/Cloud/OneDrive</div>
+            <div class="source-card-sub" id="onedrive-mount-path">~/Cloud/OneDrive</div>
           </div>
         </label>
       </div>
       <div id="sources-sp-section" style="display:none">
         <div class="section-heading">SharePoint Libraries</div>
         <div class="sp-search-row">
-          <input id="sources-sp-search" type="text" placeholder="Search sites&hellip;">
+          <input id="sources-sp-search" type="text" placeholder="Search sites&hellip;" aria-label="Search SharePoint sites">
         </div>
         <div id="sources-sp-spinner" class="spinner" style="display:none"></div>
         <div id="sources-sp-error" class="error-msg" role="alert" style="display:none"></div>
@@ -62,12 +63,14 @@
       </div>
       <div id="sources-error" class="error-msg" role="alert" style="display:none"></div>
       <button id="get-started-btn" disabled style="margin-top:1.5rem">Get started</button>
+      <button id="switch-account-btn" class="btn-link" style="margin-top:0.5rem">Sign in with a different account</button>
     </div>
 
     <div id="step-success" class="step">
       <h1>All Set</h1>
       <p>Your drives are mounted and ready to use.</p>
       <ul id="done-mount-list" class="mount-list" style="list-style:none"></ul>
+      <p class="success-hint">Your files are accessible in your file manager. CloudMount runs in the system tray &mdash; right-click the tray icon to manage mounts or open settings.</p>
       <button id="wizard-close-btn">Close</button>
     </div>
   </div>

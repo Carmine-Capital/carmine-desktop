@@ -225,7 +225,7 @@ async fn flush_pushes_to_writeback() {
             "id": FILE_ITEM_ID,
             "name": "hello.txt",
             "size": 8,
-            "etag": "etag-1",
+            "eTag": "etag-1",
             "parentReference": { "driveId": DRIVE_ID, "id": ROOT_ITEM_ID },
             "file": { "mimeType": "text/plain" }
         })))
@@ -838,7 +838,7 @@ fn large_file_content() -> Vec<u8> {
 
 #[tokio::test]
 async fn streaming_buffer_append_updates_progress() {
-    let buf = StreamingBuffer::new(100);
+    let buf = StreamingBuffer::new(100).unwrap();
     assert_eq!(buf.downloaded_bytes(), 0);
 
     buf.append_chunk(&[1, 2, 3]).await;
@@ -853,7 +853,7 @@ async fn streaming_buffer_append_updates_progress() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn streaming_buffer_wait_for_range_blocks_until_data() {
-    let buf = Arc::new(StreamingBuffer::new(100));
+    let buf = Arc::new(StreamingBuffer::new(100).unwrap());
     let buf2 = buf.clone();
 
     tokio::spawn(async move {
@@ -872,7 +872,7 @@ async fn streaming_buffer_wait_for_range_blocks_until_data() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn streaming_buffer_wait_for_range_returns_error_on_failed() {
-    let buf = Arc::new(StreamingBuffer::new(100));
+    let buf = Arc::new(StreamingBuffer::new(100).unwrap());
     let buf2 = buf.clone();
 
     tokio::spawn(async move {
@@ -891,7 +891,7 @@ async fn streaming_buffer_wait_for_range_returns_error_on_failed() {
 
 #[tokio::test]
 async fn streaming_buffer_read_range_correct_slices() {
-    let buf = StreamingBuffer::new(10);
+    let buf = StreamingBuffer::new(10).unwrap();
     buf.append_chunk(&[10, 20, 30, 40, 50]).await;
 
     let data = buf.read_range(2, 2).await;
@@ -899,6 +899,32 @@ async fn streaming_buffer_read_range_correct_slices() {
 
     let data = buf.read_range(8, 2).await;
     assert!(data.is_empty());
+}
+
+// StreamingBuffer size cap tests (Fix 3)
+
+#[tokio::test]
+async fn streaming_buffer_rejects_zero_size() {
+    let result = StreamingBuffer::new(0);
+    assert!(result.is_err(), "StreamingBuffer should reject size 0");
+}
+
+#[tokio::test]
+async fn streaming_buffer_rejects_oversized() {
+    let result = StreamingBuffer::new(256 * 1024 * 1024 + 1);
+    assert!(
+        result.is_err(),
+        "StreamingBuffer should reject sizes > 256MB"
+    );
+}
+
+#[tokio::test]
+async fn streaming_buffer_accepts_max_valid_size() {
+    let result = StreamingBuffer::new(256 * 1024 * 1024);
+    assert!(
+        result.is_ok(),
+        "StreamingBuffer should accept exactly 256MB"
+    );
 }
 
 // Task 11.1: DownloadState transition tests
@@ -916,7 +942,7 @@ async fn download_state_complete_reads_work() {
 async fn download_state_streaming_transitions_to_complete() {
     use cloudmount_vfs::core_ops::DownloadState;
 
-    let buf = Arc::new(StreamingBuffer::new(5));
+    let buf = Arc::new(StreamingBuffer::new(5).unwrap());
     buf.append_chunk(&[1, 2, 3, 4, 5]).await;
     buf.mark_done();
 
@@ -1334,4 +1360,34 @@ async fn open_file_with_valid_cache_serves_from_disk() {
     .unwrap();
 
     cleanup(&base);
+}
+
+// --- Conflict naming tests ---
+
+#[test]
+fn conflict_name_preserves_extension() {
+    use cloudmount_vfs::core_ops::conflict_name;
+    let result = conflict_name("report.docx", 1741000000);
+    assert_eq!(result, "report.conflict.1741000000.docx");
+}
+
+#[test]
+fn conflict_name_no_extension() {
+    use cloudmount_vfs::core_ops::conflict_name;
+    let result = conflict_name("Makefile", 1741000000);
+    assert_eq!(result, "Makefile.conflict.1741000000");
+}
+
+#[test]
+fn conflict_name_multiple_dots() {
+    use cloudmount_vfs::core_ops::conflict_name;
+    let result = conflict_name("archive.tar.gz", 1741000000);
+    assert_eq!(result, "archive.tar.conflict.1741000000.gz");
+}
+
+#[test]
+fn conflict_name_hidden_file_with_extension() {
+    use cloudmount_vfs::core_ops::conflict_name;
+    let result = conflict_name(".config.json", 1741000000);
+    assert_eq!(result, ".config.conflict.1741000000.json");
 }

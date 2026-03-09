@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use tauri::{
-    AppHandle, Manager, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
     menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -9,7 +9,6 @@ use tauri::{
 pub struct TrayState(pub Mutex<tauri::tray::TrayIcon>);
 
 pub fn setup(app: &AppHandle, app_name: &str) -> tauri::Result<()> {
-    let open_item = MenuItemBuilder::with_id("open_folder", "Open Mount Folder").build(app)?;
     let settings_item = MenuItemBuilder::with_id("settings", "Settings\u{2026}").build(app)?;
     let update_item =
         MenuItemBuilder::with_id("check_for_updates", "Check for Updates").build(app)?;
@@ -19,7 +18,6 @@ pub fn setup(app: &AppHandle, app_name: &str) -> tauri::Result<()> {
 
     let menu = MenuBuilder::new(app)
         .items(&[
-            &open_item,
             &settings_item,
             &update_item,
             &sep,
@@ -32,6 +30,8 @@ pub fn setup(app: &AppHandle, app_name: &str) -> tauri::Result<()> {
         .icon(app.default_window_icon().unwrap().clone())
         .tooltip(app_name)
         .menu(&menu)
+        // Linux AppIndicator backend may not fire TrayIconEvent::Click for
+        // left-click. All functionality is accessible via the right-click menu.
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {
             handle_menu_event(app, event.id().as_ref());
@@ -135,7 +135,7 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
 pub fn open_or_focus_wizard(app: &AppHandle, add_mount: bool) {
     if let Some(win) = app.get_webview_window("wizard") {
         if add_mount {
-            let _ = win.eval("goToAddMount()");
+            let _ = win.emit("navigate-add-mount", ());
         }
         let _ = win.unminimize();
         let _ = win.show();
@@ -153,7 +153,7 @@ pub fn open_or_focus_wizard(app: &AppHandle, add_mount: bool) {
 pub fn open_or_focus_window(app: &AppHandle, label: &str, title: &str, url: &str) {
     if let Some(win) = app.get_webview_window(label) {
         if label == "settings" {
-            let _ = win.eval("loadSettings(); loadMounts();");
+            let _ = win.emit("refresh-settings", ());
         }
         let _ = win.unminimize();
         let _ = win.show();

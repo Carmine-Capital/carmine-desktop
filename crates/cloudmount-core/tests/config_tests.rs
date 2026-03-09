@@ -65,6 +65,7 @@ fn test_effective_config_defaults() -> cloudmount_core::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
 fn test_expand_mount_point_home() {
     let home = env::var("HOME")
