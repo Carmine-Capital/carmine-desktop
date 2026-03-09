@@ -186,12 +186,11 @@ fn machine_id() -> Option<String> {
         .and_then(|out| {
             let stdout = String::from_utf8_lossy(&out.stdout);
             for line in stdout.lines() {
-                if let Some(rest) = line.trim().strip_prefix("\"IOPlatformUUID\"") {
-                    if let Some(value) = rest.split('"').nth(1) {
-                        if !value.is_empty() {
-                            return Some(value.to_string());
-                        }
-                    }
+                if let Some(rest) = line.trim().strip_prefix("\"IOPlatformUUID\"")
+                    && let Some(value) = rest.split('"').nth(1)
+                    && !value.is_empty()
+                {
+                    return Some(value.to_string());
                 }
             }
             None
