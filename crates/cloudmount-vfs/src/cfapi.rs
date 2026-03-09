@@ -131,14 +131,14 @@ impl SyncFilter for CloudMountCfFilter {
     ) -> CResult<()> {
         let Some(rel_path) = self.relative_path(&request.path()) else {
             tracing::warn!("cfapi: fetch_data called for path outside sync root");
-            return Err(CloudErrorKind::Unsuccessful);
+            return Ok(());
         };
 
         let item_id = match std::str::from_utf8(request.file_blob()) {
             Ok(s) => s.to_owned(),
             Err(e) => {
                 tracing::warn!(path = %rel_path, "cfapi: fetch_data blob decode failed: {e:?}");
-                return Err(CloudErrorKind::Unsuccessful);
+                return Ok(());
             }
         };
 
@@ -148,12 +148,11 @@ impl SyncFilter for CloudMountCfFilter {
         // Windows Server CI runners where directory-enumeration callbacks are
         // unreliable and tests create placeholders directly via PlaceholderFile.
         //
-        // NOTE: do NOT return Err if resolution fails. Write::fail in
-        // cloud-filter 0.0.6 calls CfExecute(TRANSFER_DATA, length=0) which
-        // Windows rejects with ERROR_CLOUD_FILE_INVALID_REQUEST for non-empty
-        // files, causing an unwrap() panic across the FFI boundary
-        // (STATUS_STACK_BUFFER_OVERRUN). Return Ok(()) instead so the OS
-        // cancels the transfer via CANCEL_FETCH_DATA.
+        // NOTE: NEVER return Err from fetch_data. Write::fail in cloud-filter
+        // 0.0.6 calls CfExecute(TRANSFER_DATA, length=0) which Windows rejects
+        // with ERROR_CLOUD_FILE_INVALID_REQUEST for non-empty files, causing an
+        // unwrap() panic across the FFI boundary (STATUS_STACK_BUFFER_OVERRUN).
+        // Return Ok(()) on all error paths so the OS uses CANCEL_FETCH_DATA.
         let ino = if let Some(ino) = self.core.inodes().get_inode(&item_id) {
             ino
         } else {
@@ -177,12 +176,13 @@ impl SyncFilter for CloudMountCfFilter {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(path = %rel_path, "cfapi: fetch_data download failed: {e:?}");
-                return Err(CloudErrorKind::Unsuccessful);
+                return Ok(());
             }
         };
 
         if content.is_empty() {
-            return Err(CloudErrorKind::Unsuccessful);
+            tracing::warn!(path = %rel_path, "cfapi: fetch_data got empty content, skipping");
+            return Ok(());
         }
 
         let data = &content[..];
@@ -200,7 +200,7 @@ impl SyncFilter for CloudMountCfFilter {
 
             if let Err(e) = ticket.write_at(&data[pos..pos + chunk_len], offset) {
                 tracing::warn!(path = %rel_path, "cfapi: fetch_data write_at failed: {e:?}");
-                return Err(CloudErrorKind::Unsuccessful);
+                break;
             }
 
             pos += chunk_len;
