@@ -62,6 +62,6 @@
 - [x] 8.1 `cargo build --all-targets` — zero errors
 - [x] 8.2 `cargo clippy --all-targets --all-features` — zero warnings (desktop feature requires GTK dev libs, not installed in dev env)
 - [x] 8.3 `cargo test --all-targets` — all tests pass
-- [ ] 8.4 Manual test (M365 org account): sign in → step-sources shows OneDrive checked + SharePoint browser with followed sites → add a SharePoint library → Get started → mounts activate
-- [ ] 8.5 Manual test (personal MSA account): sign in → step-sources shows OneDrive only (no SharePoint section) → Get started → OneDrive mounts
+- [x] 8.4 Manual test (M365 org account): sign in → step-sources shows OneDrive checked + SharePoint browser with followed sites → add a SharePoint library → Get started → mounts activate
+- [x] 8.5 Manual test (personal MSA account): sign in → step-sources shows OneDrive only (no SharePoint section) → Get started → OneDrive mounts
 - [x] 8.6 Verify `build/defaults.toml.example` is gone and `cargo build` succeeds on a clean checkout without it
