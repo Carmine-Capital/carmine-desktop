@@ -8,14 +8,14 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="tabs">
-    <div class="tab active" data-panel="general">General</div>
-    <div class="tab" data-panel="mounts">Mounts</div>
-    <div class="tab" data-panel="account">Account</div>
-    <div class="tab" data-panel="advanced">Advanced</div>
+  <div class="tabs" role="tablist">
+    <div class="tab active" data-panel="general" role="tab" tabindex="0" aria-selected="true" aria-controls="general" id="tab-general">General</div>
+    <div class="tab" data-panel="mounts" role="tab" tabindex="-1" aria-selected="false" aria-controls="mounts" id="tab-mounts">Mounts</div>
+    <div class="tab" data-panel="account" role="tab" tabindex="-1" aria-selected="false" aria-controls="account" id="tab-account">Account</div>
+    <div class="tab" data-panel="advanced" role="tab" tabindex="-1" aria-selected="false" aria-controls="advanced" id="tab-advanced">Advanced</div>
   </div>
 
-  <div id="general" class="panel active">
+  <div id="general" class="panel active" role="tabpanel" aria-labelledby="tab-general">
     <div class="field">
       <label><input type="checkbox" id="auto-start"> Start on login</label>
     </div>
@@ -23,7 +23,7 @@
       <label><input type="checkbox" id="notifications"> Notifications</label>
     </div>
     <div class="field">
-      <label>Sync interval</label>
+      <label for="sync-interval">Sync interval</label>
       <select id="sync-interval">
         <option value="30">30 seconds</option>
         <option value="60">1 minute</option>
@@ -36,35 +36,35 @@
     </div>
   </div>
 
-  <div id="mounts" class="panel">
+  <div id="mounts" class="panel" role="tabpanel" aria-labelledby="tab-mounts">
     <ul class="mount-list settings-mounts" id="mount-list"></ul>
     <div class="actions">
       <button id="btn-add-mount">Add Mount</button>
     </div>
   </div>
 
-  <div id="account" class="panel">
+  <div id="account" class="panel" role="tabpanel" aria-labelledby="tab-account">
     <p id="account-email">Not signed in</p>
     <div class="actions">
       <button id="btn-sign-out" class="btn-danger">Sign Out</button>
     </div>
   </div>
 
-  <div id="advanced" class="panel">
+  <div id="advanced" class="panel" role="tabpanel" aria-labelledby="tab-advanced">
     <div class="field">
-      <label>Cache directory</label>
+      <label for="cache-dir">Cache directory</label>
       <input type="text" id="cache-dir" placeholder="Default">
     </div>
     <div class="field">
-      <label>Maximum cache size</label>
+      <label for="cache-max-size">Maximum cache size</label>
       <input type="text" id="cache-max-size" placeholder="5GB">
     </div>
     <div class="field">
-      <label>Metadata TTL (seconds)</label>
+      <label for="metadata-ttl">Metadata TTL (seconds)</label>
       <input type="number" id="metadata-ttl" placeholder="60">
     </div>
     <div class="field">
-      <label>Log level</label>
+      <label for="log-level">Log level</label>
       <select id="log-level">
         <option value="error">Error</option>
         <option value="warn">Warning</option>
@@ -79,7 +79,7 @@
     </div>
   </div>
 
-  <div id="status-bar"></div>
+  <div id="status-bar" role="status" aria-live="polite"></div>
   <script src="ui.js"></script>
   <script src="settings.js"></script>
 </body>

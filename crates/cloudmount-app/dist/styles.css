@@ -202,10 +202,20 @@ select:focus,
   opacity: 0;
   z-index: 100;
 }
-#status-bar.visible            { transform: translateY(0); opacity: 1; }
+#status-bar.visible            { transform: translateY(0); opacity: 1; display: flex; align-items: center; gap: 0.5rem; }
 #status-bar.visible.success    { background: var(--success); color: #000; }
 #status-bar.visible.error      { background: var(--danger);  color: #fff; }
 #status-bar.visible.info       { background: var(--bg-elevated); color: var(--text-primary); border-top: 1px solid var(--border); }
+.status-dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  font-size: 1.25rem;
+  padding: 0 var(--space-1);
+  margin-left: auto;
+  line-height: 1;
+}
 
 /* ── Tabs ───────────────────────────────────────────────── */
 .tabs {
@@ -227,6 +237,10 @@ select:focus,
   color: var(--text-primary);
 }
 .tab:hover:not(.active) { color: var(--text-primary); }
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 
 /* ── Panel ──────────────────────────────────────────────── */
 .panel { display: none; padding: var(--space-6); }
@@ -368,9 +382,11 @@ select:focus,
   color: var(--text-primary);
   transition: border-color 0.15s ease, background 0.15s ease;
 }
-.sp-result-row:hover {
+.sp-result-row:hover,
+.sp-result-row:focus-visible {
   background: var(--bg-elevated);
   border-color: var(--accent);
+  outline: none;
 }
 .sp-result-url { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem; }
 
@@ -449,9 +465,11 @@ button.btn-remove:hover {
   color: var(--text-primary);
   transition: border-color 0.15s ease, background 0.15s ease;
 }
-.sp-lib-row:hover:not(.mounted) {
+.sp-lib-row:hover:not(.mounted),
+.sp-lib-row:focus-visible:not(.mounted) {
   background: var(--bg-elevated);
   border-color: var(--accent);
+  outline: none;
 }
 .sp-lib-row .lib-check {
   width: 1.125rem;
@@ -546,6 +564,7 @@ button.btn-remove:hover {
 .mount-name { font-weight: 500; color: var(--text-primary); }
 .mount-path { font-size: 0.8rem; color: var(--text-secondary); }
 .mount-actions { display: flex; gap: var(--space-2); }
+.mount-empty { color: var(--text-muted); font-style: italic; padding: var(--space-3); text-align: center; }
 
 .actions {
   margin-top: var(--space-4);
