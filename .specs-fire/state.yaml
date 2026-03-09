@@ -204,6 +204,27 @@ intents:
         depends_on: []
         run_id: run-cloud-mount-007
         completed_at: 2026-03-08T14:51:46.504Z
+  - id: wizard-multi-library-select
+    title: Wizard multi-library selection UX
+    status: completed
+    work_items:
+      - id: multi-select-library-ui
+        title: Multi-select library UI with already-mounted detection
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-009
+        completed_at: 2026-03-09T16:15:57.392Z
+      - id: batch-mount-creation
+        title: Batch mount creation and feedback
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on:
+          - multi-select-library-ui
+        run_id: run-cloud-mount-010
+        completed_at: 2026-03-09T16:25:13.589Z
 runs:
   active: []
   completed:
@@ -295,3 +316,19 @@ runs:
           mode: confirm
       started: 2026-03-08T14:57:12.239Z
       completed: 2026-03-08T15:05:38.736Z
+    - id: run-cloud-mount-009
+      scope: single
+      work_items:
+        - id: multi-select-library-ui
+          intent: wizard-multi-library-select
+          mode: confirm
+      started: 2026-03-09T16:10:26.817Z
+      completed: 2026-03-09T16:15:57.392Z
+    - id: run-cloud-mount-010
+      scope: single
+      work_items:
+        - id: batch-mount-creation
+          intent: wizard-multi-library-select
+          mode: confirm
+      started: 2026-03-09T16:19:54.830Z
+      completed: 2026-03-09T16:25:13.589Z

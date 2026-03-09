@@ -480,6 +480,7 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
     };
 
     if restored {
+        *state.account_id.lock().unwrap() = Some(account.as_ref().unwrap().id.clone());
         state.authenticated.store(true, Ordering::Relaxed);
 
         // Reconcile OS auto-start state with the persisted config value.
@@ -794,7 +795,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         drive_id.to_string(),
         &std::path::PathBuf::from(&mountpoint),
         rt,
-        drive_id.to_string(),
+        drive_id.replace('!', "_"),
     )
     .map_err(|e| e.to_string())?;
 

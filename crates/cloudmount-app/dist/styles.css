@@ -434,6 +434,67 @@ button.btn-remove:hover {
   box-shadow: none;
 }
 
+/* Library multi-select rows */
+.sp-lib-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin-bottom: var(--space-2);
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.sp-lib-row:hover:not(.mounted) {
+  background: var(--bg-elevated);
+  border-color: var(--accent);
+}
+.sp-lib-row .lib-check {
+  width: 1.125rem;
+  height: 1.125rem;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  font-size: 0.75rem;
+  color: transparent;
+}
+.sp-lib-row.selected .lib-check {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.sp-lib-row .lib-info { flex: 1; }
+.sp-lib-row .lib-name { font-size: 0.875rem; }
+.sp-lib-row .lib-badge {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+.sp-lib-row.mounted {
+  opacity: 0.5;
+  cursor: default;
+}
+.sp-lib-row.mounted .lib-check {
+  border-color: var(--success);
+  background: var(--success);
+  color: #fff;
+}
+.sp-lib-row.mounted .lib-badge { color: var(--success); }
+
+/* Add selected button */
+#add-selected-btn {
+  margin-top: var(--space-4);
+  width: 100%;
+}
+
 .sources-spinner { text-align: center; padding: var(--space-4) 0; }
 .sources-spinner .spinner { margin-bottom: 0; }
 

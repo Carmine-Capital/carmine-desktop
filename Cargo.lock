@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "cloudmount-app"
-version = "0.1.0"
+version = "0.1.0-rc.3"
 dependencies = [
  "anyhow",
  "bytes",
@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "cloudmount-auth"
-version = "0.1.0"
+version = "0.1.0-rc.3"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -730,7 +730,7 @@ dependencies = [
 
 [[package]]
 name = "cloudmount-cache"
-version = "0.1.0"
+version = "0.1.0-rc.3"
 dependencies = [
  "anyhow",
  "bytes",
@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "cloudmount-core"
-version = "0.1.0"
+version = "0.1.0-rc.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -764,7 +764,7 @@ dependencies = [
 
 [[package]]
 name = "cloudmount-graph"
-version = "0.1.0"
+version = "0.1.0-rc.3"
 dependencies = [
  "anyhow",
  "bytes",
@@ -785,7 +785,7 @@ dependencies = [
 
 [[package]]
 name = "cloudmount-vfs"
-version = "0.1.0"
+version = "0.1.0-rc.3"
 dependencies = [
  "anyhow",
  "bytes",

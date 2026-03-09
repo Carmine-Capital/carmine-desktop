@@ -21,5 +21,5 @@
 
 ## 4. Validation
 
-- [ ] 4.1 Push a test tag (e.g., `v0.1.0-rc.1`) and verify the workflow runs, builds all platforms, and publishes the release with all expected artifacts and `latest.json`
-- [ ] 4.2 Verify `latest.json` contains correct platform entries with download URLs and signatures
+- [x] 4.1 Push a test tag (e.g., `v0.1.0-rc.1`) and verify the workflow runs, builds all platforms, and publishes the release with all expected artifacts and `latest.json`
+- [x] 4.2 Verify `latest.json` contains correct platform entries with download URLs and signatures

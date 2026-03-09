@@ -428,9 +428,15 @@ fn build_sync_root_id(account_name: &str) -> cloudmount_core::Result<SyncRootId>
     let sid = SecurityId::current_user().map_err(|e| {
         cloudmount_core::Error::Filesystem(format!("failed to get user SID: {e:?}"))
     })?;
+    let sanitized = account_name.replace('!', "_");
+    tracing::debug!(
+        provider = PROVIDER_NAME,
+        account_name = %sanitized,
+        "building sync root ID"
+    );
     Ok(SyncRootIdBuilder::new(PROVIDER_NAME)
         .user_security_id(sid)
-        .account_name(account_name)
+        .account_name(&sanitized)
         .build())
 }
 

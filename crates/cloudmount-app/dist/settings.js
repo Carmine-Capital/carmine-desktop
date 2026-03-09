@@ -180,3 +180,9 @@ async function clearCache() {
 
 loadSettings();
 loadMounts();
+
+document.getElementById('btn-save-general').addEventListener('click', saveGeneral);
+document.getElementById('btn-save-advanced').addEventListener('click', saveAdvanced);
+document.getElementById('btn-add-mount').addEventListener('click', addMount);
+document.getElementById('btn-sign-out').addEventListener('click', signOut);
+document.getElementById('btn-clear-cache').addEventListener('click', clearCache);

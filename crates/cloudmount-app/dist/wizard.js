@@ -7,6 +7,7 @@ let onedriveDriveId = null;
 let sourcesSpSearchTimer = null;
 let sourcesSelectedSite = null;
 let addMountMode = false;
+let selectedLibraries = new Map(); // driveId → { site, library }
 
 // -- sign-in flow --
 
@@ -191,6 +192,7 @@ async function searchSitesInSources(query) {
 
 async function selectSiteInSources(site) {
   sourcesSelectedSite = site;
+  selectedLibraries.clear();
   const spinner = document.getElementById('sources-sp-spinner');
   const errEl = document.getElementById('sources-sp-error');
   const libList = document.getElementById('sources-sp-lib-list');
@@ -200,9 +202,12 @@ async function selectSiteInSources(site) {
   errEl.textContent = '';
   libList.innerHTML = '';
 
-  let libraries;
+  let libraries, mounts;
   try {
-    libraries = await invoke('list_drives', { siteId: site.id });
+    [libraries, mounts] = await Promise.all([
+      invoke('list_drives', { siteId: site.id }),
+      invoke('list_mounts'),
+    ]);
   } catch (e) {
     spinner.style.display = 'none';
     errEl.textContent = e.toString();
@@ -210,50 +215,139 @@ async function selectSiteInSources(site) {
     return;
   }
   spinner.style.display = 'none';
+
+  const mountedDriveIds = new Set(mounts.map(m => m.drive_id).filter(Boolean));
 
   libraries.forEach(lib => {
+    const isMounted = mountedDriveIds.has(lib.id);
     const row = document.createElement('div');
-    row.className = 'sp-result-row';
-    row.textContent = lib.name;
-    row.onclick = () => mountLibraryInSources(sourcesSelectedSite, lib);
+    row.className = 'sp-lib-row' + (isMounted ? ' mounted' : '');
+    row.dataset.driveId = lib.id;
+
+    const check = document.createElement('div');
+    check.className = 'lib-check';
+    check.textContent = '\u2713';
+
+    const info = document.createElement('div');
+    info.className = 'lib-info';
+    const name = document.createElement('div');
+    name.className = 'lib-name';
+    name.textContent = lib.name;
+    info.appendChild(name);
+
+    if (isMounted) {
+      const badge = document.createElement('div');
+      badge.className = 'lib-badge';
+      badge.textContent = 'Already added';
+      info.appendChild(badge);
+    }
+
+    row.appendChild(check);
+    row.appendChild(info);
+
+    if (!isMounted) {
+      row.addEventListener('click', () => {
+        const driveId = lib.id;
+        if (selectedLibraries.has(driveId)) {
+          selectedLibraries.delete(driveId);
+          row.classList.remove('selected');
+        } else {
+          selectedLibraries.set(driveId, { site, library: lib });
+          row.classList.add('selected');
+        }
+        updateAddSelectedBtn();
+      });
+    }
+
     libList.appendChild(row);
   });
+
   document.getElementById('sources-sp-libraries').style.display = 'block';
+  updateAddSelectedBtn();
 }
 
-async function mountLibraryInSources(site, library) {
-  const spinner = document.getElementById('sources-sp-spinner');
-  const errEl = document.getElementById('sources-sp-error');
-  spinner.style.display = 'inline-block';
-
-  const mountPoint = '~/Cloud/' + site.display_name + ' - ' + library.name + '/';
-  let mountId;
-  try {
-    mountId = await invoke('add_mount', {
-      mountType: 'sharepoint',
-      mountPoint,
-      driveId: library.id,
-      siteId: site.id,
-      siteName: site.display_name,
-      libraryName: library.name,
-    });
-  } catch (e) {
-    spinner.style.display = 'none';
-    errEl.textContent = e.toString();
-    errEl.style.display = 'block';
-    return;
+function updateAddSelectedBtn() {
+  const btn = document.getElementById('add-selected-btn');
+  const count = selectedLibraries.size;
+  if (count > 0) {
+    btn.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Add selected (' + count + ')';
+  } else {
+    btn.style.display = 'none';
+    btn.disabled = true;
   }
-  spinner.style.display = 'none';
+}
 
-  // Append to added-sources list
-  addSourceEntry(library.name + ' (' + site.display_name + ')', mountId);
+async function confirmSelectedLibraries() {
+  if (selectedLibraries.size === 0) return;
+  const errEl = document.getElementById('sources-sp-error');
+  const addBtn = document.getElementById('add-selected-btn');
 
-  // Reset SP browser to site list
-  document.getElementById('sources-sp-libraries').style.display = 'none';
-  document.getElementById('sources-sp-lib-list').innerHTML = '';
-  sourcesSelectedSite = null;
+  addBtn.disabled = true;
+  errEl.style.display = 'none';
 
+  const entries = Array.from(selectedLibraries.entries());
+  const total = entries.length;
+  const errors = [];
+  const succeeded = [];
+
+  for (let i = 0; i < entries.length; i++) {
+    const [driveId, { site, library }] = entries[i];
+    addBtn.textContent = 'Adding ' + (i + 1) + ' of ' + total + '\u2026';
+
+    const mountPoint = '~/Cloud/' + site.display_name + ' - ' + library.name + '/';
+    try {
+      const mountId = await invoke('add_mount', {
+        mountType: 'sharepoint',
+        mountPoint,
+        driveId: library.id,
+        siteId: site.id,
+        siteName: site.display_name,
+        libraryName: library.name,
+      });
+      succeeded.push(driveId);
+      addSourceEntry(library.name + ' (' + site.display_name + ')', mountId);
+
+      // Transition row to mounted state
+      const row = document.querySelector('.sp-lib-row[data-drive-id="' + CSS.escape(driveId) + '"]');
+      if (row) {
+        row.classList.remove('selected');
+        row.classList.add('mounted');
+        row.replaceWith(row.cloneNode(true)); // remove click listener
+        const badge = document.createElement('div');
+        badge.className = 'lib-badge';
+        badge.textContent = 'Already added';
+        const mountedRow = document.querySelector('.sp-lib-row[data-drive-id="' + CSS.escape(driveId) + '"]');
+        const infoEl = mountedRow.querySelector('.lib-info');
+        if (infoEl && !infoEl.querySelector('.lib-badge')) {
+          infoEl.appendChild(badge);
+        }
+      }
+    } catch (e) {
+      errors.push(library.name + ': ' + e.toString());
+    }
+  }
+
+  // Clear only succeeded items from selection; keep failed for retry
+  for (const driveId of succeeded) {
+    selectedLibraries.delete(driveId);
+  }
+
+  updateAddSelectedBtn();
   updateGetStartedBtn();
+
+  if (errors.length === 0) {
+    showStatus(total === 1
+      ? 'Library added successfully'
+      : total + ' libraries added successfully', 'success');
+  } else if (errors.length === total) {
+    showStatus('Failed to add libraries \u2014 check your connection', 'error');
+  } else {
+    errEl.textContent = 'Some libraries failed: ' + errors.join('; ');
+    errEl.style.display = 'block';
+    showStatus(succeeded.length + ' added, ' + errors.length + ' failed', 'info');
+  }
 }
 
 function addSourceEntry(label, mountId) {
@@ -348,7 +442,10 @@ async function init() {
   document.getElementById('cancel-btn').addEventListener('click', cancelSignIn);
   document.getElementById('sources-sp-back-sites').addEventListener('click', () => {
     document.getElementById('sources-sp-libraries').style.display = 'none';
+    selectedLibraries.clear();
+    updateAddSelectedBtn();
   });
+  document.getElementById('add-selected-btn').addEventListener('click', confirmSelectedLibraries);
   document.getElementById('sources-sp-search').addEventListener('input', onSourcesSpSearchInput);
   document.getElementById('onedrive-check').addEventListener('change', updateGetStartedBtn);
   document.getElementById('get-started-btn').addEventListener('click', () => {

@@ -600,10 +600,10 @@ fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {
         Some(aid) => new_effective
             .mounts
             .into_iter()
-            .filter(|m| {
-                if m.account_id.as_deref() == Some(aid.as_str()) {
-                    true
-                } else {
+            .filter(|m| match m.account_id.as_deref() {
+                Some(mid) if mid == aid.as_str() => true,
+                None => true,
+                Some(_) => {
                     tracing::warn!(
                         mount_id = %m.id,
                         mount_name = %m.name,
