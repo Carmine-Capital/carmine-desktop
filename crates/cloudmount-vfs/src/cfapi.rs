@@ -143,10 +143,11 @@ impl SyncFilter for CloudMountCfFilter {
         };
 
         // Fast path: item_id from blob is already in the inode table.
-        // Fallback: resolve via path traversal (cache → Graph API). This fires
-        // when fetch_placeholders hasn't populated the inode table yet — e.g. on
-        // Windows Server CI runners where directory-enumeration callbacks are
-        // unreliable and tests create placeholders directly via PlaceholderFile.
+        // Fallback 1: resolve via path traversal (cache → Graph API).
+        // Fallback 2: allocate a fresh inode for item_id so read_range_direct
+        // can look it up and trigger a download. This handles the Windows Server
+        // CI case where fetch_placeholders is unreliable and tests create
+        // placeholders directly via PlaceholderFile without populating the table.
         //
         // NOTE: NEVER return Err from fetch_data. Write::fail in cloud-filter
         // 0.0.6 calls CfExecute(TRANSFER_DATA, length=0) which Windows rejects
@@ -159,11 +160,13 @@ impl SyncFilter for CloudMountCfFilter {
             match self.core.resolve_path(&rel_path) {
                 Some((ino, _)) => ino,
                 None => {
-                    tracing::warn!(
+                    // Item not in cache yet — allocate a fresh inode so
+                    // read_range_direct can look up item_id and download.
+                    tracing::debug!(
                         path = %rel_path,
-                        "cfapi: fetch_data inode not found for item {item_id}, path unresolvable"
+                        "cfapi: fetch_data allocating inode for unknown item {item_id}"
                     );
-                    return Ok(());
+                    self.core.inodes().allocate(&item_id)
                 }
             }
         };
