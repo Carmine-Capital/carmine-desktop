@@ -1,6 +1,6 @@
 {
   "productName": "CloudMount",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.1",
   "identifier": "com.cloudmount",
   "build": {
     "frontendDist": "./dist"
@@ -29,10 +29,9 @@
       "entitlements": null
     },
     "windows": {
-      "wix": {
-        "language": "en-US"
-      },
-      "nsis": null
+      "nsis": {
+        "languages": ["English"]
+      }
     }
   },
   "app": {
@@ -43,8 +42,8 @@
   "plugins": {
     "notification": null,
     "updater": {
-      "endpoints": [],
-      "pubkey": ""
+      "endpoints": ["https://github.com/Nyxa07/cloud-mount/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJENzNCNTg0QzNCOUE5QTMKUldTanFibkRoTFZ6TFFWMUNtMlRhN1pEdHh0Ungxckx0OXdGSXhjUUJLWDZ5SFJuOFhTbVNHaWIK"
     }
   }
 }
