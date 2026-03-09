@@ -1,13 +1,18 @@
 {
   "productName": "CloudMount",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0-rc.3",
   "identifier": "com.cloudmount",
   "build": {
     "frontendDist": "./dist"
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage", "dmg", "nsis"],
+    "targets": [
+      "deb",
+      "appimage",
+      "dmg",
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -16,7 +21,9 @@
     ],
     "linux": {
       "deb": {
-        "depends": ["libfuse3-3"],
+        "depends": [
+          "libfuse3-3"
+        ],
         "desktopTemplate": null
       },
       "appimage": {
@@ -30,7 +37,9 @@
     },
     "windows": {
       "nsis": {
-        "languages": ["English"]
+        "languages": [
+          "English"
+        ]
       }
     }
   },
@@ -42,7 +51,9 @@
   "plugins": {
     "notification": null,
     "updater": {
-      "endpoints": ["https://github.com/Nyxa07/cloud-mount/releases/latest/download/latest.json"],
+      "endpoints": [
+        "https://github.com/Nyxa07/cloud-mount/releases/latest/download/latest.json"
+      ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJENzNCNTg0QzNCOUE5QTMKUldTanFibkRoTFZ6TFFWMUNtMlRhN1pEdHh0Ungxckx0OXdGSXhjUUJLWDZ5SFJuOFhTbVNHaWIK"
     }
   }
