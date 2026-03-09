@@ -9,6 +9,9 @@ TOOLBOX = toolbox run -c cloudmount-build
 build: ## Build all targets
 	$(TOOLBOX) cargo build --all-targets
 
+build-desktop: ## Build all targets
+	$(TOOLBOX) cargo build --all-targets --features desktop
+
 test: ## Run all tests
 	$(TOOLBOX) cargo test --all-targets
 
@@ -20,12 +23,6 @@ fmt-check: ## Check formatting (CI mode)
 
 clippy: ## Lint all targets (warnings = errors)
 	$(TOOLBOX) cargo clippy --all-targets --all-features
-
-run: ## Run headless (no GUI) — prefer running on host
-	$(TOOLBOX) cargo run -p cloudmount-app
-
-run-desktop: ## Run with Tauri GUI — prefer running on host
-	$(TOOLBOX) cargo run -p cloudmount-app --features desktop
 
 check: fmt-check clippy test ## Run all CI checks (fmt + clippy + test)
 

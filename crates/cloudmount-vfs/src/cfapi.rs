@@ -438,10 +438,10 @@ impl SyncFilter for CloudMountCfFilter {
     fn state_changed(&self, changes: Vec<PathBuf>) {
         for path in &changes {
             tracing::debug!("state changed: {}", path.display());
-            if let Some(rel_path) = self.relative_path(path) {
-                if let Some((ino, _)) = self.core.resolve_path(&rel_path) {
-                    self.core.cache().memory.invalidate(ino);
-                }
+            if let Some(rel_path) = self.relative_path(path)
+                && let Some((ino, _)) = self.core.resolve_path(&rel_path)
+            {
+                self.core.cache().memory.invalidate(ino);
             }
         }
     }
