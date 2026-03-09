@@ -9,8 +9,14 @@ TOOLBOX = toolbox run -c cloudmount-build
 build: ## Build all targets
 	$(TOOLBOX) cargo build --all-targets
 
-build-desktop: ## Build all targets
+build-desktop: ## Build all targets with desktop feature
 	$(TOOLBOX) cargo build --all-targets --features desktop
+
+build-appimage:
+	toolbox run -c cloudmount-build env \
+		APPIMAGE_EXTRACT_AND_RUN=1 \
+		NO_STRIP=true \
+		cargo tauri build --features desktop --bundles appimage
 
 test: ## Run all tests
 	$(TOOLBOX) cargo test --all-targets
@@ -21,8 +27,9 @@ fmt: ## Format all code
 fmt-check: ## Check formatting (CI mode)
 	$(TOOLBOX) cargo fmt --all -- --check
 
-clippy: ## Lint all targets (warnings = errors)
-	$(TOOLBOX) cargo clippy --all-targets --all-features
+clippy: ## Lint all targets (warnings = errors, mirrors CI)
+	RUSTFLAGS=-Dwarnings $(TOOLBOX) cargo clippy --all-targets
+	RUSTFLAGS=-Dwarnings $(TOOLBOX) cargo clippy --all-targets --features desktop
 
 check: fmt-check clippy test ## Run all CI checks (fmt + clippy + test)
 

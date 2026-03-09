@@ -69,9 +69,7 @@ toolbox run -c cloudmount-build cargo build -p cloudmount-app --release --featur
 Run on the host:
 
 ```bash
-./target/release/cloudmount-app \
-  --client-id "your-client-id" \
-  --tenant-id "your-tenant-id"
+./target/release/cloudmount-app
 ```
 
 ### AppImage
@@ -82,8 +80,6 @@ AppImage bundles all runtime dependencies — ideal for immutable distros since 
 toolbox run -c cloudmount-build env \
   APPIMAGE_EXTRACT_AND_RUN=1 \
   NO_STRIP=true \
-  CLOUDMOUNT_CLIENT_ID="your-client-id" \
-  CLOUDMOUNT_TENANT_ID="your-tenant-id" \
   cargo tauri build --features desktop --bundles appimage
 ```
 
