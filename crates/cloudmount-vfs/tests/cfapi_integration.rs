@@ -226,9 +226,14 @@ async fn cfapi_hydrate_file_on_read() {
     let fixture = CfTestFixture::setup(&server).await;
     fixture.create_root_placeholders();
 
-    // Reading the file triggers fetch_data callback (hydration)
-    let content =
-        std::fs::read_to_string(fixture.path("hello.txt")).expect("hydration read failed");
+    // Reading the file triggers fetch_data callback (hydration).
+    // Use spawn_blocking so tokio worker threads stay free to drive the I/O
+    // for Handle::block_on() calls inside the CfApi callback.
+    let p = fixture.path("hello.txt");
+    let content = tokio::task::spawn_blocking(move || std::fs::read_to_string(p))
+        .await
+        .unwrap()
+        .expect("hydration read failed");
     assert_eq!(content, "Hello, world!");
 
     fixture.teardown();
@@ -270,11 +275,20 @@ async fn cfapi_edit_and_sync_file() {
     let fixture = CfTestFixture::setup(&server).await;
     fixture.create_root_placeholders();
 
-    // Hydrate the file before editing
-    let _ = std::fs::read_to_string(fixture.path("hello.txt"));
+    // Hydrate the file before editing.
+    // Use spawn_blocking so tokio worker threads stay free to drive the I/O
+    // for Handle::block_on() calls inside the CfApi callback.
+    let p = fixture.path("hello.txt");
+    let _ = tokio::task::spawn_blocking(move || std::fs::read_to_string(p))
+        .await
+        .unwrap();
 
     // Edit the file — CfApi detects local change via `closed` callback
-    std::fs::write(fixture.path("hello.txt"), "New content").expect("write failed");
+    let p = fixture.path("hello.txt");
+    tokio::task::spawn_blocking(move || std::fs::write(p, "New content"))
+        .await
+        .unwrap()
+        .expect("write failed");
 
     // Give sync time to upload
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
