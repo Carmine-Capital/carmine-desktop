@@ -1,6 +1,6 @@
 ## 1. Pre-deployment prerequisite (AAD portal)
 
-- [ ] 1.1 Update the Azure AD app registration for client ID `8ebe3ef7-f509-4146-8fef-c9b5d7c22252` — set `signInAudience` to `AzureADandPersonalMicrosoftAccount` to enable both M365 org and personal MSA accounts
+- [x] 1.1 Update the Azure AD app registration for client ID `8ebe3ef7-f509-4146-8fef-c9b5d7c22252` — set `signInAudience` to `AzureADandPersonalMicrosoftAccount` to enable both M365 org and personal MSA accounts
 
 ## 2. Config layer cleanup (cloudmount-core)
 
