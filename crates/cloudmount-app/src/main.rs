@@ -48,7 +48,9 @@ pub(crate) fn open_with_clean_env(path: &str) -> Result<(), String> {
 use cloudmount_auth::AuthManager;
 use cloudmount_cache::CacheManager;
 use cloudmount_cache::sync::run_delta_sync;
-use cloudmount_core::config::{MountConfig, cache_dir};
+use cloudmount_core::config::MountConfig;
+#[cfg(any(target_os = "linux", target_os = "macos", feature = "desktop"))]
+use cloudmount_core::config::cache_dir;
 use cloudmount_graph::GraphClient;
 use cloudmount_vfs::inode::InodeTable;
 use tokio_util::sync::CancellationToken;
@@ -124,6 +126,7 @@ pub struct AppState {
     pub tokio_handle: std::sync::OnceLock<tokio::runtime::Handle>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", feature = "desktop"))]
 fn parse_cache_size(size_str: &str) -> u64 {
     let s = size_str.trim().to_uppercase();
     let (num_part, multiplier) = if let Some(n) = s.strip_suffix("GB") {
