@@ -25,7 +25,7 @@
         <input id="auth-url" class="url-input" type="text" readonly>
         <button id="copy-btn" class="btn-secondary btn-sm">Copy URL</button>
       </div>
-      <div id="auth-error" class="error-msg" style="display:none"></div>
+      <div id="auth-error" class="error-msg" role="alert" style="display:none"></div>
       <button id="cancel-btn" class="btn-secondary" style="margin-top:1rem">Cancel</button>
     </div>
 
@@ -48,7 +48,7 @@
           <input id="sources-sp-search" type="text" placeholder="Search sites&hellip;">
         </div>
         <div id="sources-sp-spinner" class="spinner" style="display:none"></div>
-        <div id="sources-sp-error" class="error-msg" style="display:none"></div>
+        <div id="sources-sp-error" class="error-msg" role="alert" style="display:none"></div>
         <div id="sources-sp-sites"></div>
         <div id="sources-sp-libraries" style="display:none">
           <button id="sources-sp-back-sites" class="sp-back-link">&larr; Back to sites</button>
@@ -60,7 +60,7 @@
         <div class="section-heading">Added</div>
         <div id="sources-added-list"></div>
       </div>
-      <div id="sources-error" class="error-msg" style="display:none"></div>
+      <div id="sources-error" class="error-msg" role="alert" style="display:none"></div>
       <button id="get-started-btn" disabled style="margin-top:1.5rem">Get started</button>
     </div>
 
@@ -71,7 +71,7 @@
       <button id="wizard-close-btn">Close</button>
     </div>
   </div>
-  <div id="status-bar"></div>
+  <div id="status-bar" role="status" aria-live="polite"></div>
   <script src="ui.js"></script>
   <script src="wizard.js"></script>
 </body>

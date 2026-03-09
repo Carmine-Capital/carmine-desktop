@@ -8,6 +8,7 @@ let sourcesSpSearchTimer = null;
 let sourcesSelectedSite = null;
 let addMountMode = false;
 let selectedLibraries = new Map(); // driveId → { site, library }
+let cachedFollowedSites = null;
 
 // -- sign-in flow --
 
@@ -40,6 +41,7 @@ async function startSignIn() {
     signingIn = false;
     cleanupListeners();
     console.error('start_sign_in failed:', e);
+    showStatus('Sign-in failed', 'error');
     showStep('step-welcome');
   }
 }
@@ -65,6 +67,7 @@ async function copyAuthUrl() {
     setTimeout(() => { btn.textContent = 'Copy URL'; }, 2000);
   } catch (e) {
     console.error('clipboard write failed:', e);
+    showStatus('Could not copy URL', 'error');
   }
 }
 
@@ -113,6 +116,7 @@ async function loadSources() {
   }
 
   if (sitesResult.status === 'fulfilled') {
+    cachedFollowedSites = sitesResult.value;
     document.getElementById('sources-sp-section').style.display = 'block';
     renderFollowedSites(sitesResult.value);
   }
@@ -132,6 +136,8 @@ function renderFollowedSites(sites) {
   sites.forEach(site => {
     const row = document.createElement('div');
     row.className = 'sp-result-row';
+    row.setAttribute('role', 'button');
+    row.setAttribute('tabindex', '0');
     const name = document.createElement('div');
     name.textContent = site.display_name;
     const url = document.createElement('div');
@@ -139,7 +145,13 @@ function renderFollowedSites(sites) {
     url.textContent = site.web_url;
     row.appendChild(name);
     row.appendChild(url);
-    row.onclick = () => selectSiteInSources(site);
+    row.addEventListener('click', () => selectSiteInSources(site));
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        selectSiteInSources(site);
+      }
+    });
     sitesEl.appendChild(row);
   });
 }
@@ -150,8 +162,13 @@ function onSourcesSpSearchInput() {
   clearTimeout(sourcesSpSearchTimer);
   const query = document.getElementById('sources-sp-search').value.trim();
   if (!query) {
-    // Restore followed sites on empty query
-    loadSources();
+    // Restore followed sites on empty query (from cache if available)
+    if (cachedFollowedSites) {
+      renderFollowedSites(cachedFollowedSites);
+      document.getElementById('sources-sp-libraries').style.display = 'none';
+    } else {
+      loadSources();
+    }
     return;
   }
   sourcesSpSearchTimer = setTimeout(() => searchSitesInSources(query), 300);
@@ -192,7 +209,12 @@ async function searchSitesInSources(query) {
 
 async function selectSiteInSources(site) {
   sourcesSelectedSite = site;
-  selectedLibraries.clear();
+  if (selectedLibraries.size > 0) {
+    selectedLibraries.clear();
+    showStatus('Previous selections cleared', 'info');
+  } else {
+    selectedLibraries.clear();
+  }
   const spinner = document.getElementById('sources-sp-spinner');
   const errEl = document.getElementById('sources-sp-error');
   const libList = document.getElementById('sources-sp-lib-list');
@@ -223,10 +245,16 @@ async function selectSiteInSources(site) {
     const row = document.createElement('div');
     row.className = 'sp-lib-row' + (isMounted ? ' mounted' : '');
     row.dataset.driveId = lib.id;
+    if (!isMounted) {
+      row.setAttribute('role', 'checkbox');
+      row.setAttribute('aria-checked', 'false');
+      row.setAttribute('tabindex', '0');
+    }
 
     const check = document.createElement('div');
     check.className = 'lib-check';
     check.textContent = '\u2713';
+    check.setAttribute('aria-hidden', 'true');
 
     const info = document.createElement('div');
     info.className = 'lib-info';
@@ -246,16 +274,25 @@ async function selectSiteInSources(site) {
     row.appendChild(info);
 
     if (!isMounted) {
-      row.addEventListener('click', () => {
+      const toggleLib = () => {
         const driveId = lib.id;
         if (selectedLibraries.has(driveId)) {
           selectedLibraries.delete(driveId);
           row.classList.remove('selected');
+          row.setAttribute('aria-checked', 'false');
         } else {
           selectedLibraries.set(driveId, { site, library: lib });
           row.classList.add('selected');
+          row.setAttribute('aria-checked', 'true');
         }
         updateAddSelectedBtn();
+      };
+      row.addEventListener('click', toggleLib);
+      row.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleLib();
+        }
       });
     }
 
@@ -319,9 +356,13 @@ async function confirmSelectedLibraries() {
         badge.className = 'lib-badge';
         badge.textContent = 'Already added';
         const mountedRow = document.querySelector('.sp-lib-row[data-drive-id="' + CSS.escape(driveId) + '"]');
-        const infoEl = mountedRow.querySelector('.lib-info');
-        if (infoEl && !infoEl.querySelector('.lib-badge')) {
-          infoEl.appendChild(badge);
+        if (mountedRow) {
+          mountedRow.removeAttribute('role');
+          mountedRow.removeAttribute('tabindex');
+          const infoEl = mountedRow.querySelector('.lib-info');
+          if (infoEl && !infoEl.querySelector('.lib-badge')) {
+            infoEl.appendChild(badge);
+          }
         }
       }
     } catch (e) {
@@ -366,7 +407,12 @@ function addSourceEntry(label, mountId) {
   removeBtn.textContent = 'Remove';
   removeBtn.onclick = async () => {
     if (mountId) {
-      try { await invoke('remove_mount', { id: mountId }); } catch (_) {}
+      try {
+        await invoke('remove_mount', { id: mountId });
+      } catch (e) {
+        showStatus('Failed to remove mount', 'error');
+        return;
+      }
     }
     list.removeChild(row);
     if (list.children.length === 0) section.style.display = 'none';
@@ -394,6 +440,11 @@ async function getStarted() {
   const errEl = document.getElementById('sources-error');
   errEl.style.display = 'none';
 
+  const btn = document.getElementById('get-started-btn');
+  const origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Setting up\u2026';
+
   const onedriveSection = document.getElementById('sources-onedrive-section');
   const onedriveChecked = document.getElementById('onedrive-check') &&
     document.getElementById('onedrive-check').checked &&
@@ -409,31 +460,50 @@ async function getStarted() {
     } catch (e) {
       errEl.textContent = e.toString();
       errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = origLabel;
       return;
     }
   }
 
   try {
     await invoke('complete_wizard');
-  } catch (_) {}
+  } catch (e) {
+    showStatus('Failed to complete setup', 'error');
+    btn.disabled = false;
+    btn.textContent = origLabel;
+    return;
+  }
 
-  const mounts = await invoke('list_mounts');
-  const list = document.getElementById('done-mount-list');
-  list.innerHTML = '';
-  mounts.forEach(m => {
-    const li = document.createElement('li');
-    li.className = 'mount-item';
-    li.textContent = m.name + ' \u2192 ' + m.mount_point;
-    list.appendChild(li);
-  });
+  try {
+    const mounts = await invoke('list_mounts');
+    const list = document.getElementById('done-mount-list');
+    list.innerHTML = '';
+    mounts.forEach(m => {
+      const li = document.createElement('li');
+      li.className = 'mount-item';
+      li.textContent = m.name + ' \u2192 ' + m.mount_point;
+      list.appendChild(li);
+    });
+  } catch (e) {
+    console.error('list_mounts failed:', e);
+  }
   showStep('step-success');
 }
 
 // -- utilities --
 
+const _stepTitles = {
+  'step-welcome': 'CloudMount Setup',
+  'step-signing-in': 'Sign In \u2014 CloudMount Setup',
+  'step-sources': 'Add Sources \u2014 CloudMount Setup',
+  'step-success': 'All Set \u2014 CloudMount Setup',
+};
+
 function showStep(id) {
   document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
+  if (_stepTitles[id]) document.title = _stepTitles[id];
 }
 
 async function init() {
