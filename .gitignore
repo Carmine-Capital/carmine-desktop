@@ -1,6 +1,5 @@
 /target
 .opencode/
-AGENTS.md
 crates/*/AGENTS.md
 .env
 /node_modules
