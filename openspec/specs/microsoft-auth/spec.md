@@ -4,13 +4,9 @@ Defines OAuth2 PKCE authentication, token refresh, secure storage, and sign-out 
 ### Requirement: OAuth2 PKCE authentication flow
 The system SHALL authenticate users via OAuth2 Authorization Code Flow with PKCE using Microsoft Entra ID (Azure AD). Authentication MUST open the user's default browser to Microsoft's login page using a caller-provided URL opener mechanism, and listen for the authorization code on a localhost redirect URI. The URL opener SHALL be injected into the auth module at construction time, allowing the caller to provide a platform-appropriate implementation. On Linux in desktop mode, the opener SHALL spawn `xdg-open` directly via `std::process::Command` with `LD_LIBRARY_PATH` and `LD_PRELOAD` removed from the child process environment, and wait for the exit code. On macOS and Windows in desktop mode, `tauri-plugin-opener` SHALL be used. In headless mode, `open::that()` SHALL be used. Before invoking the opener, the system SHALL communicate the auth URL to any registered listener (e.g., the wizard UI) so it can be displayed as a fallback. The system SHALL enforce that at most one PKCE flow runs at a time; if a flow is already active when `sign_in()` is called, the prior flow MUST be cancelled before the new one begins.
 
-#### Scenario: First-time login (generic build)
-- **WHEN** the user clicks "Sign In", has no existing tokens, and no packaged tenant is configured
-- **THEN** the system invokes the injected URL opener with the Microsoft OAuth2 authorize endpoint (`login.microsoftonline.com/common/oauth2/v2.0/authorize`) with PKCE challenge, client_id, redirect_uri (http://localhost:{dynamic_port}/callback), and scopes (User.Read, Files.ReadWrite.All, Sites.Read.All, offline_access)
-
-#### Scenario: First-time login (pre-configured tenant)
-- **WHEN** the user clicks "Sign In", has no existing tokens, and packaged defaults define a tenant_id
-- **THEN** the system invokes the injected URL opener with the tenant-specific authorize endpoint (`login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize`) with `domain_hint={tenant_id}` and `login_hint` parameters, so the Microsoft login page skips org selection and goes directly to the correct tenant
+#### Scenario: First-time login
+- **WHEN** the user clicks "Sign In" and has no existing tokens
+- **THEN** the system invokes the injected URL opener with the Microsoft OAuth2 authorize endpoint (`login.microsoftonline.com/common/oauth2/v2.0/authorize`) with PKCE challenge, the official CloudMount client_id, redirect_uri (http://localhost:{dynamic_port}/callback), and scopes (User.Read, Files.ReadWrite.All, Sites.Read.All, offline_access); the `common` endpoint supports both M365 organizational accounts and personal Microsoft accounts (MSA)
 
 #### Scenario: Successful authentication callback
 - **WHEN** the user completes login in the browser and is redirected to the localhost callback with an authorization code
@@ -128,23 +124,15 @@ The system SHALL request the minimum necessary permission scopes for its functio
 - **THEN** the system requests exactly these scopes: `User.Read` (user profile), `Files.ReadWrite.All` (OneDrive file access), `Sites.Read.All` (SharePoint site discovery), `offline_access` (refresh token)
 
 ### Requirement: Client ID resolution
-The system SHALL resolve the client_id using a four-layer precedence chain: CLI argument, environment variable, packaged defaults, built-in default.
+The system SHALL use the official CloudMount client ID (`8ebe3ef7-f509-4146-8fef-c9b5d7c22252`) as a hardcoded constant. A `--client-id` CLI argument MAY override this value for development and testing purposes. No build-time env vars or packaged defaults participate in client ID resolution.
 
-#### Scenario: Client ID from CLI argument
+#### Scenario: Client ID from CLI argument (development override)
 - **WHEN** the `--client-id` CLI argument is provided
-- **THEN** the OAuth2 flow uses this client_id, overriding all other sources
+- **THEN** the OAuth2 flow uses this client_id, overriding the hardcoded constant
 
-#### Scenario: Client ID from environment variable
-- **WHEN** `CLOUDMOUNT_CLIENT_ID` is set and no `--client-id` CLI argument is provided
-- **THEN** the OAuth2 flow uses the environment variable value
-
-#### Scenario: Packaged client_id
-- **WHEN** the packaged defaults contain a `[tenant]` section with `client_id` and no CLI or env override is provided
-- **THEN** the OAuth2 flow uses this client_id for all token requests
-
-#### Scenario: No client_id configured
-- **WHEN** no client_id is configured via CLI, environment, or packaged defaults
-- **THEN** the system falls back to the built-in default client_id
+#### Scenario: No CLI override — official client ID used
+- **WHEN** no `--client-id` CLI argument is provided
+- **THEN** the OAuth2 flow uses the hardcoded official CloudMount client ID constant
 
 ### Requirement: Sign-in cancellation API
 The system SHALL expose a `cancel()` method on `AuthManager` that, when called, immediately terminates any active PKCE flow. This method SHALL be callable from any context (including from a Tauri command handler) and SHALL be a no-op if no flow is currently active.

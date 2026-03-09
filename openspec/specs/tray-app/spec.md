@@ -64,43 +64,27 @@ The system SHALL provide a context menu when the user right-clicks (or clicks on
 - **THEN** the system flushes all pending writes, unmounts all drives, stops the delta sync timer, and exits the process
 
 ### Requirement: First-run wizard
-The system SHALL present a setup wizard on first launch to guide the user through account login and initial mount configuration. The wizard adapts its flow based on whether packaged defaults are present. During the sign-in flow, the wizard SHALL display the Microsoft auth URL with a copy button so the user can open it manually if the browser launch silently fails.
+The system SHALL present a setup wizard on first launch (and whenever sign-in is required) to guide the user through account login and initial mount configuration. The wizard flow is the same for all accounts; there is no "branded" or "pre-configured" variant. During the sign-in flow, the wizard SHALL display the Microsoft auth URL with a copy button so the user can open it manually if the browser launch silently fails.
 
 #### Scenario: First launch detected
-- **WHEN** the application launches for the first time (no user configuration file exists)
-- **THEN** the system opens a setup wizard window instead of going directly to background mode
+- **WHEN** the application launches for the first time (no user configuration file exists) or no valid tokens are found on startup
+- **THEN** the system opens a setup wizard window
 
-#### Scenario: Full wizard flow (no packaged defaults)
-- **WHEN** the wizard is displayed and the binary has no packaged tenant or mount configuration
-- **THEN** it guides the user through: (1) "Sign in with Microsoft" button as the sole UI element, (2) after successful sign-in, the system auto-discovers the user's OneDrive and prompts for a root directory name (default "Cloud", with a warning if `~/Cloud` already exists), (3) the system automatically creates and mounts OneDrive at `~/{root_dir}/OneDrive/`, (4) a success screen shows "Your OneDrive is ready" with a note "Add SharePoint libraries anytime from Settings"
+#### Scenario: Wizard step sequence
+- **WHEN** the wizard opens
+- **THEN** it proceeds through these steps in order: (1) `step-welcome` — "Get started" landing with a "Sign in with Microsoft" button, (2) `step-sign-in` — PKCE browser flow; the auth URL is displayed with a copy button while the system awaits the OAuth callback, (3) `step-sources` — after successful sign-in, displays a unified source selection screen (see sharepoint-browser spec), (4) `step-success` — confirms mounts are activating
 
-#### Scenario: Pre-configured wizard flow (packaged defaults present)
-- **WHEN** the wizard is displayed and the binary has packaged defaults with a tenant and mounts
-- **THEN** the wizard shows a simplified flow: (1) Welcome screen showing the branded app name and the list of pre-configured drives, (2) "Sign in with Microsoft" button (tenant pre-locked via domain_hint), (3) After sign-in: all packaged mounts are automatically activated and mounted, (4) Success screen showing mounted drives with a note "You can add more drives in Settings anytime"
-
-#### Scenario: Pre-configured wizard completion
-- **WHEN** the user completes sign-in in the pre-configured wizard flow
-- **THEN** the system auto-mounts all enabled packaged mounts, minimizes to the system tray, and shows a notification listing the mounted drives
-
-#### Scenario: Wizard cancellation
-- **WHEN** the user closes the wizard window before completing authentication
-- **THEN** the wizard window is hidden and the application continues running as a tray-only process; the user can reopen the wizard at any time via "Sign In…" from the tray menu; the process SHALL NOT exit
-
-#### Scenario: Root directory conflict during wizard
-- **WHEN** the suggested root directory path already exists on the filesystem
-- **THEN** the system displays a warning "~/Cloud already exists — files inside won't be affected" and allows the user to choose a different name or proceed with the existing directory
+#### Scenario: Back navigation in wizard
+- **WHEN** the user clicks "Back" on step-sources before finishing
+- **THEN** the wizard does NOT return to step-sign-in (re-authentication is not triggered); back navigation from step-sources is not available; the user may cancel via the window close button which cancels any active sign-in flow
 
 #### Scenario: Auth URL displayed during sign-in
-- **WHEN** the user clicks "Sign In" in the wizard and the PKCE flow begins
-- **THEN** the wizard SHALL transition to a waiting state that displays the auth URL and a "Copy URL" button; the user can click "Copy URL" to copy the auth URL to the clipboard and open it manually in any browser; the wizard continues waiting for the localhost callback
+- **WHEN** the wizard is on step-sign-in and the browser launch is initiated
+- **THEN** the Microsoft auth URL is shown in the wizard with a copy button so the user can paste it manually if the browser does not open
 
-#### Scenario: Auth URL copy action
-- **WHEN** the user clicks "Copy URL" in the wizard sign-in waiting state
-- **THEN** the auth URL is copied to the system clipboard and a brief confirmation ("Copied!") is shown
-
-#### Scenario: Sign-in waiting state cancelled
-- **WHEN** the user clicks "Cancel" in the sign-in waiting state (before the 120s timeout)
-- **THEN** the wizard returns to the initial sign-in screen, the PKCE listener is abandoned, the auth URL input is cleared, and any error message from a prior attempt is hidden so the welcome step is presented in a clean state
+#### Scenario: Sign-in cancel from wizard
+- **WHEN** the user closes the wizard window while on step-sign-in
+- **THEN** the system cancels the active PKCE flow and returns to the unauthenticated idle state
 
 ### Requirement: Branded UI elements
 The system SHALL display the packaged branding throughout the UI when a custom app name is configured.
@@ -165,7 +149,11 @@ The system SHALL provide a settings window accessible from the tray menu. The Mo
 
 #### Scenario: Add Mount from Settings opens wizard
 - **WHEN** the user clicks "Add Mount" in the Mounts tab of the Settings window
-- **THEN** the wizard window is opened (or focused if already open) at `step-source` so the user can add a SharePoint or OneDrive mount; the settings window remains open in the background
+- **THEN** the wizard window is opened (or focused if already open) and navigated to `step-sources` so the user can add a SharePoint or OneDrive mount; the settings window remains open in the background
+
+#### Scenario: Remove mount confirmation
+- **WHEN** the user clicks "Remove" for a mount in the Mounts tab
+- **THEN** the system SHALL display a native OS confirmation dialog via the Tauri dialog plugin before proceeding; if the user confirms, the mount is removed from the configuration and unmounted; if the user cancels, no action is taken
 
 #### Scenario: Account tab — signed in
 - **WHEN** the user views the Account tab and is authenticated
@@ -177,7 +165,7 @@ The system SHALL provide a settings window accessible from the tray menu. The Mo
 
 #### Scenario: Sign out from Account tab
 - **WHEN** the user clicks "Sign Out" in the Account tab
-- **THEN** the system displays a confirmation dialog ("Sign out? All mounts will stop."); if the user confirms, the system performs sign-out (stops mounts, clears tokens, updates config), reloads the settings window to a clean DOM state, and opens the wizard at step-welcome; if the user cancels, no action is taken
+- **THEN** the system SHALL display a native OS confirmation dialog via the Tauri dialog plugin ("Sign out? All mounts will stop."); if the user confirms, the system performs sign-out (stops mounts, clears tokens, updates config), reloads the settings window to a clean DOM state, and opens the wizard at step-welcome; if the user cancels, no action is taken
 
 #### Scenario: Advanced settings
 - **WHEN** the user views the Advanced tab

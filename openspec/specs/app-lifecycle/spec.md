@@ -6,10 +6,10 @@ The system SHALL initialize all service components in dependency order during ap
 
 #### Scenario: Initialization sequence
 - **WHEN** the application starts
-- **THEN** it initializes in this order: (1) load .env file if present, (2) parse CLI arguments (including env var fallbacks), (3) load config (packaged defaults + user config → effective config), (4) run pre-flight validation (client ID, FUSE availability, CfApi version on Windows), (5) create AuthManager with resolved client_id and tenant_id (from CLI > env > packaged > default), (6) create GraphClient with AuthManager's token provider, (7) create CacheManager with cache directory and SQLite database, (8) create shared InodeTable, (9) assemble AppState with all components, (10) register `tauri-plugin-updater` in the Tauri builder (desktop mode only)
+- **THEN** it initializes in this order: (1) load .env file if present, (2) parse CLI arguments (including env var fallbacks), (3) load user config → derive effective config with built-in defaults, (4) run pre-flight validation (client ID sanity check, FUSE availability on Linux/macOS, CfApi version on Windows), (5) create AuthManager with the official CloudMount client_id (overridden by `--client-id` CLI arg if provided), (6) create GraphClient with AuthManager's token provider, (7) create CacheManager with cache directory and SQLite database, (8) create shared InodeTable, (9) assemble AppState with all components, (10) register `tauri-plugin-updater` in the Tauri builder (desktop mode only)
 
 #### Scenario: Initialization failure in config
-- **WHEN** the packaged defaults or user config cannot be loaded
+- **WHEN** the user config cannot be loaded
 - **THEN** the system falls back to built-in defaults, logs a warning, and continues startup
 
 #### Scenario: Initialization failure in cache
@@ -173,7 +173,7 @@ The system SHALL support running without the `desktop` feature flag, performing 
 
 #### Scenario: Headless component initialization
 - **WHEN** the application starts in headless mode
-- **THEN** it initializes the same components as desktop mode (AuthManager, GraphClient, CacheManager, InodeTable) using the same configuration system (packaged defaults + user config → effective config), with the same CLI/env override chain, without creating any Tauri application context
+- **THEN** it initializes the same components as desktop mode (AuthManager, GraphClient, CacheManager, InodeTable) using the same configuration system (user config → effective config with built-in defaults), with the same CLI/env override chain, without creating any Tauri application context
 
 #### Scenario: Headless graceful shutdown
 - **WHEN** the headless process receives SIGTERM or SIGINT (Ctrl+C)

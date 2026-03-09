@@ -72,57 +72,69 @@ The system SHALL support mounting multiple SharePoint document libraries simulta
 - **WHEN** multiple SharePoint libraries are mounted
 - **THEN** each mount has its own cache, sync state, and can be individually mounted, unmounted, or removed without affecting other mounts
 
-### Requirement: Wizard SharePoint source step
-The system SHALL implement the `step-sharepoint` wizard step that guides the user through discovering and mounting a SharePoint document library. The step is reached by clicking "SharePoint Site" in `step-source`.
+### Requirement: Wizard unified sources step (step-sources)
+The system SHALL implement a `step-sources` wizard screen that replaces the former `step-source` and `step-sharepoint` screens. After sign-in completes, the wizard calls `GET /me/drive` and `GET /me/followedSites` in parallel and renders a single screen where the user assembles the set of sources they want to mount before finishing setup.
 
-#### Scenario: Navigate to SharePoint step
-- **WHEN** the user clicks "SharePoint Site" in `step-source`
-- **THEN** the wizard transitions to `step-sharepoint`, which displays a search input, an empty results area, and a "Back" link that returns to `step-source`
+#### Scenario: OneDrive auto-detected
+- **WHEN** `GET /me/drive` returns successfully after sign-in
+- **THEN** the wizard renders an OneDrive card pre-checked with the proposed mount point (`~/Cloud/OneDrive`); the user may uncheck it to skip mounting OneDrive
 
-#### Scenario: Search for sites
-- **WHEN** the user types a query in the search input and submits (Enter or Search button)
-- **THEN** the wizard calls `invoke('search_sites', { query })`, shows a loading indicator while waiting, and renders the results as a clickable list showing each site's display name and URL; existing result rows are cleared before each new search
+#### Scenario: OneDrive not available
+- **WHEN** `GET /me/drive` returns an error or the account has no OneDrive
+- **THEN** the OneDrive section is absent from step-sources; the wizard proceeds with SharePoint-only sources
 
-#### Scenario: No sites found
+#### Scenario: SharePoint browser shown for org accounts
+- **WHEN** `GET /me/followedSites` returns successfully (M365 org account with SharePoint access)
+- **THEN** the wizard renders a SharePoint section with the followed sites listed as clickable rows, a search input above the list, and an "Add a SharePoint library" affordance
+
+#### Scenario: SharePoint section hidden for personal accounts
+- **WHEN** `GET /me/followedSites` returns an error or HTTP 403 (personal MSA account or account without SharePoint license)
+- **THEN** the SharePoint section is absent from step-sources; the user can still proceed with OneDrive only
+
+#### Scenario: Search for SharePoint sites
+- **WHEN** the user types a query in the search input and submits (Enter or button click)
+- **THEN** the wizard calls `invoke('search_sites', { query })`, shows a loading indicator, clears previous results, and renders matching sites as clickable rows
+
+#### Scenario: No search results
 - **WHEN** `search_sites` returns an empty array
-- **THEN** the wizard displays "No sites found — try a different search term" and leaves the search input focused
+- **THEN** the wizard displays "No sites found — try a different search term" and keeps the search input focused
 
-#### Scenario: Search error
-- **WHEN** `search_sites` rejects with an error
-- **THEN** the wizard displays the error message inline and allows the user to retry
+#### Scenario: Site selected — library list
+- **WHEN** the user clicks a site row
+- **THEN** the wizard calls `invoke('list_drives', { siteId })` and renders the site's document libraries as clickable rows with a "Back" affordance to return to the site list
 
-#### Scenario: Site selected — multiple libraries
-- **WHEN** the user clicks a site row and `list_drives` returns two or more libraries
-- **THEN** the wizard hides the site list, shows a library list with each library's name as a clickable row, and shows a "Back" link that returns to the site list
+#### Scenario: Library added
+- **WHEN** the user clicks a library row
+- **THEN** the wizard calls `invoke('add_mount', { mount_type: 'sharepoint', drive_id, site_id, site_name, library_name, mount_point })` where `mount_point` is auto-derived as `~/Cloud/<site_name> - <library_name>/`; on success the library appears in the added-sources list below the SharePoint browser, the browser resets to the site search/recent view, and the "Get started" button becomes active
 
-#### Scenario: Site selected — single library auto-select
-- **WHEN** the user clicks a site row and `list_drives` returns exactly one library
-- **THEN** the wizard skips the library selection sub-step and immediately calls `invoke('add_mount', ...)` with that library's ID, showing a loading indicator
+#### Scenario: Library add error
+- **WHEN** `add_mount` rejects with an error (e.g., mount point conflict)
+- **THEN** the wizard displays the error inline and the user may select a different library or adjust the mount point
 
-#### Scenario: Library selected — mount added
-- **WHEN** the user clicks a library row (or auto-select fires)
-- **THEN** the wizard calls `invoke('add_mount', { mount_type: 'sharepoint', mount_point, drive_id, site_id, site_name, library_name })` where `mount_point` is auto-derived as `~/Cloud/<site_name> - <library_name>/`; on success the wizard transitions to `step-done`
+#### Scenario: Added source removed before finishing
+- **WHEN** the user clicks "Remove" on an entry in the added-sources list
+- **THEN** the wizard calls `invoke('remove_mount', { id })` and removes the entry from the list; if it was the only source and OneDrive is unchecked, the "Get started" button becomes inactive
 
-#### Scenario: Mount add error
-- **WHEN** `add_mount` rejects with an error
-- **THEN** the wizard displays the error message inline in `step-sharepoint` and allows the user to select a different library or go back
+#### Scenario: Get started — at least one source
+- **WHEN** at least one source is selected (OneDrive checked or ≥ 1 SharePoint library added)
+- **THEN** the "Get started" button is active; clicking it calls `invoke('complete_wizard')`, starts the selected mounts, and transitions to step-success
 
-#### Scenario: step-done mount list refresh
-- **WHEN** the wizard transitions to `step-done` after a successful `add_mount` call
-- **THEN** the wizard calls `invoke('list_mounts')` and re-renders the mount list in `step-done` so the newly added mount is visible
+#### Scenario: Get started — no sources
+- **WHEN** OneDrive is unchecked and no SharePoint libraries have been added
+- **THEN** the "Get started" button is disabled; a hint explains that at least one source is required
 
-### Requirement: Wizard OneDrive source step
-The system SHALL handle the OneDrive path in `step-source` by adding an additional OneDrive mount or showing an appropriate state.
+### Requirement: Wizard auth-aware routing
+The wizard window SHALL detect the current authentication state on load and route the user to the appropriate starting step. If the user is already authenticated when the wizard opens, the wizard SHALL bypass the sign-in step and navigate directly to `step-sources`.
 
-#### Scenario: OneDrive button clicked — drive known
-- **WHEN** the user clicks "OneDrive" in `step-source` and an existing OneDrive mount is present in `list_mounts`
-- **THEN** the wizard derives a unique mount point and calls `invoke('add_mount', { mount_type: 'drive', drive_id, mount_point })`; on success it transitions to `step-done`
+#### Scenario: Wizard opened when already authenticated
+- **WHEN** the wizard window is created or navigated while `is_authenticated` returns true
+- **THEN** the wizard SHALL skip `step-welcome` and transition to `step-sources`, calling `loadSources()` to populate OneDrive and SharePoint options
 
-#### Scenario: OneDrive button clicked — no drive found
-- **WHEN** the user clicks "OneDrive" in `step-source` and `list_mounts` returns no drive-type mounts
-- **THEN** the wizard displays an error "OneDrive is not yet available — please wait a moment and try again"
+#### Scenario: Wizard opened when not authenticated
+- **WHEN** the wizard window is created and `is_authenticated` returns false
+- **THEN** the wizard SHALL display `step-welcome` with the "Sign in with Microsoft" button, following the normal sign-in flow
 
-#### Scenario: OneDrive add error
-- **WHEN** `add_mount` rejects for an OneDrive mount
-- **THEN** the wizard displays the error message inline in `step-source` and the user can retry
+#### Scenario: Re-focused existing wizard navigated to step-sources for add-mount
+- **WHEN** the wizard window already exists and "Add Mount" is triggered (from the settings Mounts tab or the tray menu)
+- **THEN** the system SHALL call `goToAddMount()` on the existing wizard window via `win.eval()`, navigating it to `step-sources` regardless of which step it was previously displaying
 
