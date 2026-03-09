@@ -225,6 +225,50 @@ intents:
           - multi-select-library-ui
         run_id: run-cloud-mount-010
         completed_at: 2026-03-09T16:25:13.589Z
+  - id: fix-review-findings
+    title: Fix Review Findings
+    status: completed
+    work_items:
+      - id: fix-cfapi-double-sanitize
+        title: Remove duplicate drive_id sanitization in main.rs
+        complexity: low
+        mode: autopilot
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-011
+        completed_at: 2026-03-09T17:36:44.931Z
+      - id: fix-wizard-error-feedback
+        title: Add user-visible error feedback to wizard silent failures
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-011
+        completed_at: 2026-03-09T17:36:44.931Z
+      - id: fix-settings-error-feedback
+        title: Add error feedback and fix fragile selectors in settings
+        complexity: low
+        mode: autopilot
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-011
+        completed_at: 2026-03-09T17:36:44.931Z
+      - id: add-accessibility-support
+        title: Add ARIA attributes and keyboard navigation
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-011
+        completed_at: 2026-03-09T17:36:44.931Z
+      - id: ux-polish
+        title: Minor UX polish (dismiss, empty states, caching, title)
+        complexity: medium
+        mode: confirm
+        status: completed
+        depends_on: []
+        run_id: run-cloud-mount-011
+        completed_at: 2026-03-09T17:36:44.931Z
 runs:
   active: []
   completed:
@@ -332,3 +376,23 @@ runs:
           mode: confirm
       started: 2026-03-09T16:19:54.830Z
       completed: 2026-03-09T16:25:13.589Z
+    - id: run-cloud-mount-011
+      scope: wide
+      work_items:
+        - id: fix-cfapi-double-sanitize
+          intent: fix-review-findings
+          mode: autopilot
+        - id: fix-settings-error-feedback
+          intent: fix-review-findings
+          mode: autopilot
+        - id: fix-wizard-error-feedback
+          intent: fix-review-findings
+          mode: confirm
+        - id: add-accessibility-support
+          intent: fix-review-findings
+          mode: confirm
+        - id: ux-polish
+          intent: fix-review-findings
+          mode: confirm
+      started: 2026-03-09T17:08:40.754Z
+      completed: 2026-03-09T17:36:44.931Z
