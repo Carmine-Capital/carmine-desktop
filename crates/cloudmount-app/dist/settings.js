@@ -1,11 +1,41 @@
 const { invoke } = window.__TAURI__.core;
 
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById(tab.dataset.panel).classList.add('active');
+const tabs = Array.from(document.querySelectorAll('.tab'));
+
+function activateTab(tab) {
+  tabs.forEach(t => {
+    t.classList.remove('active');
+    t.setAttribute('aria-selected', 'false');
+    t.setAttribute('tabindex', '-1');
+  });
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  tab.classList.add('active');
+  tab.setAttribute('aria-selected', 'true');
+  tab.setAttribute('tabindex', '0');
+  document.getElementById(tab.dataset.panel).classList.add('active');
+  tab.focus();
+}
+
+tabs.forEach(tab => {
+  tab.addEventListener('click', () => activateTab(tab));
+  tab.addEventListener('keydown', (e) => {
+    const idx = tabs.indexOf(tab);
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      activateTab(tabs[(idx + 1) % tabs.length]);
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      activateTab(tabs[(idx - 1 + tabs.length) % tabs.length]);
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      activateTab(tabs[0]);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      activateTab(tabs[tabs.length - 1]);
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      activateTab(tab);
+    }
   });
 });
 
@@ -21,7 +51,10 @@ async function loadSettings() {
     document.getElementById('metadata-ttl').value = String(s.metadata_ttl_secs);
     document.getElementById('log-level').value = s.log_level;
     document.getElementById('account-email').textContent = s.account_display || 'Not signed in';
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    console.error(e);
+    showStatus('Failed to load settings', 'error');
+  }
 }
 
 async function loadMounts() {
@@ -61,7 +94,16 @@ async function loadMounts() {
       li.appendChild(actions);
       list.appendChild(li);
     });
-  } catch (e) { console.error(e); }
+    if (mounts.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'mount-empty';
+      empty.textContent = 'No mounts configured';
+      list.appendChild(empty);
+    }
+  } catch (e) {
+    console.error(e);
+    showStatus('Failed to load mounts', 'error');
+  }
 }
 
 async function saveGeneral() {
@@ -85,7 +127,7 @@ async function saveGeneral() {
 }
 
 async function saveAdvanced() {
-  const btn = document.querySelector('#advanced .actions button');
+  const btn = document.getElementById('btn-save-advanced');
   btn.disabled = true;
   btn.textContent = 'Saving\u2026';
   try {
@@ -149,7 +191,7 @@ async function addMount() {
 async function signOut() {
   const ok = await window.__TAURI__.dialog.confirm('Sign out? All mounts will stop.', { title: 'Sign Out', kind: 'warning' });
   if (!ok) return;
-  const btn = document.querySelector('#account button');
+  const btn = document.getElementById('btn-sign-out');
   btn.disabled = true;
   btn.textContent = 'Signing out\u2026';
   try {
@@ -163,7 +205,7 @@ async function signOut() {
 }
 
 async function clearCache() {
-  const btn = document.querySelector('#advanced .actions .btn-danger');
+  const btn = document.getElementById('btn-clear-cache');
   btn.disabled = true;
   btn.textContent = 'Clearing\u2026';
   try {
