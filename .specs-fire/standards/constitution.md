@@ -23,6 +23,14 @@
 - CI runs `RUSTFLAGS=-Dwarnings` — zero warnings allowed
 - Clippy runs `--all-targets --all-features` — no suppressed lints without justification
 
+## GitHub Tooling
+
+- **GitHub MCP is not used** — all GitHub interactions use the `gh` CLI
+- Use `gh pr create/list/view/merge/checks` for pull requests
+- Use `gh run list/view` to inspect CI runs
+- Use `gh issue create/list/view` for issues
+- Use `gh release create` for releases
+
 ## Security Policies
 
 - **No secrets in code** — use environment variables or secret management

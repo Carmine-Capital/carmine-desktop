@@ -144,6 +144,12 @@ toolbox run --container cloudmount-build cargo clippy --all-targets --all-featur
 **Formatter**: rustfmt
 **Config**: Default (no `rustfmt.toml`)
 
+### GitHub CLI
+
+**Tool**: `gh` (GitHub CLI)
+**Purpose**: All GitHub interactions — PRs, CI run inspection, issues, releases
+**Note**: GitHub MCP is not used; `gh` is the sole interface to GitHub
+
 ## Key Dependencies
 
 ### Production
