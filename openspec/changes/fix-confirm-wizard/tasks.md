@@ -27,9 +27,9 @@
 ## 6. Verify
 
 - [x] 6.1 Build with `cargo build -p cloudmount-app --features desktop` — zero warnings
-- [ ] 6.2 Manually verify: Sign Out button in Account tab shows OS dialog and signs out on confirm
-- [ ] 6.3 Manually verify: Remove mount button shows OS dialog and removes on confirm
-- [ ] 6.4 Manually verify: Settings "Add Mount" opens wizard at sources step (not sign-in screen)
-- [ ] 6.5 Manually verify: Tray "Add Mount…" opens wizard at sources step when already authenticated
-- [ ] 6.6 Manually verify: Tray "Add Mount…" when wizard already open at step-welcome navigates it to step-sources
-- [ ] 6.7 Manually verify: Opening wizard when NOT authenticated still shows step-welcome
+- [x] 6.2 Manually verify: Sign Out button in Account tab shows OS dialog and signs out on confirm
+- [x] 6.3 Manually verify: Remove mount button shows OS dialog and removes on confirm
+- [x] 6.4 Manually verify: Settings "Add Mount" opens wizard at sources step (not sign-in screen)
+- [x] 6.5 Manually verify: Tray "Add Mount…" opens wizard at sources step when already authenticated
+- [x] 6.6 Manually verify: Tray "Add Mount…" when wizard already open at step-welcome navigates it to step-sources
+- [x] 6.7 Manually verify: Opening wizard when NOT authenticated still shows step-welcome
