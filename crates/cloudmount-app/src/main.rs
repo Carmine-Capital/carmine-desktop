@@ -770,6 +770,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
     let (event_tx, mut event_rx) =
         tokio::sync::mpsc::unbounded_channel::<cloudmount_vfs::core_ops::VfsEvent>();
 
+    let rt_events = rt.clone();
     let handle = MountHandle::mount(
         state.graph.clone(),
         mount_cache.clone(),
@@ -783,7 +784,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
 
     // Spawn a task to forward VFS events to desktop notifications
     let app_handle = app.clone();
-    tokio::spawn(async move {
+    rt_events.spawn(async move {
         while let Some(event) = event_rx.recv().await {
             match event {
                 cloudmount_vfs::core_ops::VfsEvent::ConflictDetected {
