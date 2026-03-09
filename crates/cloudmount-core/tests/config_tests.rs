@@ -88,7 +88,7 @@ fn test_expand_mount_point_tilde() {
 
     let expanded = expand_mount_point("~/Cloud/OneDrive");
     assert!(!expanded.contains('~'));
-    assert!(expanded.ends_with("/Cloud/OneDrive"));
+    assert!(std::path::Path::new(&expanded).ends_with("Cloud/OneDrive"));
     assert!(expanded.starts_with(&home));
 }
 
