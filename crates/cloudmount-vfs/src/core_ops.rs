@@ -418,6 +418,13 @@ const QUOTA_CACHE_TTL_SECS: u64 = 60;
 /// Encapsulates cache lookups, Graph API calls, inode management, and write-back logic.
 /// Each platform backend holds a `CoreOps` instance and delegates business logic to it,
 /// keeping only platform-specific callback translation in the backend layer.
+/// Callback to invalidate kernel-cached attributes for an inode.
+///
+/// Set by the platform backend (e.g., FUSE `inval_inode`) to force the kernel
+/// to discard its cached `i_size` / `mtime` when a metadata mismatch is detected
+/// at open time. Without this, `FUSE_WRITEBACK_CACHE` keeps stale values.
+pub type InodeInvalidator = Arc<dyn Fn(u64) + Send + Sync>;
+
 pub struct CoreOps {
     graph: Arc<GraphClient>,
     cache: Arc<CacheManager>,
@@ -427,6 +434,7 @@ pub struct CoreOps {
     open_files: Arc<OpenFileTable>,
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
     quota_cache: std::sync::Mutex<Option<(Instant, DriveQuota)>>,
+    inode_invalidator: Option<InodeInvalidator>,
 }
 
 impl CoreOps {
@@ -446,11 +454,17 @@ impl CoreOps {
             open_files: Arc::new(OpenFileTable::new()),
             event_tx: None,
             quota_cache: std::sync::Mutex::new(None),
+            inode_invalidator: None,
         }
     }
 
     pub fn with_event_sender(mut self, tx: tokio::sync::mpsc::UnboundedSender<VfsEvent>) -> Self {
         self.event_tx = Some(tx);
+        self
+    }
+
+    pub fn with_inode_invalidator(mut self, f: InodeInvalidator) -> Self {
+        self.inode_invalidator = Some(f);
         self
     }
 
@@ -1080,6 +1094,51 @@ impl CoreOps {
                 .rt
                 .block_on(self.cache.disk.remove(&self.drive_id, &item_id));
         }
+
+        // Refresh metadata from the server before downloading.
+        // With FUSE_WRITEBACK_CACHE the kernel ignores size/mtime updates from
+        // getattr, so a stale cached size causes reads to be truncated.  A cheap
+        // get_item() call here detects the mismatch and invalidates the kernel
+        // inode so subsequent reads use the correct size.
+        let item = match self
+            .rt
+            .block_on(self.graph.get_item(&self.drive_id, &item_id))
+        {
+            Ok(fresh) => {
+                let stale = item
+                    .as_ref()
+                    .and_then(|i| i.etag.as_ref())
+                    != fresh.etag.as_ref();
+                if stale {
+                    tracing::debug!(
+                        ino,
+                        old_size = item.as_ref().map(|i| i.size),
+                        new_size = fresh.size,
+                        "open_file: server metadata differs, refreshing caches"
+                    );
+                    self.cache.memory.insert(ino, fresh.clone());
+                    let parent_ino = fresh
+                        .parent_reference
+                        .as_ref()
+                        .and_then(|pr| pr.id.as_deref())
+                        .map(|pid| self.inodes.allocate(pid));
+                    let _ = self.cache.sqlite.upsert_item(
+                        ino,
+                        &self.drive_id,
+                        &fresh,
+                        parent_ino,
+                    );
+                    if let Some(ref invalidator) = self.inode_invalidator {
+                        invalidator(ino);
+                    }
+                }
+                Some(fresh)
+            }
+            Err(e) => {
+                tracing::warn!(ino, "open_file: get_item refresh failed: {e}, using cached metadata");
+                item
+            }
+        };
 
         // Not cached or stale — check file size for streaming decision
         let file_size = item.as_ref().map(|i| i.size).unwrap_or(0) as usize;

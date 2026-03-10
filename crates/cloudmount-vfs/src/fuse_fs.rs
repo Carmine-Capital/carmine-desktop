@@ -25,7 +25,7 @@ use cloudmount_graph::GraphClient;
 /// an optional [`Notifier`] for kernel cache invalidation.
 pub struct FuseDeltaObserver {
     open_files: Arc<OpenFileTable>,
-    notifier: std::sync::Mutex<Option<Notifier>>,
+    notifier: Arc<std::sync::Mutex<Option<Notifier>>>,
 }
 
 impl FuseDeltaObserver {
@@ -44,29 +44,32 @@ impl FuseDeltaObserver {
 
 impl DeltaSyncObserver for FuseDeltaObserver {
     /// Marks open handles stale and invalidates the kernel page cache for `ino`.
+    ///
+    /// Always calls `inval_inode` regardless of whether the file has open handles.
+    /// With `FUSE_WRITEBACK_CACHE`, the kernel refuses to accept size/mtime updates
+    /// from `getattr` alone — `inval_inode` is the only way to force it to discard
+    /// its cached `i_size` and re-fetch attributes on the next access.
     fn on_inode_content_changed(&self, ino: u64) {
         self.open_files.mark_stale_by_ino(ino);
 
-        if self.open_files.has_open_handles(ino) {
-            let notifier = self.notifier.lock().unwrap();
-            if let Some(ref n) = *notifier {
-                match n.inval_inode(INodeNo(ino), 0, -1) {
-                    Ok(()) => {
-                        tracing::debug!(ino, "delta observer: invalidated kernel cache");
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            ino,
-                            "delta observer: kernel cache invalidation failed: {e}"
-                        );
-                    }
+        let notifier = self.notifier.lock().unwrap();
+        if let Some(ref n) = *notifier {
+            match n.inval_inode(INodeNo(ino), 0, -1) {
+                Ok(()) => {
+                    tracing::debug!(ino, "delta observer: invalidated kernel cache");
                 }
-            } else {
-                tracing::debug!(
-                    ino,
-                    "delta observer: skipping kernel invalidation (no session)"
-                );
+                Err(e) => {
+                    tracing::debug!(
+                        ino,
+                        "delta observer: kernel cache invalidation failed: {e}"
+                    );
+                }
             }
+        } else {
+            tracing::debug!(
+                ino,
+                "delta observer: skipping kernel invalidation (no session)"
+            );
         }
     }
 }
@@ -79,6 +82,7 @@ pub struct CloudMountFs {
     ops: CoreOps,
     uid: u32,
     gid: u32,
+    notifier_slot: Arc<std::sync::Mutex<Option<Notifier>>>,
 }
 
 impl CloudMountFs {
@@ -92,21 +96,45 @@ impl CloudMountFs {
     ) -> Self {
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
+
+        // Shared slot: populated after mount, used by both the filesystem
+        // callbacks (open_file metadata refresh) and the delta sync observer.
+        let notifier_slot: Arc<std::sync::Mutex<Option<Notifier>>> =
+            Arc::new(std::sync::Mutex::new(None));
+
+        let slot_for_invalidator = notifier_slot.clone();
+        let invalidator: crate::core_ops::InodeInvalidator =
+            Arc::new(move |ino: u64| {
+                let guard = slot_for_invalidator.lock().unwrap();
+                if let Some(ref n) = *guard {
+                    let _ = n.inval_inode(INodeNo(ino), 0, -1);
+                }
+            });
+
         let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt);
+        ops = ops.with_inode_invalidator(invalidator);
         if let Some(tx) = event_tx {
             ops = ops.with_event_sender(tx);
         }
-        Self { ops, uid, gid }
+        Self {
+            ops,
+            uid,
+            gid,
+            notifier_slot,
+        }
     }
 
-    /// Creates a delta sync observer that shares the open file table with this filesystem.
+    /// Creates a delta sync observer that shares the open file table and
+    /// notifier slot with this filesystem.
     ///
     /// Call this before `mount()` (which consumes `self`). After mount, call
-    /// `FuseDeltaObserver::set_notifier()` with `BackgroundSession::notifier()`.
+    /// `FuseDeltaObserver::set_notifier()` with `BackgroundSession::notifier()`
+    /// — this populates the shared slot for both the observer and the
+    /// filesystem's inode invalidator.
     pub fn create_delta_observer(&self) -> Arc<FuseDeltaObserver> {
         Arc::new(FuseDeltaObserver {
             open_files: self.ops.open_files().clone(),
-            notifier: std::sync::Mutex::new(None),
+            notifier: self.notifier_slot.clone(),
         })
     }
 
