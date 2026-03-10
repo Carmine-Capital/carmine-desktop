@@ -15,9 +15,9 @@ mod update;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use cloudmount_core::config::{EffectiveConfig, UserConfig, config_file_path, expand_mount_point};
 #[cfg(not(target_os = "windows"))]
 use cloudmount_core::config::{AccountMetadata, derive_mount_point};
+use cloudmount_core::config::{EffectiveConfig, UserConfig, config_file_path, expand_mount_point};
 
 #[cfg(any(feature = "desktop", not(target_os = "windows")))]
 use std::sync::Arc;
