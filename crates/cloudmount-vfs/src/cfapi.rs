@@ -720,6 +720,17 @@ fn ensure_mount_dir(path: &Path) -> cloudmount_core::Result<()> {
     Ok(())
 }
 
+/// Strip the `\\?\` prefix that `std::fs::canonicalize` adds on Windows.
+/// WinRT `StorageFolder::GetFolderFromPathAsync` does not accept this prefix.
+fn strip_win32_long_path_prefix(path: &Path) -> std::borrow::Cow<'_, Path> {
+    let s = path.as_os_str().to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        std::borrow::Cow::Owned(PathBuf::from(stripped))
+    } else {
+        std::borrow::Cow::Borrowed(path)
+    }
+}
+
 fn register_sync_root(sync_root_id: &SyncRootId, mount_path: &Path) -> cloudmount_core::Result<()> {
     let info = SyncRootInfo::default()
         .with_display_name(PROVIDER_NAME)
@@ -731,7 +742,11 @@ fn register_sync_root(sync_root_id: &SyncRootId, mount_path: &Path) -> cloudmoun
         .with_show_siblings_as_group(false)
         .with_path(mount_path)
         .map_err(|e| {
-            cloudmount_core::Error::Filesystem(format!("sync root path invalid: {e:?}"))
+            cloudmount_core::Error::Filesystem(format!(
+                "sync root path invalid (path={}, len={}): {e:?}",
+                mount_path.display(),
+                mount_path.as_os_str().len(),
+            ))
         })?;
 
     sync_root_id.register(info).map_err(|e| {
@@ -768,6 +783,27 @@ impl CfMountHandle {
         let sync_root_id = build_sync_root_id(&account_name)?;
 
         ensure_mount_dir(mount_path)?;
+
+        // Canonicalize the path after creating the directory. WinRT's
+        // StorageFolder::GetFolderFromPathAsync (used by cloud-filter to set
+        // the sync root path) is stricter than Win32 file APIs — it rejects
+        // mixed separators, relative components, and paths over MAX_PATH.
+        // std::fs::canonicalize on Windows adds a \\?\ prefix that WinRT also
+        // rejects, so we strip it.
+        let canonical = std::fs::canonicalize(mount_path).map_err(|e| {
+            cloudmount_core::Error::Filesystem(format!(
+                "failed to canonicalize mount path {}: {e}",
+                mount_path.display()
+            ))
+        })?;
+        let mount_path = strip_win32_long_path_prefix(&canonical);
+        let mount_path = mount_path.as_ref();
+
+        tracing::debug!(
+            path = %mount_path.display(),
+            len = mount_path.as_os_str().len(),
+            "canonicalized mount path"
+        );
 
         let is_registered = sync_root_id.is_registered().map_err(|e| {
             cloudmount_core::Error::Filesystem(format!(

@@ -1105,10 +1105,7 @@ impl CoreOps {
             .block_on(self.graph.get_item(&self.drive_id, &item_id))
         {
             Ok(fresh) => {
-                let stale = item
-                    .as_ref()
-                    .and_then(|i| i.etag.as_ref())
-                    != fresh.etag.as_ref();
+                let stale = item.as_ref().and_then(|i| i.etag.as_ref()) != fresh.etag.as_ref();
                 if stale {
                     tracing::debug!(
                         ino,
@@ -1122,12 +1119,10 @@ impl CoreOps {
                         .as_ref()
                         .and_then(|pr| pr.id.as_deref())
                         .map(|pid| self.inodes.allocate(pid));
-                    let _ = self.cache.sqlite.upsert_item(
-                        ino,
-                        &self.drive_id,
-                        &fresh,
-                        parent_ino,
-                    );
+                    let _ = self
+                        .cache
+                        .sqlite
+                        .upsert_item(ino, &self.drive_id, &fresh, parent_ino);
                     if let Some(ref invalidator) = self.inode_invalidator {
                         invalidator(ino);
                     }
@@ -1135,7 +1130,10 @@ impl CoreOps {
                 Some(fresh)
             }
             Err(e) => {
-                tracing::warn!(ino, "open_file: get_item refresh failed: {e}, using cached metadata");
+                tracing::warn!(
+                    ino,
+                    "open_file: get_item refresh failed: {e}, using cached metadata"
+                );
                 item
             }
         };

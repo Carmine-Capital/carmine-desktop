@@ -59,10 +59,7 @@ impl DeltaSyncObserver for FuseDeltaObserver {
                     tracing::debug!(ino, "delta observer: invalidated kernel cache");
                 }
                 Err(e) => {
-                    tracing::debug!(
-                        ino,
-                        "delta observer: kernel cache invalidation failed: {e}"
-                    );
+                    tracing::debug!(ino, "delta observer: kernel cache invalidation failed: {e}");
                 }
             }
         } else {
@@ -103,13 +100,12 @@ impl CloudMountFs {
             Arc::new(std::sync::Mutex::new(None));
 
         let slot_for_invalidator = notifier_slot.clone();
-        let invalidator: crate::core_ops::InodeInvalidator =
-            Arc::new(move |ino: u64| {
-                let guard = slot_for_invalidator.lock().unwrap();
-                if let Some(ref n) = *guard {
-                    let _ = n.inval_inode(INodeNo(ino), 0, -1);
-                }
-            });
+        let invalidator: crate::core_ops::InodeInvalidator = Arc::new(move |ino: u64| {
+            let guard = slot_for_invalidator.lock().unwrap();
+            if let Some(ref n) = *guard {
+                let _ = n.inval_inode(INodeNo(ino), 0, -1);
+            }
+        });
 
         let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt);
         ops = ops.with_inode_invalidator(invalidator);
