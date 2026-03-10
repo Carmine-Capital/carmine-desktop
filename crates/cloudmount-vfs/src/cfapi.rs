@@ -288,17 +288,17 @@ impl SyncFilter for CloudMountCfFilter {
         // during placeholder creation via mark_placeholder_synced). A read-only open
         // does NOT change the Last Write Time, so this correctly skips unmodified opens.
         // Use 1-second tolerance to absorb FAT32/NTFS sub-second rounding differences.
-        if let Some(server_mtime) = server_mtime {
-            if let Ok(file_sys_time) = meta.modified() {
-                let file_mtime = chrono::DateTime::<chrono::Utc>::from(file_sys_time);
-                let diff = (file_mtime - server_mtime).num_seconds().unsigned_abs();
-                if diff < 1 {
-                    tracing::debug!(
-                        path = %abs_path.display(),
-                        "cfapi: closed skipping unmodified file"
-                    );
-                    return;
-                }
+        if let Some(server_mtime) = server_mtime
+            && let Ok(file_sys_time) = meta.modified()
+        {
+            let file_mtime = chrono::DateTime::<chrono::Utc>::from(file_sys_time);
+            let diff = (file_mtime - server_mtime).num_seconds().unsigned_abs();
+            if diff < 1 {
+                tracing::debug!(
+                    path = %abs_path.display(),
+                    "cfapi: closed skipping unmodified file"
+                );
+                return;
             }
             // If meta.modified() is Err, fall through (conservative: assume modified)
         }
