@@ -67,7 +67,10 @@ impl DiskCache {
     }
 
     fn content_path(&self, drive_id: &str, item_id: &str) -> PathBuf {
-        self.base_dir.join(drive_id).join(item_id)
+        // Sanitize colons — illegal in Windows filenames (e.g. "local:uuid" items)
+        self.base_dir
+            .join(drive_id)
+            .join(item_id.replace(':', "%3A"))
     }
 
     pub async fn get(&self, drive_id: &str, item_id: &str) -> Option<Vec<u8>> {

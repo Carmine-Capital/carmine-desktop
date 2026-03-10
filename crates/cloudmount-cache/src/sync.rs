@@ -167,26 +167,42 @@ pub async fn run_delta_sync(
 
     for item in &response.value {
         if item.name.is_empty() && item.file.is_none() && item.folder.is_none() {
-            // Capture deleted item info BEFORE removing from caches
-            let deleted_info = match cache.sqlite.get_item_by_id(&item.id) {
-                Ok(Some((_, old_item))) => DeletedItemInfo {
-                    id: item.id.clone(),
-                    name: old_item.name.clone(),
-                    parent_path: old_item
+            // Capture deleted item info and parent inode BEFORE removing from caches
+            let (deleted_info, parent_inode) = match cache.sqlite.get_item_by_id(&item.id) {
+                Ok(Some((_, old_item))) => {
+                    let parent_ino = old_item
                         .parent_reference
                         .as_ref()
-                        .and_then(|pr| pr.path.clone()),
-                },
-                _ => DeletedItemInfo {
-                    id: item.id.clone(),
-                    name: String::new(),
-                    parent_path: None,
-                },
+                        .and_then(|pr| pr.id.as_deref())
+                        .map(|pid| inode_allocator(pid));
+                    (
+                        DeletedItemInfo {
+                            id: item.id.clone(),
+                            name: old_item.name.clone(),
+                            parent_path: old_item
+                                .parent_reference
+                                .as_ref()
+                                .and_then(|pr| pr.path.clone()),
+                        },
+                        parent_ino,
+                    )
+                }
+                _ => (
+                    DeletedItemInfo {
+                        id: item.id.clone(),
+                        name: String::new(),
+                        parent_path: None,
+                    },
+                    None,
+                ),
             };
             result.deleted_items.push(deleted_info);
 
             deletes.push(item.id.clone());
             cache.memory.invalidate(inode_allocator(&item.id));
+            if let Some(parent_ino) = parent_inode {
+                cache.memory.invalidate(parent_ino);
+            }
             let _ = cache.disk.remove(drive_id, &item.id).await;
             continue;
         }
@@ -229,6 +245,9 @@ pub async fn run_delta_sync(
         }
 
         cache.memory.insert(inode, item.clone());
+        if let Some(parent_ino) = parent_inode {
+            cache.memory.invalidate(parent_ino);
+        }
         upserts.push((inode, item.clone(), parent_inode));
     }
 

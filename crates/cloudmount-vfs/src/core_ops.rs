@@ -756,10 +756,10 @@ impl CoreOps {
             let size_ok = item
                 .as_ref()
                 .map(|i| content.len() == i.size as usize)
-                .unwrap_or(true);
+                .unwrap_or(false);
             let etag_ok = match (&disk_etag, item.as_ref().and_then(|i| i.etag.as_ref())) {
                 (Some(de), Some(ie)) => de == ie,
-                _ => true,
+                _ => false,
             };
             if size_ok && etag_ok {
                 return Ok(content);
@@ -1064,11 +1064,11 @@ impl CoreOps {
             let size_ok = item
                 .as_ref()
                 .map(|i| content.len() == i.size as usize)
-                .unwrap_or(true);
+                .unwrap_or(false);
             // Validate: eTag must match metadata (if both present)
             let etag_ok = match (&disk_etag, item.as_ref().and_then(|i| i.etag.as_ref())) {
                 (Some(de), Some(ie)) => de == ie,
-                _ => true,
+                _ => false,
             };
             if size_ok && etag_ok {
                 return Ok(self
@@ -1170,10 +1170,34 @@ impl CoreOps {
         Ok(())
     }
 
+    /// Re-downloads content for a stale open file handle.
+    /// Skips refresh for dirty handles (local writes take precedence — conflict
+    /// detection in flush_handle will resolve divergence).
+    fn refresh_stale_handle(&self, fh: u64, ino: u64) -> VfsResult<()> {
+        let new_content = self.read_content(ino)?;
+        let mut entry = self.open_files.get_mut(fh).ok_or(VfsError::NotFound)?;
+        if entry.stale {
+            entry.content = DownloadState::Complete(new_content);
+            entry.stale = false;
+            tracing::debug!(fh, ino, "refreshed stale handle with new content");
+        }
+        Ok(())
+    }
+
     /// Read bytes from an open file handle's buffer.
     /// For streaming downloads, blocks until the requested range is available
     /// or issues an on-demand range request for random access.
     pub fn read_handle(&self, fh: u64, offset: usize, size: usize) -> VfsResult<Vec<u8>> {
+        // Refresh stale handles (remote content changed while handle is open)
+        {
+            let entry = self.open_files.get(fh).ok_or(VfsError::NotFound)?;
+            if entry.stale && !entry.dirty {
+                let ino = entry.ino;
+                drop(entry);
+                self.refresh_stale_handle(fh, ino)?;
+            }
+        }
+
         let entry = self.open_files.get(fh).ok_or(VfsError::NotFound)?;
         match &entry.content {
             DownloadState::Complete(content) => {
