@@ -126,8 +126,12 @@ async fn complete_sign_in(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     tracing::info!("discovered OneDrive: {} ({})", drive.name, drive.id);
 
-    // Set account_id on AuthManager so subsequent store/delete use the correct key
-    state.auth.set_account_id(&drive.id).await;
+    // Finalize sign-in: sets account_id and migrates tokens from client_id key to account_id key
+    state
+        .auth
+        .finalize_sign_in(&drive.id)
+        .await
+        .map_err(|e| e.to_string())?;
 
     {
         let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
@@ -518,20 +522,26 @@ pub async fn refresh_mount(app: AppHandle, id: String) -> Result<(), String> {
             .ok_or_else(|| format!("mount '{id}' not found or has no drive_id"))?
     };
 
-    let (cache, inodes) = {
+    let (cache, inodes, observer) = {
         let mount_caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
         mount_caches
             .get(&drive_id)
-            .map(|(c, i)| (c.clone(), i.clone()))
+            .map(|(c, i, obs)| (c.clone(), i.clone(), obs.clone()))
             .ok_or_else(|| format!("no active cache for drive '{drive_id}'"))?
     };
 
     let inode_allocator: std::sync::Arc<dyn Fn(&str) -> u64 + Send + Sync> =
         std::sync::Arc::new(move |item_id: &str| inodes.allocate(item_id));
 
-    run_delta_sync(&state.graph, &cache, &drive_id, &inode_allocator)
-        .await
-        .map_err(|e| e.to_string())?;
+    run_delta_sync(
+        &state.graph,
+        &cache,
+        &drive_id,
+        &inode_allocator,
+        observer.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -546,7 +556,7 @@ pub async fn clear_cache(app: AppHandle) -> Result<(), String> {
         .lock()
         .map_err(|e| e.to_string())?
         .values()
-        .map(|(c, _)| c.clone())
+        .map(|(c, _, _)| c.clone())
         .collect();
 
     crate::stop_all_mounts(&app);
@@ -623,7 +633,10 @@ pub fn check_fuse_available() -> bool {
 pub fn get_default_mount_root(app: AppHandle) -> Result<String, String> {
     let state = app.state::<AppState>();
     let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-    Ok(expand_mount_point(&format!("~/{}/", config.root_dir)))
+    let expanded = expand_mount_point(&format!("~/{}", config.root_dir));
+    Ok(std::path::PathBuf::from(&expanded)
+        .to_string_lossy()
+        .into_owned())
 }
 
 fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {

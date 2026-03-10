@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -51,44 +52,23 @@ impl CloudMountCfFilter {
         }
     }
 
-    fn relative_path(&self, absolute: &Path) -> Option<String> {
+    /// Return the path components relative to the mount root as lossless `OsString` values.
+    /// Preserves NTFS filenames that may contain unpaired UTF-16 surrogates.
+    fn relative_components(&self, absolute: &Path) -> Option<Vec<OsString>> {
         absolute
             .strip_prefix(&self.mount_path)
             .ok()
-            .map(|p| p.to_string_lossy().into_owned())
+            .map(|p| p.iter().map(|c| c.to_os_string()).collect())
     }
 
-    fn resolve_parent_item_id(&self, rel_path: &str) -> Option<String> {
-        let parent_rel = {
-            let p = Path::new(rel_path);
-            let parent = p.parent()?;
-            parent.to_string_lossy().into_owned()
-        };
-        let (parent_ino, _) = self.core.resolve_path(&parent_rel)?;
-        self.core.inodes().get_item_id(parent_ino)
+    /// Split pre-resolved components into (parent_components, child_name).
+    /// Returns `None` if `components` is empty.
+    fn resolve_parent_and_name(components: &[OsString]) -> Option<(&[OsString], &OsString)> {
+        components.split_last().map(|(name, parent)| (parent, name))
     }
 
     fn item_to_metadata(item: &DriveItem) -> Metadata {
-        let base = if item.is_folder() {
-            Metadata::directory()
-        } else {
-            Metadata::file()
-        };
-
-        let mut meta = base.size(item.size as u64);
-
-        if let Some(mtime) = item.last_modified
-            && let Ok(ft) = FileTime::try_from(mtime)
-        {
-            meta = meta.written(ft).changed(ft);
-        }
-        if let Some(ctime) = item.created
-            && let Ok(ft) = FileTime::try_from(ctime)
-        {
-            meta = meta.created(ft);
-        }
-
-        meta
+        item_to_metadata(item)
     }
 
     fn mark_placeholder_synced(&self, abs_path: &Path, item: &DriveItem) {
@@ -134,7 +114,8 @@ impl SyncFilter for CloudMountCfFilter {
         ticket: ticket::FetchData,
         info: info::FetchData,
     ) -> CResult<()> {
-        let Some(rel_path) = self.relative_path(&request.path()) else {
+        let abs_path = request.path();
+        let Some(components) = self.relative_components(&abs_path) else {
             tracing::warn!("cfapi: fetch_data called for path outside sync root");
             return Ok(());
         };
@@ -142,7 +123,7 @@ impl SyncFilter for CloudMountCfFilter {
         let item_id = match std::str::from_utf8(request.file_blob()) {
             Ok(s) => s.to_owned(),
             Err(e) => {
-                tracing::warn!(path = %rel_path, "cfapi: fetch_data blob decode failed: {e:?}");
+                tracing::warn!(path = %abs_path.display(), "cfapi: fetch_data blob decode failed: {e:?}");
                 return Ok(());
             }
         };
@@ -162,13 +143,13 @@ impl SyncFilter for CloudMountCfFilter {
         let ino = if let Some(ino) = self.core.inodes().get_inode(&item_id) {
             ino
         } else {
-            match self.core.resolve_path(&rel_path) {
+            match self.core.resolve_path(&components) {
                 Some((ino, _)) => ino,
                 None => {
                     // Item not in cache yet — allocate a fresh inode so
                     // read_range_direct can look up item_id and download.
                     tracing::debug!(
-                        path = %rel_path,
+                        path = %abs_path.display(),
                         "cfapi: fetch_data allocating inode for unknown item {item_id}"
                     );
                     self.core.inodes().allocate(&item_id)
@@ -183,13 +164,13 @@ impl SyncFilter for CloudMountCfFilter {
         let content = match self.core.read_range_direct(ino, offset, length) {
             Ok(c) => c,
             Err(e) => {
-                tracing::warn!(path = %rel_path, "cfapi: fetch_data download failed: {e:?}");
+                tracing::warn!(path = %abs_path.display(), "cfapi: fetch_data download failed: {e:?}");
                 return Ok(());
             }
         };
 
         if content.is_empty() {
-            tracing::warn!(path = %rel_path, "cfapi: fetch_data got empty content, skipping");
+            tracing::warn!(path = %abs_path.display(), "cfapi: fetch_data got empty content, skipping");
             return Ok(());
         }
 
@@ -207,7 +188,7 @@ impl SyncFilter for CloudMountCfFilter {
             };
 
             if let Err(e) = ticket.write_at(&data[pos..pos + chunk_len], offset) {
-                tracing::warn!(path = %rel_path, "cfapi: fetch_data write_at failed: {e:?}");
+                tracing::warn!(path = %abs_path.display(), "cfapi: fetch_data write_at failed: {e:?}");
                 break;
             }
 
@@ -225,13 +206,13 @@ impl SyncFilter for CloudMountCfFilter {
         _info: info::FetchPlaceholders,
     ) -> CResult<()> {
         let dir_path = request.path();
-        let rel_path = self
-            .relative_path(&dir_path)
+        let components = self
+            .relative_components(&dir_path)
             .ok_or(CloudErrorKind::NotUnderSyncRoot)?;
 
         let (parent_ino, _) = self
             .core
-            .resolve_path(&rel_path)
+            .resolve_path(&components)
             .ok_or(CloudErrorKind::NotInSync)?;
 
         let children = self.core.list_children(parent_ino);
@@ -265,14 +246,17 @@ impl SyncFilter for CloudMountCfFilter {
     }
 
     fn closed(&self, request: Request, info: info::Closed) {
+        use crate::core_ops::VfsEvent;
+
         if info.deleted() {
             return;
         }
 
-        let Some(rel_path) = self.relative_path(&request.path()) else {
+        let abs_path = request.path();
+        let Some(components) = self.relative_components(&abs_path) else {
             return;
         };
-        let Some((ino, item)) = self.core.resolve_path(&rel_path) else {
+        let Some((ino, item)) = self.core.resolve_path(&components) else {
             return;
         };
 
@@ -280,52 +264,135 @@ impl SyncFilter for CloudMountCfFilter {
             return;
         }
 
-        let abs_path = request.path();
         let item_id = match self.core.inodes().get_item_id(ino) {
             Some(id) => id,
             None => return,
         };
 
         let drive_id = self.core.drive_id();
+        let file_name = item.name.clone();
+
+        // Retrieve server-side last-modified timestamp for the unmodified-file guard below.
+        let server_mtime: Option<chrono::DateTime<chrono::Utc>> = item.last_modified;
 
         // For large files, use chunked reading to avoid loading everything into memory.
         // SMALL_FILE_LIMIT (4MB) is the same threshold used for simple vs session upload.
-        let file_size = match std::fs::metadata(&abs_path) {
-            Ok(m) => m.len(),
+        let meta = match std::fs::metadata(&abs_path) {
+            Ok(m) => m,
             Err(_) => return,
         };
+        let file_size = meta.len();
+
+        // Guard: skip writeback when the file has not been modified since last sync.
+        // Compare file Last Write Time against the server's lastModifiedDateTime (set
+        // during placeholder creation via mark_placeholder_synced). A read-only open
+        // does NOT change the Last Write Time, so this correctly skips unmodified opens.
+        // Use 1-second tolerance to absorb FAT32/NTFS sub-second rounding differences.
+        if let Some(server_mtime) = server_mtime {
+            if let Ok(file_sys_time) = meta.modified() {
+                let file_mtime = chrono::DateTime::<chrono::Utc>::from(file_sys_time);
+                let diff = (file_mtime - server_mtime).num_seconds().unsigned_abs();
+                if diff < 1 {
+                    tracing::debug!(
+                        path = %abs_path.display(),
+                        "cfapi: closed skipping unmodified file"
+                    );
+                    return;
+                }
+            }
+            // If meta.modified() is Err, fall through (conservative: assume modified)
+        }
+        // If server_mtime is None, fall through (conservative: assume modified)
 
         if file_size <= SMALL_FILE_LIMIT as u64 {
             let disk_content = match std::fs::read(&abs_path) {
                 Ok(c) => c,
-                Err(_) => return,
+                Err(e) => {
+                    tracing::error!(
+                        "failed to read file for writeback {}: {e}",
+                        abs_path.display()
+                    );
+                    self.core
+                        .send_event(VfsEvent::WritebackFailed { file_name });
+                    return;
+                }
             };
-            let _ = self.core.rt().block_on(self.core.cache().writeback.write(
-                drive_id,
-                &item_id,
-                &disk_content,
-            ));
+            if let Err(e) = block_on_compat(
+                self.core.rt(),
+                self.core
+                    .cache()
+                    .writeback
+                    .write(drive_id, &item_id, &disk_content),
+            ) {
+                tracing::error!("writeback write failed for {}: {e}", abs_path.display());
+                self.core
+                    .send_event(VfsEvent::WritebackFailed { file_name });
+                return;
+            }
         } else {
+            const CHUNK_SIZE: usize = 64 * 1024; // 64 KiB
             use std::io::Read;
             let file = match std::fs::File::open(&abs_path) {
                 Ok(f) => f,
-                Err(_) => return,
+                Err(e) => {
+                    tracing::error!(
+                        "failed to open file for writeback {}: {e}",
+                        abs_path.display()
+                    );
+                    self.core
+                        .send_event(VfsEvent::WritebackFailed { file_name });
+                    return;
+                }
             };
-            let mut reader = std::io::BufReader::with_capacity(SMALL_FILE_LIMIT, file);
-            let mut buf = vec![0u8; SMALL_FILE_LIMIT];
-            let mut all_content = Vec::with_capacity(file_size as usize);
+            let mut reader = std::io::BufReader::with_capacity(CHUNK_SIZE, file);
+            let mut buf = vec![0u8; CHUNK_SIZE];
+            let mut offset: u64 = 0;
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
-                    Ok(n) => all_content.extend_from_slice(&buf[..n]),
-                    Err(_) => return,
+                    Ok(n) => {
+                        if let Err(e) = block_on_compat(
+                            self.core.rt(),
+                            self.core.cache().writeback.write_chunk(
+                                drive_id,
+                                &item_id,
+                                offset,
+                                &buf[..n],
+                            ),
+                        ) {
+                            tracing::error!(
+                                "writeback chunk write failed for {}: {e}",
+                                abs_path.display()
+                            );
+                            self.core
+                                .send_event(VfsEvent::WritebackFailed { file_name });
+                            return;
+                        }
+                        offset += n as u64;
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "failed to read chunk for writeback {}: {e}",
+                            abs_path.display()
+                        );
+                        self.core
+                            .send_event(VfsEvent::WritebackFailed { file_name });
+                        return;
+                    }
                 }
             }
-            let _ = self.core.rt().block_on(self.core.cache().writeback.write(
-                drive_id,
-                &item_id,
-                &all_content,
-            ));
+            if let Err(e) = block_on_compat(
+                self.core.rt(),
+                self.core
+                    .cache()
+                    .writeback
+                    .finish_chunked_write(drive_id, &item_id),
+            ) {
+                tracing::error!("writeback finalize failed for {}: {e}", abs_path.display());
+                self.core
+                    .send_event(VfsEvent::WritebackFailed { file_name });
+                return;
+            }
         }
 
         self.mark_placeholder_pending(&abs_path);
@@ -337,7 +404,10 @@ impl SyncFilter for CloudMountCfFilter {
                 }
             }
             Err(e) => {
-                tracing::error!("flush after close failed for {}: {e:?}", rel_path);
+                tracing::error!("flush after close failed for {}: {e:?}", abs_path.display());
+                self.core.send_event(VfsEvent::WritebackFailed {
+                    file_name: file_name.clone(),
+                });
             }
         }
     }
@@ -348,15 +418,17 @@ impl SyncFilter for CloudMountCfFilter {
         ticket: ticket::Dehydrate,
         _info: info::Dehydrate,
     ) -> CResult<()> {
-        let rel_path = self.relative_path(&request.path()).unwrap_or_default();
+        let components = self
+            .relative_components(&request.path())
+            .unwrap_or_default();
 
-        if let Some((ino, _)) = self.core.resolve_path(&rel_path) {
+        if let Some((ino, _)) = self.core.resolve_path(&components) {
             let item_id = self.core.inodes().get_item_id(ino);
             if let Some(ref id) = item_id {
-                let _ = self
-                    .core
-                    .rt()
-                    .block_on(self.core.cache().disk.remove(self.core.drive_id(), id));
+                let _ = block_on_compat(
+                    self.core.rt(),
+                    self.core.cache().disk.remove(self.core.drive_id(), id),
+                );
             }
         }
 
@@ -367,87 +439,243 @@ impl SyncFilter for CloudMountCfFilter {
     }
 
     fn delete(&self, request: Request, ticket: ticket::Delete, _info: info::Delete) -> CResult<()> {
-        let rel_path = self
-            .relative_path(&request.path())
+        let abs_path = request.path();
+        let components = self
+            .relative_components(&abs_path)
             .ok_or(CloudErrorKind::NotUnderSyncRoot)?;
 
-        if let Some((ino, item)) = self.core.resolve_path(&rel_path) {
-            let item_id = item.id.clone();
-            if !item_id.starts_with("local:") {
-                let _ = self.core.rt().block_on(
-                    self.core
-                        .graph()
-                        .delete_item(self.core.drive_id(), &item_id),
-                );
+        let Some((parent_components, child_name)) = Self::resolve_parent_and_name(&components)
+        else {
+            tracing::warn!(path = %abs_path.display(), "cfapi: delete on sync root");
+            return Ok(());
+        };
+
+        let Some((parent_ino, _)) = self.core.resolve_path(parent_components) else {
+            tracing::warn!(path = %abs_path.display(), "cfapi: delete parent not found");
+            return Ok(());
+        };
+
+        let is_folder = self
+            .core
+            .find_child(parent_ino, child_name)
+            .map(|(_, item)| item.is_folder())
+            .unwrap_or(false);
+
+        let Some(name_str) = child_name.to_str() else {
+            tracing::warn!(path = %abs_path.display(), "cfapi: delete filename not valid UTF-8");
+            return Ok(());
+        };
+
+        let result = if is_folder {
+            self.core.rmdir(parent_ino, name_str)
+        } else {
+            self.core.unlink(parent_ino, name_str)
+        };
+
+        match result {
+            Ok(()) => {
+                if let Err(e) = ticket.pass() {
+                    tracing::warn!(path = %abs_path.display(), "cfapi: delete ticket.pass() failed: {e:?}");
+                }
             }
-            self.core.cache().memory.invalidate(ino);
-            self.core.inodes().remove_by_item_id(&item_id);
-            let _ = self.core.cache().sqlite.delete_item(&item_id);
-            let _ = self.core.rt().block_on(
-                self.core
-                    .cache()
-                    .disk
-                    .remove(self.core.drive_id(), &item_id),
-            );
-            let _ = self.core.rt().block_on(
-                self.core
-                    .cache()
-                    .writeback
-                    .remove(self.core.drive_id(), &item_id),
-            );
+            Err(e) => {
+                tracing::warn!(path = %abs_path.display(), "cfapi: delete failed: {e:?}");
+            }
         }
 
-        if let Err(e) = ticket.pass() {
-            tracing::warn!(path = %rel_path, "cfapi: delete ticket.pass() failed: {e:?}");
-        }
         Ok(())
     }
 
     fn rename(&self, request: Request, ticket: ticket::Rename, info: info::Rename) -> CResult<()> {
-        let rel_path = self
-            .relative_path(&request.path())
+        let abs_path = request.path();
+        let src_components = self
+            .relative_components(&abs_path)
             .ok_or(CloudErrorKind::NotUnderSyncRoot)?;
 
         let target_path = info.target_path();
-        let new_rel = self
-            .relative_path(&target_path)
+        let dst_components = self
+            .relative_components(&target_path)
             .ok_or(CloudErrorKind::NotUnderSyncRoot)?;
 
-        if let Some((ino, item)) = self.core.resolve_path(&rel_path) {
-            let item_id = item.id.clone();
-            if !item_id.starts_with("local:") {
-                let new_name = target_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| new_rel.clone());
+        let Some((src_parent_comps, src_child)) = Self::resolve_parent_and_name(&src_components)
+        else {
+            tracing::warn!(path = %abs_path.display(), "cfapi: rename source is sync root");
+            return Ok(());
+        };
 
-                let new_parent_item_id = self.resolve_parent_item_id(&new_rel);
+        let Some((dst_parent_comps, dst_child)) = Self::resolve_parent_and_name(&dst_components)
+        else {
+            tracing::warn!(path = %target_path.display(), "cfapi: rename target is sync root");
+            return Ok(());
+        };
 
-                let _ = self.core.rt().block_on(self.core.graph().update_item(
-                    self.core.drive_id(),
-                    &item_id,
-                    Some(&new_name),
-                    new_parent_item_id.as_deref(),
-                ));
+        let Some((src_parent_ino, _)) = self.core.resolve_path(src_parent_comps) else {
+            tracing::warn!(path = %abs_path.display(), "cfapi: rename source parent not found");
+            return Ok(());
+        };
+
+        let Some((dst_parent_ino, _)) = self.core.resolve_path(dst_parent_comps) else {
+            tracing::warn!(path = %target_path.display(), "cfapi: rename target parent not found");
+            return Ok(());
+        };
+
+        let (Some(src_name), Some(dst_name)) = (src_child.to_str(), dst_child.to_str()) else {
+            tracing::warn!("cfapi: rename filenames not valid UTF-8");
+            return Ok(());
+        };
+
+        match self
+            .core
+            .rename(src_parent_ino, src_name, dst_parent_ino, dst_name)
+        {
+            Ok(()) => {
+                if let Err(e) = ticket.pass() {
+                    tracing::warn!(
+                        path = %abs_path.display(),
+                        "cfapi: rename ticket.pass() failed: {e:?}"
+                    );
+                }
             }
-
-            self.core.cache().memory.invalidate(ino);
+            Err(e) => {
+                tracing::warn!(
+                    path = %abs_path.display(),
+                    target = %target_path.display(),
+                    "cfapi: rename failed: {e:?}"
+                );
+            }
         }
 
-        if let Err(e) = ticket.pass() {
-            tracing::warn!(path = %rel_path, new_path = %new_rel, "cfapi: rename ticket.pass() failed: {e:?}");
-        }
         Ok(())
     }
 
     fn state_changed(&self, changes: Vec<PathBuf>) {
         for path in &changes {
             tracing::debug!("state changed: {}", path.display());
-            if let Some(rel_path) = self.relative_path(path)
-                && let Some((ino, _)) = self.core.resolve_path(&rel_path)
+            if let Some(components) = self.relative_components(path)
+                && let Some((ino, _)) = self.core.resolve_path(&components)
             {
                 self.core.cache().memory.invalidate(ino);
+
+                // Invalidate parent directory so list_children returns fresh results.
+                // Skip only when the sync root itself changed (components is empty);
+                // for files at the root level, resolve_path(&[]) yields ROOT_INODE.
+                if !components.is_empty() {
+                    let parent_components = &components[..components.len() - 1];
+                    if let Some((parent_ino, _)) = self.core.resolve_path(parent_components) {
+                        self.core.cache().memory.invalidate(parent_ino);
+                    }
+                }
             }
+        }
+    }
+}
+
+/// Convert a `DriveItem` into CfApi `Metadata` for placeholder creation/update.
+pub(crate) fn item_to_metadata(item: &DriveItem) -> Metadata {
+    let base = if item.is_folder() {
+        Metadata::directory()
+    } else {
+        Metadata::file()
+    };
+
+    let mut meta = base.size(item.size as u64);
+
+    if let Some(mtime) = item.last_modified
+        && let Ok(ft) = FileTime::try_from(mtime)
+    {
+        meta = meta.written(ft).changed(ft);
+    }
+    if let Some(ctime) = item.created
+        && let Ok(ft) = FileTime::try_from(ctime)
+    {
+        meta = meta.created(ft);
+    }
+
+    meta
+}
+
+/// Apply post-delta-sync placeholder updates to CfApi NTFS placeholders.
+///
+/// For changed items: updates placeholder metadata (size, timestamps), dehydrates
+/// the content so the next access triggers a fresh `fetch_data()`, and marks as in-sync.
+/// For deleted items: removes the placeholder file/directory from the filesystem.
+///
+/// Skips items with pending writeback to avoid discarding local changes.
+pub fn apply_delta_placeholder_updates(
+    mount_path: &Path,
+    changed: &[(PathBuf, DriveItem)],
+    deleted: &[PathBuf],
+    writeback: &cloudmount_cache::writeback::WriteBackBuffer,
+    drive_id: &str,
+) {
+    // Process changed items
+    for (relative_path, item) in changed {
+        let abs_path = mount_path.join(relative_path);
+        if !abs_path.exists() {
+            tracing::debug!(
+                "delta placeholder update: skipping non-existent {}",
+                abs_path.display()
+            );
+            continue;
+        }
+
+        // Safety: skip dehydration for items with pending local writes
+        if writeback.has_pending(drive_id, &item.id) {
+            tracing::warn!(
+                "delta placeholder update: skipping {} — pending writeback for item {}",
+                abs_path.display(),
+                item.id
+            );
+            continue;
+        }
+
+        match Placeholder::open(&abs_path) {
+            Ok(mut ph) => {
+                let mut update = UpdateOptions::default()
+                    .metadata(item_to_metadata(item))
+                    .mark_in_sync()
+                    .blob(item.id.as_bytes());
+
+                // Only dehydrate files, not folders (folders have no content)
+                if !item.is_folder() {
+                    update = update.dehydrate();
+                }
+
+                if let Err(e) = ph.update(update, None) {
+                    tracing::warn!(
+                        "delta placeholder update: failed to update {}: {e:?}",
+                        abs_path.display()
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "delta placeholder update: failed to open {}: {e:?}",
+                    abs_path.display()
+                );
+            }
+        }
+    }
+
+    // Process deleted items
+    for relative_path in deleted {
+        let abs_path = mount_path.join(relative_path);
+        if !abs_path.exists() {
+            // Already absent — desired state achieved
+            continue;
+        }
+
+        let result = if abs_path.is_dir() {
+            std::fs::remove_dir(&abs_path)
+        } else {
+            std::fs::remove_file(&abs_path)
+        };
+
+        if let Err(e) = result {
+            tracing::warn!(
+                "delta placeholder delete: failed to remove {}: {e}",
+                abs_path.display()
+            );
         }
     }
 }
@@ -515,8 +743,8 @@ fn register_sync_root(sync_root_id: &SyncRootId, mount_path: &Path) -> cloudmoun
 }
 
 pub struct CfMountHandle {
-    // Drop order matters: connection must be dropped before sync_root_id is unregistered
-    _connection: Connection<CloudMountCfFilter>,
+    /// Must be dropped before `sync_root_id` is unregistered. See `unmount()`.
+    connection: Connection<CloudMountCfFilter>,
     sync_root_id: SyncRootId,
     cache: Arc<CacheManager>,
     graph: Arc<GraphClient>,
@@ -580,7 +808,7 @@ impl CfMountHandle {
         tracing::info!("mounted at {} via Cloud Files API", mount_path.display());
 
         Ok(Self {
-            _connection: connection,
+            connection,
             sync_root_id,
             cache,
             graph,
@@ -608,7 +836,7 @@ impl CfMountHandle {
             crate::pending::flush_pending(&self.cache, &self.graph, &self.drive_id),
         );
         // Drop order: connection drops first, then unregister
-        drop(self._connection);
+        drop(self.connection);
         self.sync_root_id.unregister().map_err(|e| {
             cloudmount_core::Error::Filesystem(format!("sync root unregister failed: {e:?}"))
         })?;
@@ -621,8 +849,8 @@ pub async fn shutdown_on_signal(mounts: Arc<Mutex<Vec<CfMountHandle>>>) {
     let _ = tokio::signal::ctrl_c().await;
 
     tracing::info!("shutdown signal received, unmounting all Cloud Files API drives");
-    let mut handles = mounts.lock().unwrap();
-    while let Some(handle) = handles.pop() {
+    let handles = std::mem::take(&mut *mounts.lock().unwrap());
+    for handle in handles {
         if let Err(e) = handle.unmount() {
             tracing::error!("unmount failed: {e}");
         }

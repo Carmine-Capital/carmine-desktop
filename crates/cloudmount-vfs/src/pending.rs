@@ -165,6 +165,7 @@ async fn recover_single(
             Some(item_id),
             &name,
             bytes::Bytes::from(content),
+            None,
         )
         .await
     {

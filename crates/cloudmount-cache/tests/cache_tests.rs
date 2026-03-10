@@ -774,3 +774,378 @@ async fn test_writeback_crash_recovery() -> cloudmount_core::Result<()> {
 
     Ok(())
 }
+
+// ============================================================================
+// PATH RESOLUTION TESTS
+// ============================================================================
+
+#[test]
+fn test_sync_resolve_relative_path_nested() {
+    use cloudmount_cache::resolve_relative_path;
+    use cloudmount_core::types::ParentReference;
+    use std::path::PathBuf;
+
+    let item = DriveItem {
+        id: "item1".to_string(),
+        name: "quarterly.xlsx".to_string(),
+        size: 1024,
+        last_modified: None,
+        created: None,
+        etag: None,
+        parent_reference: Some(ParentReference {
+            drive_id: None,
+            id: None,
+            path: Some("/drive/root:/Documents/Reports".to_string()),
+        }),
+        folder: None,
+        file: None,
+        download_url: None,
+    };
+
+    let result = resolve_relative_path(&item);
+    assert_eq!(
+        result,
+        Some(PathBuf::from("Documents/Reports/quarterly.xlsx"))
+    );
+}
+
+#[test]
+fn test_sync_resolve_relative_path_root_level() {
+    use cloudmount_cache::resolve_relative_path;
+    use cloudmount_core::types::ParentReference;
+    use std::path::PathBuf;
+
+    let item = DriveItem {
+        id: "item2".to_string(),
+        name: "readme.txt".to_string(),
+        size: 256,
+        last_modified: None,
+        created: None,
+        etag: None,
+        parent_reference: Some(ParentReference {
+            drive_id: None,
+            id: None,
+            path: Some("/drive/root:".to_string()),
+        }),
+        folder: None,
+        file: None,
+        download_url: None,
+    };
+
+    let result = resolve_relative_path(&item);
+    assert_eq!(result, Some(PathBuf::from("readme.txt")));
+}
+
+#[test]
+fn test_sync_resolve_relative_path_missing_parent_reference() {
+    use cloudmount_cache::resolve_relative_path;
+
+    let item = DriveItem {
+        id: "item3".to_string(),
+        name: "orphan.txt".to_string(),
+        size: 100,
+        last_modified: None,
+        created: None,
+        etag: None,
+        parent_reference: None,
+        folder: None,
+        file: None,
+        download_url: None,
+    };
+
+    let result = resolve_relative_path(&item);
+    assert_eq!(result, None);
+}
+
+#[test]
+fn test_sync_resolve_relative_path_drives_prefix() {
+    use cloudmount_cache::resolve_relative_path;
+    use cloudmount_core::types::ParentReference;
+    use std::path::PathBuf;
+
+    let item = DriveItem {
+        id: "item4".to_string(),
+        name: "report.pdf".to_string(),
+        size: 2048,
+        last_modified: None,
+        created: None,
+        etag: None,
+        parent_reference: Some(ParentReference {
+            drive_id: Some("b!abc123".to_string()),
+            id: None,
+            path: Some("/drives/b!abc123/root:/Shared Documents".to_string()),
+        }),
+        folder: None,
+        file: None,
+        download_url: None,
+    };
+
+    let result = resolve_relative_path(&item);
+    assert_eq!(result, Some(PathBuf::from("Shared Documents/report.pdf")));
+}
+
+#[test]
+fn test_sync_resolve_deleted_path_standard() {
+    use cloudmount_cache::DeletedItemInfo;
+    use cloudmount_cache::resolve_deleted_path;
+    use std::path::PathBuf;
+
+    let info = DeletedItemInfo {
+        id: "del1".to_string(),
+        name: "old_file.txt".to_string(),
+        parent_path: Some("/drive/root:/Archive".to_string()),
+    };
+
+    let result = resolve_deleted_path(&info);
+    assert_eq!(result, Some(PathBuf::from("Archive/old_file.txt")));
+}
+
+#[test]
+fn test_sync_resolve_deleted_path_empty_name() {
+    use cloudmount_cache::DeletedItemInfo;
+    use cloudmount_cache::resolve_deleted_path;
+
+    let info = DeletedItemInfo {
+        id: "del2".to_string(),
+        name: String::new(),
+        parent_path: Some("/drive/root:/Something".to_string()),
+    };
+
+    let result = resolve_deleted_path(&info);
+    assert_eq!(result, None);
+}
+
+#[test]
+fn test_sync_resolve_deleted_path_missing_parent() {
+    use cloudmount_cache::DeletedItemInfo;
+    use cloudmount_cache::resolve_deleted_path;
+
+    let info = DeletedItemInfo {
+        id: "del3".to_string(),
+        name: "file.txt".to_string(),
+        parent_path: None,
+    };
+
+    let result = resolve_deleted_path(&info);
+    assert_eq!(result, None);
+}
+
+// ============================================================================
+// WRITEBACK HAS_PENDING TESTS
+// ============================================================================
+
+#[tokio::test]
+async fn test_writeback_has_pending_in_memory() -> cloudmount_core::Result<()> {
+    let base = std::env::temp_dir().join("cloudmount_test_has_pending_mem");
+    let _ = std::fs::remove_dir_all(&base);
+
+    let wb = WriteBackBuffer::new(base.clone());
+    assert!(!wb.has_pending("drive1", "item1"));
+
+    wb.write("drive1", "item1", b"content").await?;
+    assert!(wb.has_pending("drive1", "item1"));
+    assert!(!wb.has_pending("drive1", "item_other"));
+
+    wb.remove("drive1", "item1").await?;
+    assert!(!wb.has_pending("drive1", "item1"));
+
+    let _ = std::fs::remove_dir_all(&base);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_writeback_has_pending_on_disk_only() -> cloudmount_core::Result<()> {
+    let base = std::env::temp_dir().join("cloudmount_test_has_pending_disk");
+    let _ = std::fs::remove_dir_all(&base);
+
+    // Write via chunked write (bypasses in-memory buffer)
+    let wb = WriteBackBuffer::new(base.clone());
+    wb.write_chunk("drive1", "item1", 0, b"chunk data").await?;
+    wb.finish_chunked_write("drive1", "item1").await?;
+
+    // In-memory buffer is empty, but disk file exists
+    assert!(wb.has_pending("drive1", "item1"));
+    assert!(!wb.has_pending("drive1", "nonexistent"));
+
+    let _ = std::fs::remove_dir_all(&base);
+    Ok(())
+}
+
+// ============================================================================
+// DELTA SYNC OBSERVER TESTS
+// ============================================================================
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Mock delta sync observer that tracks which inodes were notified.
+struct MockDeltaSyncObserver {
+    last_ino: AtomicU64,
+    call_count: AtomicU64,
+}
+
+impl MockDeltaSyncObserver {
+    fn new() -> Self {
+        Self {
+            last_ino: AtomicU64::new(0),
+            call_count: AtomicU64::new(0),
+        }
+    }
+}
+
+impl cloudmount_core::DeltaSyncObserver for MockDeltaSyncObserver {
+    fn on_inode_content_changed(&self, ino: u64) {
+        self.last_ino.store(ino, Ordering::Relaxed);
+        self.call_count.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[tokio::test]
+async fn test_delta_sync_observer_called_on_etag_change() {
+    use cloudmount_cache::CacheManager;
+    use cloudmount_cache::sync::run_delta_sync;
+    use cloudmount_core::types::{DriveItem, FileFacet, ParentReference};
+    use std::sync::Arc;
+
+    let server = wiremock::MockServer::start().await;
+
+    let drive_id = "test-drive";
+    let item_id = "file-1";
+
+    let base = std::env::temp_dir().join(format!(
+        "cloudmount-observer-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let cache_dir = base.join("cache");
+    let db_path = base.join("metadata.db");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+
+    let cache = Arc::new(CacheManager::new(cache_dir, db_path, 100_000_000, Some(300)).unwrap());
+    let graph = Arc::new(cloudmount_graph::GraphClient::with_base_url(
+        server.uri(),
+        || async { Ok("test-token".to_string()) },
+    ));
+
+    // Pre-populate SQLite with an existing item that has a different eTag
+    let existing_item = DriveItem {
+        id: item_id.to_string(),
+        name: "hello.txt".to_string(),
+        size: 13,
+        last_modified: None,
+        created: None,
+        etag: Some("etag-old".to_string()),
+        parent_reference: Some(ParentReference {
+            drive_id: Some(drive_id.to_string()),
+            id: Some("root-id".to_string()),
+            path: None,
+        }),
+        folder: None,
+        file: Some(FileFacet {
+            mime_type: None,
+            hashes: None,
+        }),
+        download_url: None,
+    };
+    cache
+        .sqlite
+        .upsert_item(2, drive_id, &existing_item, Some(1))
+        .unwrap();
+
+    // Mock delta response with a changed eTag
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path(format!(
+            "/drives/{drive_id}/root/delta"
+        )))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [{
+                    "id": item_id,
+                    "name": "hello.txt",
+                    "size": 7000,
+                    "eTag": "etag-new",
+                    "parentReference": { "driveId": drive_id, "id": "root-id" },
+                    "file": { "mimeType": "text/plain" }
+                }],
+                "@odata.deltaLink": "https://example.com/delta?token=new"
+            })),
+        )
+        .mount(&server)
+        .await;
+
+    let observer = Arc::new(MockDeltaSyncObserver::new());
+    let inode_allocator: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
+        Arc::new(|id: &str| if id == "file-1" { 2 } else { 1 });
+
+    run_delta_sync(
+        &graph,
+        &cache,
+        drive_id,
+        &inode_allocator,
+        Some(observer.as_ref()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        observer.call_count.load(Ordering::Relaxed),
+        1,
+        "observer should be called once for the changed item"
+    );
+    assert_eq!(
+        observer.last_ino.load(Ordering::Relaxed),
+        2,
+        "observer should be called with the correct inode"
+    );
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test]
+async fn test_delta_sync_no_observer_still_works() {
+    use cloudmount_cache::CacheManager;
+    use cloudmount_cache::sync::run_delta_sync;
+    use std::sync::Arc;
+
+    let server = wiremock::MockServer::start().await;
+    let drive_id = "test-drive";
+
+    let base = std::env::temp_dir().join(format!(
+        "cloudmount-no-observer-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let cache_dir = base.join("cache");
+    let db_path = base.join("metadata.db");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+
+    let cache = Arc::new(CacheManager::new(cache_dir, db_path, 100_000_000, Some(300)).unwrap());
+    let graph = Arc::new(cloudmount_graph::GraphClient::with_base_url(
+        server.uri(),
+        || async { Ok("test-token".to_string()) },
+    ));
+
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path(format!(
+            "/drives/{drive_id}/root/delta"
+        )))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [],
+                "@odata.deltaLink": "https://example.com/delta?token=new"
+            })),
+        )
+        .mount(&server)
+        .await;
+
+    let inode_allocator: Arc<dyn Fn(&str) -> u64 + Send + Sync> = Arc::new(|_: &str| 1);
+
+    // Should succeed without observer (None)
+    let result = run_delta_sync(&graph, &cache, drive_id, &inode_allocator, None).await;
+    assert!(result.is_ok(), "delta sync should work without observer");
+
+    let _ = std::fs::remove_dir_all(&base);
+}

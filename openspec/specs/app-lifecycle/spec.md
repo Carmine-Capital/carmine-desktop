@@ -51,7 +51,7 @@ The system SHALL automatically discover the authenticated user's OneDrive drive 
 - **THEN** the system automatically creates a mount configuration for the OneDrive drive at `{home}/{root_dir}/OneDrive` and starts the mount
 
 ### Requirement: Mount lifecycle management
-The system SHALL manage the lifecycle of filesystem mounts — starting, stopping, and restarting them based on configuration and authentication state.
+The system SHALL manage the lifecycle of filesystem mounts — starting, stopping, and restarting them based on configuration and authentication state. The `start_mount` function SHALL extract shared initialization logic (drive validation, cache directory resolution, CacheManager creation, InodeTable setup, event channel wiring, state insertion, notification dispatch) into a platform-agnostic helper, with only the platform-specific mount handle construction remaining in cfg-gated code. On Windows, the `account_name` parameter passed to `CfMountHandle::mount()` SHALL be the mount configuration's display name (not the Graph API drive ID).
 
 #### Scenario: Start mount
 - **WHEN** the system needs to mount a drive (after sign-in, on startup with valid tokens, or when a new mount is added)
@@ -65,6 +65,16 @@ The system SHALL manage the lifecycle of filesystem mounts — starting, stoppin
 - **WHEN** the system attempts to create or access the mount point directory and the path is a stale FUSE mount (stat returns ENOTCONN or EIO)
 - **THEN** the system attempts to clean up the stale mount via `fusermount -u` (or `umount` on macOS), logs the cleanup result, and retries directory creation; if cleanup fails, the mount is skipped with an actionable error message suggesting manual `fusermount -u <path>`
 
+#### Scenario: Start mount passes correct account_name on Windows
+- **WHEN** the system starts a CfApi mount on Windows
+- **THEN** the `account_name` parameter passed to `CfMountHandle::mount()` is the mount configuration's human-readable display name (e.g., "OneDrive - Contoso"), NOT the Graph API drive ID
+- **AND** the `account_name` is sanitized by replacing `!` characters with `_` per the sync root ID spec
+
+#### Scenario: Start mount uses shared initialization helper
+- **WHEN** the system starts a mount on any platform
+- **THEN** the shared helper performs: drive validation, cache directory resolution, CacheManager creation, InodeTable setup, event channel creation, and state insertion
+- **AND** only the final mount handle construction (FUSE `MountHandle` or CfApi `CfMountHandle`) is platform-specific
+
 #### Scenario: Stop mount
 - **WHEN** the system needs to unmount a drive (on sign-out, mount removal, or application quit)
 - **THEN** it flushes all pending writes for the drive (30-second timeout), unmounts the FUSE or CfApi session, and removes the drive from the delta sync timer's drive list
@@ -75,7 +85,7 @@ The system SHALL manage the lifecycle of filesystem mounts — starting, stoppin
 
 #### Scenario: Stop all mounts on sign-out
 - **WHEN** the user signs out
-- **THEN** the system SHALL, in order: (1) attempt to stop all active mounts (best-effort, errors logged but not fatal), (2) attempt to clear authentication tokens from secure storage, remove account metadata from user config, and save the config (best-effort, errors logged), (3) regardless of any failures in steps 1–2, set the authenticated flag to false, rebuild the tray menu to the unauthenticated state, reload the settings window to clean DOM state, and show the sign-in wizard; if any step in phase 1–2 produced an error, the system SHALL emit a desktop notification describing the failure
+- **THEN** the system SHALL, in order: (1) attempt to stop all active mounts (best-effort, errors logged but not fatal), (2) attempt to clear authentication tokens from secure storage, remove account metadata from user config, and save the config (best-effort, errors logged), (3) regardless of any failures in steps 1-2, set the authenticated flag to false, rebuild the tray menu to the unauthenticated state, reload the settings window to clean DOM state, and show the sign-in wizard; if any step in phase 1-2 produced an error, the system SHALL emit a desktop notification describing the failure
 
 #### Scenario: Mount config change
 - **WHEN** the user adds, removes, toggles, or changes the mount point of a mount in settings
@@ -161,7 +171,9 @@ The system SHALL perform an ordered shutdown to prevent data loss.
 - **THEN** the system logs a warning with the number of unflushed writes, forcefully unmounts, and exits; unflushed writes remain in the writeback buffer for recovery on next startup
 
 ### Requirement: Headless mode operation
-The system SHALL support running without the `desktop` feature flag, performing the full mount lifecycle (authentication, mounting, sync, graceful shutdown) as a foreground terminal process without Tauri or any graphical UI. The system SHALL also support running in headless mode with the `desktop` feature when `--headless` is passed.
+The system SHALL support running without the `desktop` feature flag, performing the full mount lifecycle (authentication, mounting, sync, graceful shutdown) as a foreground terminal process without Tauri or any graphical UI. The system SHALL also support running in headless mode with the `desktop` feature when `--headless` is passed. On Windows, headless mode SHALL exit with a clear error message instead of silently running as an idle process.
+
+On Windows, headless mode is not supported because the Cloud Files API requires a desktop session. The `run_headless` function SHALL exit immediately with a clear error message on Windows. The remainder of the function body (runtime creation, authentication, mount iteration, sync loop, signal handling) SHALL NOT compile on Windows — it SHALL be gated with `#[cfg(not(target_os = "windows"))]` to prevent unused-variable and dead-code warnings under `RUSTFLAGS=-Dwarnings`.
 
 #### Scenario: Headless startup with existing tokens
 - **WHEN** the application starts in headless mode and valid tokens are found in the credential store
@@ -187,9 +199,9 @@ The system SHALL support running without the `desktop` feature flag, performing 
 - **WHEN** the application starts in headless mode
 - **THEN** the process SHALL remain in the foreground (not daemonize), blocking on a signal wait after completing initialization; all log output goes to stderr via the tracing subscriber
 
-#### Scenario: Headless mode on Windows (limitation)
+#### Scenario: Headless mode on Windows exits with error
 - **WHEN** the application starts in headless mode on Windows
-- **THEN** the system logs a warning that Cloud Files API mounts are not supported in headless mode and skips mount startup for affected drives; Windows CfApi headless support is a future enhancement
+- **THEN** the system prints "Error: headless mode is not supported on Windows. Cloud Files API requires desktop mode. Use 'cloudmount' without --headless." to stderr and exits with exit code 1
 
 #### Scenario: Headless via --headless flag
 - **WHEN** the application is compiled with the `desktop` feature and started with `--headless`

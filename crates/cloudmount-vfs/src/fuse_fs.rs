@@ -4,17 +4,72 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fuser::{
     BsdFileFlags, Config, CopyFileRangeFlags, Errno, FileAttr, FileHandle, FileType, Filesystem,
-    FopenFlags, Generation, INodeNo, InitFlags, KernelConfig, LockOwner, MountOption, OpenFlags,
-    RenameFlags, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty,
-    ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request, TimeOrNow, WriteFlags,
+    FopenFlags, Generation, INodeNo, InitFlags, KernelConfig, LockOwner, MountOption, Notifier,
+    OpenFlags, RenameFlags, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyDirectoryPlus,
+    ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request, TimeOrNow, WriteFlags,
 };
 use tokio::runtime::Handle;
 
-use crate::core_ops::{CoreOps, VfsError, VfsEvent};
+use crate::core_ops::{CoreOps, OpenFileTable, VfsError, VfsEvent};
 use crate::inode::InodeTable;
 use cloudmount_cache::CacheManager;
+use cloudmount_core::DeltaSyncObserver;
 use cloudmount_core::types::DriveItem;
 use cloudmount_graph::GraphClient;
+
+/// Delta sync observer for the FUSE backend.
+///
+/// Implements [`DeltaSyncObserver`] to mark open file handles as stale and
+/// invalidate the kernel's FUSE page cache when delta sync detects remote
+/// content changes. Holds a shared reference to the [`OpenFileTable`] and
+/// an optional [`Notifier`] for kernel cache invalidation.
+pub struct FuseDeltaObserver {
+    open_files: Arc<OpenFileTable>,
+    notifier: std::sync::Mutex<Option<Notifier>>,
+}
+
+impl FuseDeltaObserver {
+    /// Set the FUSE notifier for kernel cache invalidation.
+    ///
+    /// Called after mount when the `BackgroundSession` is available.
+    pub fn set_notifier(&self, notifier: Notifier) {
+        *self.notifier.lock().unwrap() = Some(notifier);
+    }
+
+    /// Clear the notifier (e.g., on unmount).
+    pub fn clear_notifier(&self) {
+        *self.notifier.lock().unwrap() = None;
+    }
+}
+
+impl DeltaSyncObserver for FuseDeltaObserver {
+    /// Marks open handles stale and invalidates the kernel page cache for `ino`.
+    fn on_inode_content_changed(&self, ino: u64) {
+        self.open_files.mark_stale_by_ino(ino);
+
+        if self.open_files.has_open_handles(ino) {
+            let notifier = self.notifier.lock().unwrap();
+            if let Some(ref n) = *notifier {
+                match n.inval_inode(INodeNo(ino), 0, -1) {
+                    Ok(()) => {
+                        tracing::debug!(ino, "delta observer: invalidated kernel cache");
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            ino,
+                            "delta observer: kernel cache invalidation failed: {e}"
+                        );
+                    }
+                }
+            } else {
+                tracing::debug!(
+                    ino,
+                    "delta observer: skipping kernel invalidation (no session)"
+                );
+            }
+        }
+    }
+}
 
 const FILE_TTL: Duration = Duration::from_secs(5);
 const DIR_TTL: Duration = Duration::from_secs(30);
@@ -42,6 +97,17 @@ impl CloudMountFs {
             ops = ops.with_event_sender(tx);
         }
         Self { ops, uid, gid }
+    }
+
+    /// Creates a delta sync observer that shares the open file table with this filesystem.
+    ///
+    /// Call this before `mount()` (which consumes `self`). After mount, call
+    /// `FuseDeltaObserver::set_notifier()` with `BackgroundSession::notifier()`.
+    pub fn create_delta_observer(&self) -> Arc<FuseDeltaObserver> {
+        Arc::new(FuseDeltaObserver {
+            open_files: self.ops.open_files().clone(),
+            notifier: std::sync::Mutex::new(None),
+        })
     }
 
     pub fn mount(
@@ -150,9 +216,7 @@ impl Filesystem for CloudMountFs {
     }
 
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
-        let name_str = name.to_string_lossy();
-
-        match self.ops.find_child(parent.0, &name_str) {
+        match self.ops.find_child(parent.0, name) {
             Some((inode, item)) => {
                 let ttl = Self::ttl_for(&item);
                 let attr = self.item_to_attr(inode, &item);
@@ -187,9 +251,13 @@ impl Filesystem for CloudMountFs {
             return;
         }
 
-        match self.ops.lookup_item(ino.0) {
-            Some(item) => {
-                let ttl = Self::ttl_for(&item);
+        match self.ops.lookup_item_for_getattr(ino.0) {
+            Some((item, has_open_handle)) => {
+                let ttl = if has_open_handle {
+                    Duration::ZERO
+                } else {
+                    Self::ttl_for(&item)
+                };
                 let attr = self.item_to_attr(ino.0, &item);
                 reply.attr(&ttl, &attr);
             }
@@ -198,9 +266,13 @@ impl Filesystem for CloudMountFs {
     }
 
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
-        match self.ops.lookup_item(ino.0) {
-            Some(item) => {
-                let ttl = Self::ttl_for(&item);
+        match self.ops.lookup_item_for_getattr(ino.0) {
+            Some((item, has_open_handle)) => {
+                let ttl = if has_open_handle {
+                    Duration::ZERO
+                } else {
+                    Self::ttl_for(&item)
+                };
                 let attr = self.item_to_attr(ino.0, &item);
                 reply.attr(&ttl, &attr);
             }

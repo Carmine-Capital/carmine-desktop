@@ -3,9 +3,10 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 
 use crate::core_ops::VfsEvent;
-use crate::fuse_fs::CloudMountFs;
+use crate::fuse_fs::{CloudMountFs, FuseDeltaObserver};
 use crate::inode::{InodeTable, ROOT_INODE};
 use cloudmount_cache::CacheManager;
+use cloudmount_core::DeltaSyncObserver;
 use cloudmount_graph::GraphClient;
 
 /// Detect and clean up a stale FUSE mount at `path`.
@@ -83,6 +84,7 @@ pub struct MountHandle {
     drive_id: String,
     rt: Handle,
     mountpoint: String,
+    delta_observer: Arc<FuseDeltaObserver>,
 }
 
 impl MountHandle {
@@ -109,30 +111,31 @@ impl MountHandle {
             .sqlite
             .upsert_item(ROOT_INODE, &drive_id, &root_item, None)?;
 
-        // Try with auto_unmount first (crash safety net), fall back without it
-        // since it requires fusermount3 + non-Owner ACL which isn't always available.
-        let fs = CloudMountFs::new(
-            graph.clone(),
-            cache.clone(),
-            inodes.clone(),
-            drive_id.clone(),
-            rt.clone(),
-            event_tx.clone(),
-        );
-
-        let session = match fs.mount(mountpoint, true) {
-            Ok(session) => session,
-            Err(_) => {
-                tracing::warn!("auto_unmount not supported, mounting without it");
+        // Helper: create filesystem, extract observer, and mount.
+        // Returns (session, observer) on success.
+        let try_mount =
+            |auto_unmount: bool, event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>| {
                 let fs = CloudMountFs::new(
                     graph.clone(),
                     cache.clone(),
-                    inodes,
+                    inodes.clone(),
                     drive_id.clone(),
                     rt.clone(),
                     event_tx,
                 );
-                fs.mount(mountpoint, false)?
+                let observer = fs.create_delta_observer();
+                let session = fs.mount(mountpoint, auto_unmount)?;
+                observer.set_notifier(session.notifier());
+                Ok::<_, cloudmount_core::Error>((session, observer))
+            };
+
+        // Try with auto_unmount first (crash safety net), fall back without it
+        // since it requires fusermount3 + non-Owner ACL which isn't always available.
+        let (session, delta_observer) = match try_mount(true, event_tx.clone()) {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::warn!("auto_unmount not supported, mounting without it");
+                try_mount(false, event_tx)?
             }
         };
 
@@ -145,6 +148,7 @@ impl MountHandle {
             drive_id,
             rt,
             mountpoint: mountpoint.to_string(),
+            delta_observer,
         })
     }
 
@@ -154,6 +158,11 @@ impl MountHandle {
 
     pub fn drive_id(&self) -> &str {
         &self.drive_id
+    }
+
+    /// Returns the delta sync observer for this mount.
+    pub fn delta_observer(&self) -> Arc<dyn DeltaSyncObserver> {
+        self.delta_observer.clone()
     }
 
     pub fn unmount(self) -> cloudmount_core::Result<()> {
@@ -189,14 +198,9 @@ pub async fn shutdown_on_signal(mounts: Arc<std::sync::Mutex<Vec<MountHandle>>>)
         }
     }
 
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
-    }
-
     tracing::info!("shutdown signal received, unmounting all drives");
-    let mut handles = mounts.lock().unwrap();
-    while let Some(handle) = handles.pop() {
+    let handles = std::mem::take(&mut *mounts.lock().unwrap());
+    for handle in handles {
         if let Err(e) = handle.unmount() {
             tracing::error!("unmount failed: {e}");
         }

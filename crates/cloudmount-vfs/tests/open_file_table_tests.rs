@@ -1391,3 +1391,163 @@ fn conflict_name_hidden_file_with_extension() {
     let result = conflict_name(".config.json", 1741000000);
     assert_eq!(result, ".config.conflict.1741000000.json");
 }
+
+// --- OpenFileTable extension tests (stale reads prevention) ---
+
+#[test]
+fn test_open_file_table_get_content_size_by_ino_complete() {
+    use cloudmount_vfs::core_ops::{DownloadState, OpenFileTable};
+    let table = OpenFileTable::new();
+    let fh = table.insert(42, DownloadState::Complete(vec![0u8; 5000]));
+    assert_eq!(table.get_content_size_by_ino(42), Some(5000));
+    table.remove(fh);
+}
+
+#[tokio::test]
+async fn test_open_file_table_get_content_size_by_ino_streaming() {
+    use cloudmount_vfs::core_ops::{DownloadState, OpenFileTable, StreamingBuffer};
+    let table = OpenFileTable::new();
+    let buffer = Arc::new(StreamingBuffer::new(10000).unwrap());
+    let task = tokio::spawn(async {});
+    let fh = table.insert(
+        42,
+        DownloadState::Streaming {
+            buffer,
+            task: task.abort_handle(),
+        },
+    );
+    assert_eq!(table.get_content_size_by_ino(42), Some(10000));
+    table.remove(fh);
+}
+
+#[test]
+fn test_open_file_table_get_content_size_by_ino_no_match() {
+    use cloudmount_vfs::core_ops::OpenFileTable;
+    let table = OpenFileTable::new();
+    assert_eq!(table.get_content_size_by_ino(99), None);
+}
+
+#[test]
+fn test_open_file_table_get_content_size_by_ino_multiple_handles() {
+    use cloudmount_vfs::core_ops::{DownloadState, OpenFileTable};
+    let table = OpenFileTable::new();
+    let _fh1 = table.insert(42, DownloadState::Complete(vec![0u8; 3000]));
+    let _fh2 = table.insert(42, DownloadState::Complete(vec![0u8; 5000]));
+    // Returns the first match (either 3000 or 5000 depending on iteration order)
+    let size = table.get_content_size_by_ino(42);
+    assert!(size == Some(3000) || size == Some(5000));
+}
+
+#[test]
+fn test_open_file_table_mark_stale_by_ino_sets_flag() {
+    use cloudmount_vfs::core_ops::{DownloadState, OpenFileTable};
+    let table = OpenFileTable::new();
+    let fh = table.insert(42, DownloadState::Complete(vec![1, 2, 3]));
+
+    // Verify not stale initially
+    assert!(!table.get(fh).unwrap().stale);
+
+    table.mark_stale_by_ino(42);
+
+    // Verify stale after marking
+    assert!(table.get(fh).unwrap().stale);
+    table.remove(fh);
+}
+
+#[test]
+fn test_open_file_table_mark_stale_by_ino_no_effect_on_other_inodes() {
+    use cloudmount_vfs::core_ops::{DownloadState, OpenFileTable};
+    let table = OpenFileTable::new();
+    let fh1 = table.insert(42, DownloadState::Complete(vec![1, 2, 3]));
+    let fh2 = table.insert(99, DownloadState::Complete(vec![4, 5, 6]));
+
+    table.mark_stale_by_ino(42);
+
+    assert!(table.get(fh1).unwrap().stale, "inode 42 should be stale");
+    assert!(
+        !table.get(fh2).unwrap().stale,
+        "inode 99 should NOT be stale"
+    );
+    table.remove(fh1);
+    table.remove(fh2);
+}
+
+#[test]
+fn test_open_file_table_mark_stale_by_ino_all_handles_for_same_inode() {
+    use cloudmount_vfs::core_ops::{DownloadState, OpenFileTable};
+    let table = OpenFileTable::new();
+    let fh1 = table.insert(42, DownloadState::Complete(vec![1, 2, 3]));
+    let fh2 = table.insert(42, DownloadState::Complete(vec![4, 5, 6]));
+
+    table.mark_stale_by_ino(42);
+
+    assert!(
+        table.get(fh1).unwrap().stale,
+        "first handle should be stale"
+    );
+    assert!(
+        table.get(fh2).unwrap().stale,
+        "second handle should be stale"
+    );
+    table.remove(fh1);
+    table.remove(fh2);
+}
+
+#[test]
+fn test_open_file_table_has_open_handles() {
+    use cloudmount_vfs::core_ops::{DownloadState, OpenFileTable};
+    let table = OpenFileTable::new();
+
+    assert!(!table.has_open_handles(42));
+
+    let fh = table.insert(42, DownloadState::Complete(vec![1]));
+    assert!(table.has_open_handles(42));
+    assert!(!table.has_open_handles(99));
+
+    table.remove(fh);
+    assert!(!table.has_open_handles(42));
+}
+
+// --- Handle-consistent getattr test ---
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_lookup_item_for_getattr_returns_handle_size() {
+    let server = MockServer::start().await;
+    mock_file_download(&server, b"Hello, world!").await;
+
+    let (cache, base) = make_cache("getattr-handle");
+    let graph = make_graph(&server.uri());
+    let ops = setup_core_ops(graph, cache.clone());
+
+    let ops2 = ops.clone();
+    tokio::task::spawn_blocking(move || {
+        // Open file — handle holds 13 bytes
+        let fh = ops2.open_file(2).unwrap();
+
+        // Simulate delta sync updating cache with a new size
+        let mut item = ops2.lookup_item(2).unwrap();
+        item.size = 7000; // Server reports 7000 bytes
+        ops2.cache().memory.insert(2, item);
+
+        // lookup_item_for_getattr should return handle size (13), not cache size (7000)
+        let (attr_item, has_handle) = ops2.lookup_item_for_getattr(2).unwrap();
+        assert!(has_handle, "should detect open handle");
+        assert_eq!(
+            attr_item.size, 13,
+            "getattr should return handle content size, not cache size"
+        );
+
+        // After releasing, should fall back to cache size
+        let _ = ops2.release_file(fh);
+        let (attr_item, has_handle) = ops2.lookup_item_for_getattr(2).unwrap();
+        assert!(!has_handle, "no open handle after release");
+        assert_eq!(
+            attr_item.size, 7000,
+            "should return cache size when no handle"
+        );
+    })
+    .await
+    .unwrap();
+
+    cleanup(&base);
+}

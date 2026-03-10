@@ -1,3 +1,4 @@
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -79,6 +80,44 @@ impl DiskCache {
             );
         }
         Some(data)
+    }
+
+    /// Read a byte range from a cached file without loading the entire content.
+    pub fn get_range(
+        &self,
+        drive_id: &str,
+        item_id: &str,
+        offset: u64,
+        length: u64,
+    ) -> Option<Vec<u8>> {
+        let path = self.content_path(drive_id, item_id);
+        let mut file = std::fs::File::open(&path).ok()?;
+        file.seek(SeekFrom::Start(offset)).ok()?;
+        let mut buf = vec![0u8; length as usize];
+        match file.read_exact(&mut buf) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                // File shorter than requested range — read what's available
+                let metadata = std::fs::metadata(&path).ok()?;
+                let file_len = metadata.len();
+                if offset >= file_len {
+                    return Some(Vec::new());
+                }
+                let available = (file_len - offset) as usize;
+                buf.truncate(available);
+                let mut file = std::fs::File::open(&path).ok()?;
+                file.seek(SeekFrom::Start(offset)).ok()?;
+                file.read_exact(&mut buf).ok()?;
+            }
+            Err(_) => return None,
+        }
+        if let Ok(conn) = self.tracker.lock() {
+            let _ = conn.execute(
+                "UPDATE cache_entries SET last_access = datetime('now') WHERE drive_id = ?1 AND item_id = ?2",
+                params![drive_id, item_id],
+            );
+        }
+        Some(buf)
     }
 
     pub async fn get_with_etag(

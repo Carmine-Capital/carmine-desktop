@@ -6,6 +6,16 @@ TBD - created by archiving change fix-ui-feedback. Update Purpose after archive.
 ### Requirement: In-page toast notification system
 The settings window SHALL display a status bar that shows transient in-page notifications for the outcome of every async operation. The notification system SHALL NOT depend on any external JavaScript library.
 
+The backend notification subsystem SHALL log the actual error reason when a platform notification fails to display. The `send()` helper SHALL include the error value in the `tracing::warn!` message (e.g., "failed to send notification '{title}': {error}") instead of discarding the error object before logging. This ensures D-Bus failures on Linux and other platform-specific notification errors are diagnosable from logs.
+
+#### Scenario: Notification failure logged with reason
+- **WHEN** `tauri_plugin_notification` fails to display a notification (e.g., D-Bus unavailable on headless Linux)
+- **THEN** the system logs a warning that includes both the notification title and the specific error message from the notification subsystem
+
+#### Scenario: Notification success
+- **WHEN** `tauri_plugin_notification` successfully displays a notification
+- **THEN** no warning is logged
+
 #### Scenario: Success toast shown after save
 - **WHEN** `saveGeneral` or `saveAdvanced` completes successfully
 - **THEN** a success toast ("Settings saved") is shown in the status bar and auto-hides after 3 seconds

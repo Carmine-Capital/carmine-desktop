@@ -4,6 +4,8 @@
 //! inode management, and write-back operations. Platform-specific backends (FUSE callbacks,
 //! CfApi sync filter) delegate to [`CoreOps`] instead of duplicating this logic.
 
+use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -48,6 +50,9 @@ const RANDOM_ACCESS_THRESHOLD: u64 = 2 * 1024 * 1024;
 /// Files larger than this are downloaded to disk cache instead.
 const MAX_STREAMING_BUFFER_SIZE: u64 = 256 * 1024 * 1024;
 
+/// Chunk size for the streaming buffer's BTreeMap storage (256 KiB).
+const STREAMING_CHUNK_SIZE: usize = 256 * 1024;
+
 #[derive(Debug, Clone)]
 pub enum DownloadProgress {
     InProgress(u64),
@@ -56,7 +61,9 @@ pub enum DownloadProgress {
 }
 
 pub struct StreamingBuffer {
-    data: tokio::sync::RwLock<Vec<u8>>,
+    /// Chunk-based storage: key is chunk index (offset / STREAMING_CHUNK_SIZE).
+    /// Each chunk is at most STREAMING_CHUNK_SIZE bytes.
+    chunks: tokio::sync::RwLock<BTreeMap<u64, Vec<u8>>>,
     progress: watch::Sender<DownloadProgress>,
     progress_rx: watch::Receiver<DownloadProgress>,
     pub total_size: u64,
@@ -71,7 +78,7 @@ impl StreamingBuffer {
         }
         let (tx, rx) = watch::channel(DownloadProgress::InProgress(0));
         Ok(Self {
-            data: tokio::sync::RwLock::new(vec![0u8; total_size as usize]),
+            chunks: tokio::sync::RwLock::new(BTreeMap::new()),
             progress: tx,
             progress_rx: rx,
             total_size,
@@ -79,15 +86,34 @@ impl StreamingBuffer {
     }
 
     pub async fn append_chunk(&self, chunk: &[u8]) {
-        let mut data = self.data.write().await;
+        let mut chunks = self.chunks.write().await;
         let current = match *self.progress_rx.borrow() {
             DownloadProgress::InProgress(n) => n as usize,
             _ => return,
         };
-        let end = std::cmp::min(current + chunk.len(), data.len());
-        let copy_len = end - current;
-        data[current..end].copy_from_slice(&chunk[..copy_len]);
-        let _ = self.progress.send(DownloadProgress::InProgress(end as u64));
+        let max_end = std::cmp::min(current + chunk.len(), self.total_size as usize);
+        let usable = &chunk[..max_end - current];
+
+        let mut offset = current;
+        let mut remaining = usable;
+        while !remaining.is_empty() {
+            let chunk_key = (offset / STREAMING_CHUNK_SIZE) as u64;
+            let chunk_offset = offset % STREAMING_CHUNK_SIZE;
+            let space = STREAMING_CHUNK_SIZE - chunk_offset;
+            let copy_len = std::cmp::min(space, remaining.len());
+
+            let entry = chunks.entry(chunk_key).or_default();
+            if entry.len() < chunk_offset + copy_len {
+                entry.resize(chunk_offset + copy_len, 0);
+            }
+            entry[chunk_offset..chunk_offset + copy_len].copy_from_slice(&remaining[..copy_len]);
+
+            remaining = &remaining[copy_len..];
+            offset += copy_len;
+        }
+        let _ = self
+            .progress
+            .send(DownloadProgress::InProgress(offset as u64));
     }
 
     pub fn mark_done(&self) {
@@ -122,16 +148,35 @@ impl StreamingBuffer {
     }
 
     pub async fn read_range(&self, offset: usize, size: usize) -> Vec<u8> {
-        let data = self.data.read().await;
+        let chunks = self.chunks.read().await;
         let downloaded = match *self.progress_rx.borrow() {
             DownloadProgress::InProgress(n) => n as usize,
-            DownloadProgress::Done | DownloadProgress::Failed(_) => data.len(),
+            DownloadProgress::Done | DownloadProgress::Failed(_) => self.total_size as usize,
         };
         let end = std::cmp::min(offset + size, downloaded);
         if offset >= end {
             return Vec::new();
         }
-        data[offset..end].to_vec()
+        let mut result = vec![0u8; end - offset];
+        let mut pos = offset;
+        let mut out_pos = 0;
+        while pos < end {
+            let chunk_key = (pos / STREAMING_CHUNK_SIZE) as u64;
+            let chunk_offset = pos % STREAMING_CHUNK_SIZE;
+            let copy_len = std::cmp::min(STREAMING_CHUNK_SIZE - chunk_offset, end - pos);
+
+            if let Some(chunk) = chunks.get(&chunk_key) {
+                let src_end = std::cmp::min(chunk_offset + copy_len, chunk.len());
+                if chunk_offset < src_end {
+                    result[out_pos..out_pos + (src_end - chunk_offset)]
+                        .copy_from_slice(&chunk[chunk_offset..src_end]);
+                }
+            }
+
+            pos += copy_len;
+            out_pos += copy_len;
+        }
+        result
     }
 
     pub fn downloaded_bytes(&self) -> u64 {
@@ -182,6 +227,9 @@ pub struct OpenFile {
     pub ino: u64,
     pub content: DownloadState,
     pub dirty: bool,
+    /// Set to `true` by the delta sync observer when remote content changes are detected.
+    /// Does not interrupt active reads — the current content buffer continues to be served.
+    pub stale: bool,
 }
 
 pub struct OpenFileTable {
@@ -211,6 +259,7 @@ impl OpenFileTable {
                 ino,
                 content,
                 dirty: false,
+                stale: false,
             },
         );
         fh
@@ -235,6 +284,44 @@ impl OpenFileTable {
         };
         self.files.get_mut(&fh)
     }
+
+    /// Returns the content size for the given inode from the first matching open handle.
+    ///
+    /// For `Complete` state, returns the content length. For `Streaming`, returns `total_size`.
+    /// Returns `None` if no handle exists for this inode.
+    pub fn get_content_size_by_ino(&self, ino: u64) -> Option<u64> {
+        for entry in self.files.iter() {
+            if entry.value().ino == ino {
+                return match &entry.value().content {
+                    DownloadState::Complete(data) => Some(data.len() as u64),
+                    DownloadState::Streaming { buffer, .. } => Some(buffer.total_size),
+                };
+            }
+        }
+        None
+    }
+
+    /// Marks all open handles for the given inode as stale.
+    ///
+    /// Called by the delta sync observer when remote content changes are detected.
+    /// Active reads continue to serve the current content buffer without interruption.
+    pub fn mark_stale_by_ino(&self, ino: u64) {
+        let mut count = 0u32;
+        for mut entry in self.files.iter_mut() {
+            if entry.value().ino == ino {
+                entry.value_mut().stale = true;
+                count += 1;
+            }
+        }
+        if count > 0 {
+            tracing::debug!(ino, count, "marked open handles stale");
+        }
+    }
+
+    /// Returns whether any open handle exists for the given inode.
+    pub fn has_open_handles(&self, ino: u64) -> bool {
+        self.files.iter().any(|e| e.value().ino == ino)
+    }
 }
 
 /// Events emitted by VFS operations for the app layer to handle.
@@ -245,6 +332,8 @@ pub enum VfsEvent {
         file_name: String,
         conflict_name: String,
     },
+    /// A CfApi closed callback failed to persist file content to the writeback buffer.
+    WritebackFailed { file_name: String },
 }
 
 /// Generate a conflict filename that preserves the original extension.
@@ -335,7 +424,7 @@ pub struct CoreOps {
     inodes: Arc<InodeTable>,
     drive_id: String,
     rt: Handle,
-    open_files: OpenFileTable,
+    open_files: Arc<OpenFileTable>,
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
     quota_cache: std::sync::Mutex<Option<(Instant, DriveQuota)>>,
 }
@@ -354,7 +443,7 @@ impl CoreOps {
             inodes,
             drive_id,
             rt,
-            open_files: OpenFileTable::new(),
+            open_files: Arc::new(OpenFileTable::new()),
             event_tx: None,
             quota_cache: std::sync::Mutex::new(None),
         }
@@ -365,7 +454,7 @@ impl CoreOps {
         self
     }
 
-    fn send_event(&self, event: VfsEvent) {
+    pub fn send_event(&self, event: VfsEvent) {
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(event);
         }
@@ -428,6 +517,11 @@ impl CoreOps {
         &self.drive_id
     }
 
+    /// Returns the shared open file table for use by the delta sync observer.
+    pub fn open_files(&self) -> &Arc<OpenFileTable> {
+        &self.open_files
+    }
+
     pub fn mark_dirty(&self, ino: u64) {
         self.cache.dirty_inodes.insert(ino);
     }
@@ -444,18 +538,15 @@ impl CoreOps {
         &self.rt
     }
 
-    pub fn resolve_path(&self, relative_path: &str) -> Option<(u64, DriveItem)> {
-        if relative_path.is_empty() {
+    pub fn resolve_path(&self, components: &[impl AsRef<OsStr>]) -> Option<(u64, DriveItem)> {
+        if components.is_empty() {
             let item = self.lookup_item(crate::inode::ROOT_INODE)?;
             return Some((crate::inode::ROOT_INODE, item));
         }
 
         let mut current_ino = crate::inode::ROOT_INODE;
-        for component in relative_path.split(['/', '\\']) {
-            if component.is_empty() {
-                continue;
-            }
-            let (child_ino, _) = self.find_child(current_ino, component)?;
+        for component in components {
+            let (child_ino, _) = self.find_child(current_ino, component.as_ref())?;
             current_ino = child_ino;
         }
 
@@ -479,10 +570,39 @@ impl CoreOps {
         None
     }
 
+    /// Look up a [`DriveItem`] for `getattr`, returning handle-consistent size.
+    ///
+    /// When an open file handle exists for the inode, clones the `DriveItem` from
+    /// cache but overrides `size` with the handle's content size. Returns
+    /// `(item, has_open_handle)` — when `has_open_handle` is `true`, the caller
+    /// should use a TTL of 0 to ensure the kernel re-queries on every `stat()`.
+    pub fn lookup_item_for_getattr(&self, ino: u64) -> Option<(DriveItem, bool)> {
+        let mut item = self.lookup_item(ino)?;
+
+        if let Some(handle_size) = self.open_files.get_content_size_by_ino(ino) {
+            tracing::debug!(
+                ino,
+                handle_size,
+                cache_size = item.size,
+                "getattr: returning handle size instead of cache size"
+            );
+            item.size = handle_size as i64;
+            Some((item, true))
+        } else {
+            Some((item, false))
+        }
+    }
+
     /// Find a child item by name under a given parent inode.
     /// Searches memory cache, SQLite, then falls back to Graph API.
     /// On Graph API fallback, also populates the parent's children list in memory cache.
-    pub fn find_child(&self, parent_ino: u64, name: &str) -> Option<(u64, DriveItem)> {
+    ///
+    /// Accepts `&OsStr` for lossless path handling on Windows (NTFS filenames may contain
+    /// unpaired UTF-16 surrogates). Returns `None` if the name cannot be converted to UTF-8
+    /// (Graph API stores only valid Unicode names, so no match can exist).
+    pub fn find_child(&self, parent_ino: u64, name: &OsStr) -> Option<(u64, DriveItem)> {
+        let name = name.to_str()?;
+
         if let Some(children_map) = self.cache.memory.get_children(parent_ino) {
             // On Windows, NTFS uses case-insensitive names so we must iterate.
             // On Linux/macOS, exact HashMap::get is sufficient.
@@ -781,6 +901,10 @@ impl CoreOps {
 
         let is_new_file = item_id.starts_with("local:");
 
+        // Conflict check: compare cached eTag with server eTag.
+        // On match, use the server eTag as If-Match for the upload to close the TOCTOU window.
+        let mut server_etag: Option<String> = None;
+
         if let Some(cached_etag) = item.etag.as_ref()
             && !is_new_file
         {
@@ -798,26 +922,31 @@ impl CoreOps {
                         );
                         let timestamp = Utc::now().timestamp();
                         let cname = conflict_name(&item.name, timestamp);
-                        if !parent_id.is_empty()
-                            && let Err(e) = self.rt.block_on(self.graph.upload_small(
+                        if !parent_id.is_empty() {
+                            // Clone content only for conflict copy (lazy clone)
+                            if let Err(e) = self.rt.block_on(self.graph.upload_small(
                                 &self.drive_id,
                                 &parent_id,
                                 &cname,
                                 Bytes::from(content.clone()),
-                            ))
-                        {
-                            tracing::error!(
-                                "conflict copy upload failed for {}, aborting flush: {e}",
-                                item.name
-                            );
-                            return Err(VfsError::IoError(format!(
-                                "conflict copy upload failed: {e}"
-                            )));
+                                None,
+                            )) {
+                                tracing::error!(
+                                    "conflict copy upload failed for {}, aborting flush: {e}",
+                                    item.name
+                                );
+                                return Err(VfsError::IoError(format!(
+                                    "conflict copy upload failed: {e}"
+                                )));
+                            }
                         }
                         self.send_event(VfsEvent::ConflictDetected {
                             file_name: item.name.clone(),
                             conflict_name: cname,
                         });
+                    } else {
+                        // eTags match — use as If-Match to close TOCTOU window
+                        server_etag = server_item.etag;
                     }
                 }
                 Err(e) => {
@@ -831,6 +960,8 @@ impl CoreOps {
             .rt
             .block_on(self.cache.writeback.persist(&self.drive_id, &item_id));
 
+        let if_match = server_etag.as_deref();
+
         let upload_result = if is_new_file {
             if parent_id.is_empty() {
                 return Err(VfsError::IoError("no parent for new file".to_string()));
@@ -839,7 +970,8 @@ impl CoreOps {
                 &self.drive_id,
                 &parent_id,
                 &item.name,
-                Bytes::from(content.clone()),
+                Bytes::from(content),
+                None, // new files have no eTag
             ))
         } else {
             self.rt.block_on(self.graph.upload(
@@ -847,7 +979,8 @@ impl CoreOps {
                 &parent_id,
                 Some(&item_id),
                 &item.name,
-                Bytes::from(content.clone()),
+                Bytes::from(content),
+                if_match,
             ))
         };
 
@@ -857,16 +990,24 @@ impl CoreOps {
                     self.inodes.reassign(ino, &updated_item.id);
                 }
                 self.cache.memory.insert(ino, updated_item.clone());
-                let _ = self.rt.block_on(self.cache.disk.put(
-                    &self.drive_id,
-                    &updated_item.id,
-                    &content,
-                    updated_item.etag.as_deref(),
-                ));
                 let _ = self
                     .rt
                     .block_on(self.cache.writeback.remove(&self.drive_id, &item_id));
                 Ok(())
+            }
+            Err(cloudmount_core::Error::PreconditionFailed) => {
+                // Server content changed between conflict check and upload — treat as conflict
+                tracing::warn!(
+                    "upload precondition failed for {} (412), treating as conflict",
+                    item.name
+                );
+                self.send_event(VfsEvent::ConflictDetected {
+                    file_name: item.name.clone(),
+                    conflict_name: format!("{} (server version changed)", item.name),
+                });
+                Err(VfsError::IoError(
+                    "upload conflict: server content changed".to_string(),
+                ))
             }
             Err(e) => {
                 tracing::error!("flush upload failed for {item_id}: {e}");
@@ -1206,7 +1347,7 @@ impl CoreOps {
 
     pub fn unlink(&self, parent_ino: u64, name: &str) -> VfsResult<()> {
         let (child_ino, child_item) = self
-            .find_child(parent_ino, name)
+            .find_child(parent_ino, OsStr::new(name))
             .ok_or(VfsError::NotFound)?;
         let item_id = child_item.id.clone();
 
@@ -1223,7 +1364,7 @@ impl CoreOps {
 
     pub fn rmdir(&self, parent_ino: u64, name: &str) -> VfsResult<()> {
         let (child_ino, child_item) = self
-            .find_child(parent_ino, name)
+            .find_child(parent_ino, OsStr::new(name))
             .ok_or(VfsError::NotFound)?;
 
         if !child_item.is_folder() {
@@ -1276,7 +1417,7 @@ impl CoreOps {
         new_name: &str,
     ) -> VfsResult<()> {
         let (child_ino, child_item) = self
-            .find_child(parent_ino, name)
+            .find_child(parent_ino, OsStr::new(name))
             .ok_or(VfsError::NotFound)?;
         let item_id = child_item.id.clone();
 
@@ -1291,7 +1432,8 @@ impl CoreOps {
         };
 
         // POSIX rename replaces destination if it exists
-        if let Some((existing_ino, existing_item)) = self.find_child(new_parent_ino, new_name)
+        if let Some((existing_ino, existing_item)) =
+            self.find_child(new_parent_ino, OsStr::new(new_name))
             && existing_item.id != item_id
         {
             // Before deleting a remote file, check if it has different server content
@@ -1313,12 +1455,21 @@ impl CoreOps {
                         self.graph
                             .download_content(&self.drive_id, &existing_item.id),
                     ) {
-                        let _ = self.rt.block_on(self.graph.upload_small(
+                        if let Err(e) = self.rt.block_on(self.graph.upload_small(
                             &self.drive_id,
                             parent_id,
                             &cname,
                             content,
-                        ));
+                            None,
+                        )) {
+                            tracing::error!(
+                                "conflict copy upload failed for '{}', aborting rename: {e}",
+                                existing_item.name
+                            );
+                            return Err(VfsError::IoError(format!(
+                                "conflict copy upload failed: {e}"
+                            )));
+                        }
                         self.send_event(VfsEvent::ConflictDetected {
                             file_name: existing_item.name.clone(),
                             conflict_name: cname,
@@ -1347,6 +1498,14 @@ impl CoreOps {
                 ))
                 .map_err(|e| VfsError::IoError(format!("rename failed: {e}")))?;
 
+            if let Err(e) = self.cache.sqlite.upsert_item(
+                child_ino,
+                &self.drive_id,
+                &updated_item,
+                Some(new_parent_ino),
+            ) {
+                tracing::warn!("rename: sqlite upsert failed: {e}");
+            }
             self.cache.memory.insert(child_ino, updated_item);
         } else {
             let mut updated = child_item.clone();
@@ -1355,6 +1514,14 @@ impl CoreOps {
                 (&new_parent_item_id, &mut updated.parent_reference)
             {
                 pref.id = Some(new_pid.clone());
+            }
+            if let Err(e) = self.cache.sqlite.upsert_item(
+                child_ino,
+                &self.drive_id,
+                &updated,
+                Some(new_parent_ino),
+            ) {
+                tracing::warn!("rename: sqlite upsert failed: {e}");
             }
             self.cache.memory.insert(child_ino, updated);
         }
@@ -1560,17 +1727,13 @@ impl CoreOps {
     pub fn read_range_direct(&self, ino: u64, offset: u64, length: u64) -> VfsResult<Vec<u8>> {
         let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
 
-        // Check disk cache first
-        if let Some(content) = self
-            .rt
-            .block_on(self.cache.disk.get(&self.drive_id, &item_id))
+        // Check disk cache first — read only the needed range
+        if let Some(data) = self
+            .cache
+            .disk
+            .get_range(&self.drive_id, &item_id, offset, length)
         {
-            let start = offset as usize;
-            let end = std::cmp::min(start + length as usize, content.len());
-            if start >= end {
-                return Ok(Vec::new());
-            }
-            return Ok(content[start..end].to_vec());
+            return Ok(data);
         }
 
         // Fall back to range download

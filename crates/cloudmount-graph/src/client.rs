@@ -89,6 +89,10 @@ impl GraphClient {
             return Ok(resp);
         }
 
+        if status.as_u16() == 412 {
+            return Err(cloudmount_core::Error::PreconditionFailed);
+        }
+
         if status == StatusCode::TOO_MANY_REQUESTS {
             let retry_after = resp
                 .headers()
@@ -286,6 +290,7 @@ impl GraphClient {
         parent_id: &str,
         name: &str,
         content: Bytes,
+        if_match: Option<&str>,
     ) -> cloudmount_core::Result<DriveItem> {
         let base_url = &self.base_url;
         let token = self.token().await?;
@@ -293,12 +298,16 @@ impl GraphClient {
         let url =
             format!("{base_url}/drives/{drive_id}/items/{parent_id}:/{encoded_name}:/content");
         let content_len = content.len();
-        let resp = self
+        let mut req = self
             .http
             .put(&url)
             .header(AUTHORIZATION, format!("Bearer {token}"))
             .header(CONTENT_TYPE, "application/octet-stream")
-            .header(reqwest::header::CONTENT_LENGTH, content_len)
+            .header(reqwest::header::CONTENT_LENGTH, content_len);
+        if let Some(etag) = if_match {
+            req = req.header("If-Match", etag);
+        }
+        let resp = req
             .body(content)
             .send()
             .await
@@ -318,15 +327,20 @@ impl GraphClient {
         &self,
         drive_id: &str,
         item_id: &str,
+        if_match: Option<&str>,
     ) -> cloudmount_core::Result<UploadSession> {
         let base_url = &self.base_url;
         let token = self.token().await?;
         let url = format!("{base_url}/drives/{drive_id}/items/{item_id}/createUploadSession");
-        let resp = self
+        let mut req = self
             .http
             .post(&url)
             .header(AUTHORIZATION, format!("Bearer {token}"))
-            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_TYPE, "application/json");
+        if let Some(etag) = if_match {
+            req = req.header("If-Match", etag);
+        }
+        let resp = req
             .body("{}")
             .send()
             .await
@@ -347,8 +361,11 @@ impl GraphClient {
         drive_id: &str,
         item_id: &str,
         content: Bytes,
+        if_match: Option<&str>,
     ) -> cloudmount_core::Result<DriveItem> {
-        let session = self.create_upload_session(drive_id, item_id).await?;
+        let session = self
+            .create_upload_session(drive_id, item_id, if_match)
+            .await?;
         let total = content.len();
         let mut offset = 0;
 
@@ -393,15 +410,17 @@ impl GraphClient {
         item_id: Option<&str>,
         name: &str,
         content: Bytes,
+        if_match: Option<&str>,
     ) -> cloudmount_core::Result<DriveItem> {
         if content.len() < SMALL_FILE_LIMIT {
-            self.upload_small(drive_id, parent_id, name, content).await
+            self.upload_small(drive_id, parent_id, name, content, if_match)
+                .await
         } else {
             let id = item_id.ok_or_else(|| cloudmount_core::Error::GraphApi {
                 status: 0,
                 message: "item_id required for large file upload".into(),
             })?;
-            self.upload_large(drive_id, id, content).await
+            self.upload_large(drive_id, id, content, if_match).await
         }
     }
 

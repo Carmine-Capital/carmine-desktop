@@ -81,6 +81,7 @@ impl SqliteStore {
             "INSERT INTO items (inode, item_id, parent_inode, drive_id, name, size, is_folder, etag, mtime, ctime, json_data)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(item_id) DO UPDATE SET
+                parent_inode = excluded.parent_inode,
                 name = excluded.name,
                 size = excluded.size,
                 is_folder = excluded.is_folder,
@@ -239,6 +240,7 @@ impl SqliteStore {
                 "INSERT INTO items (inode, item_id, parent_inode, drive_id, name, size, is_folder, etag, mtime, ctime, json_data)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(item_id) DO UPDATE SET
+                    parent_inode = excluded.parent_inode,
                     name = excluded.name,
                     size = excluded.size,
                     is_folder = excluded.is_folder,

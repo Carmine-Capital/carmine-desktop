@@ -135,7 +135,7 @@ async fn upload_small_returns_drive_item() {
 
     let client = make_client(&server.uri());
     let item = client
-        .upload_small("d1", "p1", "test.txt", Bytes::from_static(b"hello"))
+        .upload_small("d1", "p1", "test.txt", Bytes::from_static(b"hello"), None)
         .await
         .unwrap();
 

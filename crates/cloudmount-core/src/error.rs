@@ -20,6 +20,9 @@ pub enum Error {
     #[error("network error: {0}")]
     Network(String),
 
+    #[error("precondition failed: server content changed (412)")]
+    PreconditionFailed,
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 

@@ -83,7 +83,7 @@ The system SHALL silently refresh expired access tokens using the stored refresh
 - **THEN** the system switches all active mounts to read-only cached mode, displays a notification "Authentication expired — please sign in again", and presents the sign-in flow when the user clicks the notification
 
 ### Requirement: Secure token storage
-The system SHALL store OAuth tokens in the operating system's native secure credential store. Tokens MUST NOT be stored in plaintext configuration files. The system SHALL verify that tokens were actually persisted after writing to the credential store. The storage key used for storing, loading, refreshing, and deleting tokens SHALL be the application client_id — consistent across all token lifecycle operations.
+The system SHALL store OAuth tokens in the operating system's native secure credential store. Tokens MUST NOT be stored in plaintext configuration files. The system SHALL verify that tokens were actually persisted after writing to the credential store. Tokens SHALL be stored and loaded using the user's account ID (drive ID) as the storage key. Immediately after token exchange (before the account ID is known), tokens are transiently stored under the OAuth client ID key; `AuthManager::finalize_sign_in` MUST be called once the account ID is known to migrate tokens to the permanent account ID key.
 
 #### Scenario: Token storage on Linux
 - **WHEN** tokens are obtained after authentication on Linux
@@ -105,9 +105,9 @@ The system SHALL store OAuth tokens in the operating system's native secure cred
 - **WHEN** the OS credential store is unavailable (e.g., no keyring daemon on Linux), or the credential store accepts a write but fails the verify-after-write check (e.g., session-scoped storage, locked collection, null backend)
 - **THEN** the system stores tokens in an AES-256 encrypted file at the config directory, with the encryption key derived from a machine-specific identifier, and warns the user that this is less secure
 
-#### Scenario: Consistent storage key across token operations
-- **WHEN** the system stores, loads, refreshes, or deletes tokens in the credential store or encrypted file fallback
-- **THEN** all operations SHALL use the application client_id as the credential key; the token restoration method (`try_restore`) SHALL NOT use a caller-provided account identifier as the storage lookup key, as this would cause a key mismatch with the store operation which uses the client_id
+#### Scenario: Permanent storage key is account ID after finalization
+- **WHEN** `finalize_sign_in(account_id)` has been called after a successful sign-in
+- **THEN** all subsequent token operations (load, refresh, delete) SHALL use the account ID as the storage key; the OAuth client ID SHALL NOT be used as a storage key after finalization
 
 ### Requirement: Sign out
 The system SHALL allow the user to sign out, which revokes tokens and cleans up stored credentials.

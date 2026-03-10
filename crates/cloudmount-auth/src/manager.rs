@@ -49,6 +49,32 @@ impl AuthManager {
         state.account_id = Some(id.to_string());
     }
 
+    /// Finalizes sign-in by setting the account_id and migrating any tokens
+    /// previously stored under the client_id key to the correct account_id key.
+    ///
+    /// Uses store-then-delete ordering: the new key is written first, and the
+    /// old key is only deleted on success. On partial failure, the old entry is
+    /// preserved and no tokens are lost.
+    pub async fn finalize_sign_in(&self, id: &str) -> cloudmount_core::Result<()> {
+        let old_key = self.storage_key().await;
+
+        {
+            let mut state = self.state.write().await;
+            state.account_id = Some(id.to_string());
+        }
+
+        if old_key == id {
+            return Ok(());
+        }
+
+        if let Some(tokens) = crate::storage::load_tokens(&old_key)? {
+            crate::storage::store_tokens(id, &tokens)?;
+            crate::storage::delete_tokens(&old_key)?;
+        }
+
+        Ok(())
+    }
+
     /// Returns the storage key for token operations: account_id if set,
     /// otherwise falls back to client_id for backward compatibility.
     async fn storage_key(&self) -> String {
@@ -76,7 +102,19 @@ impl AuthManager {
     pub async fn try_restore(&self, account_id: &str) -> cloudmount_core::Result<bool> {
         let tokens = match crate::storage::load_tokens(account_id)? {
             Some(t) => t,
-            None => return Ok(false),
+            None => {
+                // Fallback: tokens may be stored under client_id from a pre-fix sign-in.
+                // Migrate on success to repair existing broken installations.
+                match crate::storage::load_tokens(&self.client_id)? {
+                    Some(t) => {
+                        crate::storage::store_tokens(account_id, &t)?;
+                        crate::storage::delete_tokens(&self.client_id)?;
+                        tracing::info!("migrated tokens from client_id key to account_id key");
+                        t
+                    }
+                    None => return Ok(false),
+                }
+            }
         };
 
         let mut state = self.state.write().await;

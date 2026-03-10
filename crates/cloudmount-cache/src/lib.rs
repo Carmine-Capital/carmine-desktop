@@ -6,4 +6,6 @@ pub mod sync;
 pub mod writeback;
 
 pub use manager::CacheManager;
-pub use sync::DeltaSyncTimer;
+pub use sync::{
+    DeletedItemInfo, DeltaSyncResult, DeltaSyncTimer, resolve_deleted_path, resolve_relative_path,
+};

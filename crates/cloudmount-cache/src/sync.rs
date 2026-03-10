@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -6,7 +7,76 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::CacheManager;
+use cloudmount_core::DeltaSyncObserver;
+use cloudmount_core::types::DriveItem;
 use cloudmount_graph::GraphClient;
+
+/// Strip the `/drive/root:` or `/drives/{id}/root:` prefix from a Graph API parent path,
+/// returning the path relative to the drive root. Returns an empty string for root-level items.
+fn strip_drive_root_prefix(path: &str) -> &str {
+    // Format: `/drive/root:` or `/drives/{drive-id}/root:`
+    if let Some(rest) = path.strip_prefix("/drive/root:") {
+        rest.strip_prefix('/').unwrap_or(rest)
+    } else if let Some(idx) = path.find("/root:") {
+        let rest = &path[idx + "/root:".len()..];
+        rest.strip_prefix('/').unwrap_or(rest)
+    } else {
+        ""
+    }
+}
+
+/// Resolve the mount-relative filesystem path for a `DriveItem` from its `parentReference.path`
+/// and `name`. Returns `None` if the path cannot be resolved (e.g., missing `parentReference`).
+pub fn resolve_relative_path(item: &DriveItem) -> Option<PathBuf> {
+    let parent_path = item
+        .parent_reference
+        .as_ref()
+        .and_then(|pr| pr.path.as_deref())?;
+
+    let relative_parent = strip_drive_root_prefix(parent_path);
+    let path = if relative_parent.is_empty() {
+        PathBuf::from(&item.name)
+    } else {
+        PathBuf::from(relative_parent).join(&item.name)
+    };
+    Some(path)
+}
+
+/// Resolve the mount-relative filesystem path for a deleted item from its captured
+/// parent path and name. Returns `None` if the name is empty or parent path is missing.
+pub fn resolve_deleted_path(info: &DeletedItemInfo) -> Option<PathBuf> {
+    if info.name.is_empty() {
+        return None;
+    }
+
+    let parent_path = info.parent_path.as_deref()?;
+    let relative_parent = strip_drive_root_prefix(parent_path);
+    let path = if relative_parent.is_empty() {
+        PathBuf::from(&info.name)
+    } else {
+        PathBuf::from(relative_parent).join(&info.name)
+    };
+    Some(path)
+}
+
+/// Result of a delta sync operation, containing items that changed or were deleted.
+/// Callers can use this to propagate updates to platform-specific layers
+/// (e.g., CfApi placeholder updates on Windows).
+#[derive(Debug, Clone, Default)]
+pub struct DeltaSyncResult {
+    /// Items whose eTag changed (content was modified on the server).
+    pub changed_items: Vec<DriveItem>,
+    /// Items that were deleted on the server, with path info captured before cache removal.
+    pub deleted_items: Vec<DeletedItemInfo>,
+}
+
+/// Information about a deleted item, captured before it is removed from caches.
+#[derive(Debug, Clone)]
+pub struct DeletedItemInfo {
+    pub id: String,
+    pub name: String,
+    pub parent_path: Option<String>,
+}
 
 pub struct DeltaSyncTimer {
     cancel: CancellationToken,
@@ -21,6 +91,7 @@ impl DeltaSyncTimer {
         drive_ids: Arc<RwLock<Vec<String>>>,
         inode_allocator: Arc<dyn Fn(&str) -> u64 + Send + Sync>,
         interval_secs: u64,
+        observer: Option<Arc<dyn DeltaSyncObserver>>,
     ) -> Self {
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
@@ -37,9 +108,19 @@ impl DeltaSyncTimer {
 
                 let drives = drive_ids.read().unwrap().clone();
                 for drive_id in &drives {
-                    if let Err(e) = run_delta_sync(&graph, &cache, drive_id, &inode_allocator).await
+                    match run_delta_sync(
+                        &graph,
+                        &cache,
+                        drive_id,
+                        &inode_allocator,
+                        observer.as_deref(),
+                    )
+                    .await
                     {
-                        tracing::error!("delta sync failed for drive {drive_id}: {e}");
+                        Ok(_result) => {}
+                        Err(e) => {
+                            tracing::error!("delta sync failed for drive {drive_id}: {e}");
+                        }
                     }
                 }
             }
@@ -75,15 +156,35 @@ pub async fn run_delta_sync(
     cache: &CacheManager,
     drive_id: &str,
     inode_allocator: &Arc<dyn Fn(&str) -> u64 + Send + Sync>,
-) -> cloudmount_core::Result<()> {
+    observer: Option<&dyn DeltaSyncObserver>,
+) -> cloudmount_core::Result<DeltaSyncResult> {
     let delta_token = cache.sqlite.get_delta_token(drive_id)?;
     let response = graph.delta_query(drive_id, delta_token.as_deref()).await?;
 
     let mut upserts = Vec::new();
     let mut deletes = Vec::new();
+    let mut result = DeltaSyncResult::default();
 
     for item in &response.value {
         if item.name.is_empty() && item.file.is_none() && item.folder.is_none() {
+            // Capture deleted item info BEFORE removing from caches
+            let deleted_info = match cache.sqlite.get_item_by_id(&item.id) {
+                Ok(Some((_, old_item))) => DeletedItemInfo {
+                    id: item.id.clone(),
+                    name: old_item.name.clone(),
+                    parent_path: old_item
+                        .parent_reference
+                        .as_ref()
+                        .and_then(|pr| pr.path.clone()),
+                },
+                _ => DeletedItemInfo {
+                    id: item.id.clone(),
+                    name: String::new(),
+                    parent_path: None,
+                },
+            };
+            result.deleted_items.push(deleted_info);
+
             deletes.push(item.id.clone());
             cache.memory.invalidate(inode_allocator(&item.id));
             let _ = cache.disk.remove(drive_id, &item.id).await;
@@ -116,6 +217,10 @@ pub async fn run_delta_sync(
             if etag_changed {
                 let _ = cache.disk.remove(drive_id, &item.id).await;
                 cache.dirty_inodes.insert(inode);
+                result.changed_items.push(item.clone());
+                if let Some(obs) = observer {
+                    obs.on_inode_content_changed(inode);
+                }
                 tracing::debug!(
                     "delta sync: eTag changed for {}, invalidated disk cache and marked inode {inode} dirty",
                     item.id
@@ -136,10 +241,12 @@ pub async fn run_delta_sync(
     }
 
     tracing::debug!(
-        "delta sync for {drive_id}: {} upserts, {} deletes",
+        "delta sync for {drive_id}: {} upserts, {} deletes, {} changed, {} deleted_with_info",
         upserts.len(),
-        deletes.len()
+        deletes.len(),
+        result.changed_items.len(),
+        result.deleted_items.len()
     );
 
-    Ok(())
+    Ok(result)
 }

@@ -125,7 +125,7 @@ The system SHALL buffer file writes locally and upload them asynchronously. The 
 - **THEN** on next start, the system detects pending uploads in the buffer directory and resumes uploading them
 
 ### Requirement: Delta sync integration
-The system SHALL use delta queries to keep the metadata cache fresh. When delta sync detects that a file's content has changed (eTag mismatch), it SHALL invalidate the disk cache content and mark the file's inode as dirty.
+The system SHALL use delta queries to keep the metadata cache fresh. When delta sync detects that a file's content has changed (eTag mismatch), it SHALL invalidate the disk cache content, mark the file's inode as dirty, and notify any registered `DeltaSyncObserver` of the content change. The `CacheManager` SHALL hold an optional `Arc<dyn DeltaSyncObserver>` that can be set after construction. The `run_delta_sync` function SHALL receive the observer as a parameter and call `on_inode_content_changed(ino)` for each inode whose eTag changed, in addition to the existing disk cache removal and dirty-inode marking. The `run_delta_sync` function SHALL also return a `DeltaSyncResult` containing the list of changed items (with their `DriveItem` metadata) and the list of deleted item IDs, so that callers can propagate updates to platform-specific layers (e.g., CfApi placeholder updates on Windows).
 
 #### Scenario: Periodic delta sync
 - **WHEN** the configured sync interval elapses (default: 60 seconds)
@@ -135,18 +135,45 @@ The system SHALL use delta queries to keep the metadata cache fresh. When delta 
 - **WHEN** a delta sync response includes a file item whose eTag differs from the eTag stored in SQLite for the same item
 - **THEN** the system removes the stale disk cache content blob for that item
 - **AND** the system marks the item's inode in the dirty-inode set
+- **AND** if a `DeltaSyncObserver` is provided, the system calls `observer.on_inode_content_changed(inode)` for the affected inode
 
 #### Scenario: Delta sync skips disk invalidation for metadata-only changes
 - **WHEN** a delta sync response includes an item whose eTag has NOT changed (e.g., only the name or parent changed)
-- **THEN** the system updates metadata in memory and SQLite but does NOT remove the disk cache content or mark the inode as dirty
+- **THEN** the system updates metadata in memory and SQLite but does NOT remove the disk cache content, mark the inode as dirty, or notify the observer
 
 #### Scenario: Delta sync handles new items without prior state
 - **WHEN** a delta sync response includes an item that has no prior entry in SQLite (new file)
-- **THEN** the system inserts the item into all metadata caches without attempting disk cache invalidation (there is no stale blob to remove)
+- **THEN** the system inserts the item into all metadata caches without attempting disk cache invalidation (there is no stale blob to remove) and does NOT notify the observer (no content changed)
+
+#### Scenario: Delta sync notifies observer for each changed inode
+- **WHEN** a delta sync response includes multiple files with eTag changes, and a `DeltaSyncObserver` is provided
+- **THEN** the system calls `observer.on_inode_content_changed(inode)` once for each changed inode, after marking it dirty and removing its disk cache entry
+
+#### Scenario: Delta sync runs without observer
+- **WHEN** `run_delta_sync` is called with `observer` set to `None`
+- **THEN** the system performs the existing behavior (disk cache removal, dirty-inode marking) with no observer notification
 
 #### Scenario: Force refresh
 - **WHEN** the user selects "Refresh" from the tray menu for a specific mount
 - **THEN** the system immediately performs a delta query for that drive, regardless of the normal sync interval
+
+#### Scenario: Delta sync returns changed items
+- **WHEN** `run_delta_sync` completes successfully and one or more file items had eTag changes
+- **THEN** the returned `DeltaSyncResult` SHALL contain each changed `DriveItem` in its `changed_items` field
+- **AND** items whose eTag did NOT change (metadata-only updates) SHALL NOT appear in `changed_items`
+
+#### Scenario: Delta sync returns deleted item paths
+- **WHEN** `run_delta_sync` completes successfully and one or more items were detected as deleted
+- **THEN** the returned `DeltaSyncResult` SHALL contain each deleted item's ID in its `deleted_ids` field
+- **AND** the deleted items' `DriveItem` metadata (including `parentReference.path` and `name`) SHALL be captured BEFORE the items are removed from the caches, so that callers can resolve filesystem paths for cleanup
+
+#### Scenario: Delta sync result is empty when no changes
+- **WHEN** `run_delta_sync` completes successfully and the delta response contains no changed or deleted items
+- **THEN** the returned `DeltaSyncResult` SHALL have empty `changed_items` and `deleted_ids` fields
+
+#### Scenario: Delta sync returns deleted items with path information
+- **WHEN** `run_delta_sync` processes a deleted item that has a prior entry in SQLite with known parent path and name
+- **THEN** the `DeltaSyncResult` SHALL include the deleted item's name and parent path (resolved from the prior SQLite entry) so that the caller can construct the filesystem path for placeholder removal
 
 ### Requirement: Dirty-inode set for cache freshness
 The system SHALL maintain a set of inode numbers known to have stale or invalidated content. Delta sync populates this set when it detects content changes. The read path consults this set to skip cached content for dirty inodes.

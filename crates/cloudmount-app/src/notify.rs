@@ -110,6 +110,14 @@ pub fn conflict_detected(app: &AppHandle, file_name: &str, conflict_name: &str) 
     );
 }
 
+pub fn writeback_failed(app: &AppHandle, file_name: &str) {
+    send(
+        app,
+        "Save Failed",
+        &format!("Failed to save changes to '{file_name}'. Your edits may be lost."),
+    );
+}
+
 pub fn files_recovered(app: &AppHandle, count: usize, path: &str) {
     send(
         app,
@@ -126,7 +134,6 @@ fn app_display_name(_app: &AppHandle) -> String {
 
 fn send(app: &AppHandle, title: &str, body: &str) {
     if let Err(e) = app.notification().builder().title(title).body(body).show() {
-        let _ = e;
-        tracing::warn!("failed to send notification: {title}");
+        tracing::warn!("failed to send notification '{title}': {e}");
     }
 }

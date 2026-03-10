@@ -14,6 +14,9 @@ pub mod mount;
 pub use fuse_fs::CloudMountFs;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use fuse_fs::FuseDeltaObserver;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use mount::MountHandle;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -24,3 +27,6 @@ pub mod cfapi;
 
 #[cfg(target_os = "windows")]
 pub use cfapi::CfMountHandle;
+
+#[cfg(target_os = "windows")]
+pub use cfapi::apply_delta_placeholder_updates;

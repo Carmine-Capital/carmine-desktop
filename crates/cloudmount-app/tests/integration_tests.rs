@@ -217,6 +217,7 @@ async fn test_write_conflict_creates_conflict_copy() -> cloudmount_core::Result<
                 "parent-root",
                 &conflict_name,
                 Bytes::from(pending),
+                None,
             )
             .await?;
         assert_eq!(conflict_item.name, "document.txt.conflict");
@@ -242,6 +243,7 @@ async fn test_write_conflict_creates_conflict_copy() -> cloudmount_core::Result<
             "parent-root",
             "document.txt",
             Bytes::from_static(b"my local changes"),
+            None,
         )
         .await?;
     assert_eq!(upload_result.etag.as_deref(), Some("etag-v3-after-upload"));
@@ -919,6 +921,7 @@ async fn test_crash_recovery_reupload_pending_writes() -> cloudmount_core::Resul
                 Some(item_id.as_str()),
                 item_id,
                 Bytes::from(content),
+                None,
             )
             .await;
         assert!(
@@ -1059,9 +1062,14 @@ async fn test_auth_degradation_detection_in_delta_sync() -> cloudmount_core::Res
     let auth_degraded = AtomicBool::new(false);
 
     // Run delta sync — should fail with auth error
-    let result =
-        cloudmount_cache::sync::run_delta_sync(&graph, &cache, "test-drive", &inode_allocator)
-            .await;
+    let result = cloudmount_cache::sync::run_delta_sync(
+        &graph,
+        &cache,
+        "test-drive",
+        &inode_allocator,
+        None,
+    )
+    .await;
 
     // Simulate the auth degradation detection logic from start_delta_sync:
     match result {
@@ -1073,7 +1081,7 @@ async fn test_auth_degradation_detection_in_delta_sync() -> cloudmount_core::Res
         Err(e) => {
             panic!("expected Auth error, got: {e:?}");
         }
-        Ok(()) => {
+        Ok(_) => {
             panic!("expected Auth error, but delta sync succeeded");
         }
     }
@@ -1106,9 +1114,14 @@ async fn test_auth_degradation_detection_in_delta_sync() -> cloudmount_core::Res
     let inode_allocator2: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
         Arc::new(move |item_id: &str| inodes2.allocate(item_id));
 
-    let result2 =
-        cloudmount_cache::sync::run_delta_sync(&graph_ok, &cache, "test-drive", &inode_allocator2)
-            .await;
+    let result2 = cloudmount_cache::sync::run_delta_sync(
+        &graph_ok,
+        &cache,
+        "test-drive",
+        &inode_allocator2,
+        None,
+    )
+    .await;
     assert!(
         result2.is_ok(),
         "delta sync should succeed with valid auth: {:?}",
@@ -1328,6 +1341,289 @@ async fn test_surgical_invalidation_create_preserves_parent_cache() -> cloudmoun
 
     // The scoped mock with expect(1) will panic on drop if called more than once
     drop(list_children_mock);
+
+    cleanup(&base);
+    Ok(())
+}
+
+// ============================================================================
+// DELTA SYNC RESULT POPULATION TESTS
+// ============================================================================
+
+#[tokio::test]
+async fn test_delta_sync_result_contains_changed_items_on_etag_change()
+-> cloudmount_core::Result<()> {
+    use cloudmount_vfs::inode::InodeTable;
+
+    let server = MockServer::start().await;
+    let base = unique_temp_dir("delta-result-changed");
+    let cache_dir = base.join("cache");
+    let db_path = base.join("cloudmount.db");
+    cleanup(&base);
+    std::fs::create_dir_all(&cache_dir)?;
+
+    let base_url = server.uri();
+    let graph = Arc::new(make_client(&base_url));
+    let cache = Arc::new(CacheManager::new(
+        cache_dir,
+        db_path,
+        100_000_000,
+        Some(60),
+    )?);
+
+    let inodes = Arc::new(InodeTable::new());
+    let inode_allocator: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
+        Arc::new(move |item_id: &str| inodes.allocate(item_id));
+
+    // First delta: seed with initial items
+    let delta_link_t1 = format!("{base_url}/delta?token=t1");
+    Mock::given(method("GET"))
+        .and(path("/drives/test-drive/root/delta"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "id": "file1",
+                    "name": "doc.txt",
+                    "size": 100,
+                    "eTag": "etag-v1",
+                    "file": { "mimeType": "text/plain" },
+                    "parentReference": { "path": "/drive/root:/Docs", "id": "parent1" }
+                },
+                {
+                    "id": "file2",
+                    "name": "unchanged.txt",
+                    "size": 200,
+                    "eTag": "etag-stable",
+                    "file": { "mimeType": "text/plain" },
+                    "parentReference": { "path": "/drive/root:", "id": "root" }
+                }
+            ],
+            "@odata.deltaLink": delta_link_t1
+        })))
+        .mount(&server)
+        .await;
+
+    let result1 = cloudmount_cache::sync::run_delta_sync(
+        &graph,
+        &cache,
+        "test-drive",
+        &inode_allocator,
+        None,
+    )
+    .await?;
+
+    // First sync: no changed items (new items, no prior eTag to compare against)
+    assert!(
+        result1.changed_items.is_empty(),
+        "first sync should have no changed items (new items)"
+    );
+
+    // Reset mocks for second delta with eTag change on file1.
+    // The client will use the stored delta token URL (/delta?token=t1).
+    server.reset().await;
+    let delta_link_t2 = format!("{base_url}/delta?token=t2");
+    Mock::given(method("GET"))
+        .and(path("/delta"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "id": "file1",
+                    "name": "doc.txt",
+                    "size": 150,
+                    "eTag": "etag-v2",
+                    "file": { "mimeType": "text/plain" },
+                    "parentReference": { "path": "/drive/root:/Docs", "id": "parent1" }
+                },
+                {
+                    "id": "file2",
+                    "name": "unchanged.txt",
+                    "size": 200,
+                    "eTag": "etag-stable",
+                    "file": { "mimeType": "text/plain" },
+                    "parentReference": { "path": "/drive/root:", "id": "root" }
+                }
+            ],
+            "@odata.deltaLink": delta_link_t2
+        })))
+        .mount(&server)
+        .await;
+
+    let inodes2 = Arc::new(InodeTable::new());
+    let inode_allocator2: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
+        Arc::new(move |item_id: &str| inodes2.allocate(item_id));
+
+    let result2 = cloudmount_cache::sync::run_delta_sync(
+        &graph,
+        &cache,
+        "test-drive",
+        &inode_allocator2,
+        None,
+    )
+    .await?;
+
+    // file1 changed eTag, file2 did not
+    assert_eq!(
+        result2.changed_items.len(),
+        1,
+        "only file1 should appear in changed_items"
+    );
+    assert_eq!(result2.changed_items[0].id, "file1");
+    assert_eq!(result2.changed_items[0].etag.as_deref(), Some("etag-v2"));
+
+    cleanup(&base);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_delta_sync_result_contains_deleted_items_with_path() -> cloudmount_core::Result<()> {
+    use cloudmount_vfs::inode::InodeTable;
+
+    let server = MockServer::start().await;
+    let base = unique_temp_dir("delta-result-deleted");
+    let cache_dir = base.join("cache");
+    let db_path = base.join("cloudmount.db");
+    cleanup(&base);
+    std::fs::create_dir_all(&cache_dir)?;
+
+    let base_url = server.uri();
+    let graph = Arc::new(make_client(&base_url));
+    let cache = Arc::new(CacheManager::new(
+        cache_dir,
+        db_path,
+        100_000_000,
+        Some(60),
+    )?);
+
+    let inodes = Arc::new(InodeTable::new());
+    let inode_allocator: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
+        Arc::new(move |item_id: &str| inodes.allocate(item_id));
+
+    // First delta: seed with an item
+    let delta_link_t1 = format!("{base_url}/delta?token=t1");
+    Mock::given(method("GET"))
+        .and(path("/drives/test-drive/root/delta"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "id": "file-to-delete",
+                    "name": "doomed.txt",
+                    "size": 50,
+                    "eTag": "etag-d1",
+                    "file": { "mimeType": "text/plain" },
+                    "parentReference": { "path": "/drive/root:/Folder", "id": "parent1" }
+                }
+            ],
+            "@odata.deltaLink": delta_link_t1
+        })))
+        .mount(&server)
+        .await;
+
+    let result1 = cloudmount_cache::sync::run_delta_sync(
+        &graph,
+        &cache,
+        "test-drive",
+        &inode_allocator,
+        None,
+    )
+    .await?;
+    assert!(result1.deleted_items.is_empty());
+
+    // Second delta: item is deleted (empty name, no file/folder facets).
+    // The client will use the stored delta token URL (/delta?token=t1).
+    server.reset().await;
+    let delta_link_t2 = format!("{base_url}/delta?token=t2");
+    Mock::given(method("GET"))
+        .and(path("/delta"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "id": "file-to-delete",
+                    "name": "",
+                    "size": 0
+                }
+            ],
+            "@odata.deltaLink": delta_link_t2
+        })))
+        .mount(&server)
+        .await;
+
+    let inodes2 = Arc::new(InodeTable::new());
+    let inode_allocator2: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
+        Arc::new(move |item_id: &str| inodes2.allocate(item_id));
+
+    let result2 = cloudmount_cache::sync::run_delta_sync(
+        &graph,
+        &cache,
+        "test-drive",
+        &inode_allocator2,
+        None,
+    )
+    .await?;
+
+    assert_eq!(
+        result2.deleted_items.len(),
+        1,
+        "should have one deleted item"
+    );
+    let deleted = &result2.deleted_items[0];
+    assert_eq!(deleted.id, "file-to-delete");
+    assert_eq!(deleted.name, "doomed.txt");
+    assert_eq!(deleted.parent_path.as_deref(), Some("/drive/root:/Folder"));
+
+    // Verify the deleted path can be resolved
+    let resolved = cloudmount_cache::resolve_deleted_path(deleted);
+    assert_eq!(
+        resolved,
+        Some(std::path::PathBuf::from("Folder/doomed.txt"))
+    );
+
+    cleanup(&base);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_delta_sync_result_empty_when_no_changes() -> cloudmount_core::Result<()> {
+    use cloudmount_vfs::inode::InodeTable;
+
+    let server = MockServer::start().await;
+    let base = unique_temp_dir("delta-result-empty");
+    let cache_dir = base.join("cache");
+    let db_path = base.join("cloudmount.db");
+    cleanup(&base);
+    std::fs::create_dir_all(&cache_dir)?;
+
+    let graph = Arc::new(make_client(&server.uri()));
+    let cache = Arc::new(CacheManager::new(
+        cache_dir,
+        db_path,
+        100_000_000,
+        Some(60),
+    )?);
+
+    Mock::given(method("GET"))
+        .and(path("/drives/test-drive/root/delta"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [],
+            "@odata.deltaLink": "https://example.com/delta?token=empty"
+        })))
+        .mount(&server)
+        .await;
+
+    let inodes = Arc::new(InodeTable::new());
+    let inode_allocator: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
+        Arc::new(move |item_id: &str| inodes.allocate(item_id));
+
+    let result = cloudmount_cache::sync::run_delta_sync(
+        &graph,
+        &cache,
+        "test-drive",
+        &inode_allocator,
+        None,
+    )
+    .await?;
+
+    assert!(result.changed_items.is_empty());
+    assert!(result.deleted_items.is_empty());
 
     cleanup(&base);
     Ok(())

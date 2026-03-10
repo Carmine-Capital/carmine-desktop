@@ -80,7 +80,7 @@ The system SHALL return directory contents when the operating system requests a 
 - **THEN** the system includes `.` and `..` entries with directory type and the parent directory's attributes before the regular child entries
 
 ### Requirement: File attribute retrieval (getattr)
-The system SHALL return file attributes (size, timestamps, permissions) when requested by the operating system.
+The system SHALL return file attributes (size, timestamps, permissions) when requested by the operating system. When the requested inode has at least one open file handle in the OpenFileTable, the system SHALL return the size from the handle's content buffer (for `DownloadState::Complete`) or the streaming buffer's `total_size` (for `DownloadState::Streaming`) instead of the memory cache size. When no open handle exists, the system SHALL return attributes from the memory cache as before. When an open handle exists, the FUSE reply TTL for the attributes SHALL be 0 seconds to ensure the kernel re-queries on every `stat()` call.
 
 #### Scenario: Get attributes of a file
 - **WHEN** the OS requests attributes for a file inode
@@ -90,12 +90,20 @@ The system SHALL return file attributes (size, timestamps, permissions) when req
 - **WHEN** the OS requests attributes for a directory inode
 - **THEN** the system returns: size 0, timestamps from Graph API, file type (directory), and permissions (0755)
 
+#### Scenario: Get attributes of a file with open handle returns handle-consistent size
+- **WHEN** the OS requests attributes for a file inode that has an open handle with content of N bytes, and the memory cache reports a different size M bytes
+- **THEN** the system returns size=N (from the handle's content buffer) with a TTL of 0 seconds
+
+#### Scenario: Get attributes of a file with streaming handle returns total size
+- **WHEN** the OS requests attributes for a file inode that has an open handle in `DownloadState::Streaming` with `total_size` T
+- **THEN** the system returns size=T (the expected final size) with a TTL of 0 seconds
+
 ### Requirement: Open file table with per-handle content buffering
-The system SHALL maintain an open file table that maps file handles to in-memory content buffers. Each `open()` call SHALL load the file content once and return a unique file handle. Before serving content from the disk cache, the system SHALL validate freshness by checking the dirty-inode set, comparing the disk cache eTag against the metadata eTag, and comparing the content length against the metadata size. If any check fails, the disk cache entry SHALL be discarded and content SHALL be re-downloaded from the Graph API. For files smaller than 4 MB or files with valid disk cache content, content SHALL be loaded eagerly before the file handle is returned. For uncached files of 4 MB or larger, the system SHALL return the file handle immediately and download content in the background via a streaming download task. Subsequent `read()` and `write()` calls SHALL operate on the buffer associated with the file handle, not the inode. The open file table SHALL be shared between FUSE and CfApi backends via `CoreOps`.
+The system SHALL maintain an open file table that maps file handles to in-memory content buffers. Each `open()` call SHALL load the file content once and return a unique file handle. Before serving content from the disk cache, the system SHALL validate freshness by checking the dirty-inode set, comparing the disk cache eTag against the metadata eTag, and comparing the content length against the metadata size. If any check fails, the disk cache entry SHALL be discarded and content SHALL be re-downloaded from the Graph API. For files smaller than 4 MB or files with valid disk cache content, content SHALL be loaded eagerly before the file handle is returned. For uncached files of 4 MB or larger, the system SHALL return the file handle immediately and download content in the background via a streaming download task. Subsequent `read()` and `write()` calls SHALL operate on the buffer associated with the file handle, not the inode. The open file table SHALL be shared between FUSE and CfApi backends via `CoreOps`. Each `OpenFile` entry SHALL include a `stale` flag (default `false`) that the delta sync observer can set to `true` when remote content changes are detected. The OpenFileTable SHALL expose a method to query the content size for a given inode (`get_content_size_by_ino`), and a method to mark all handles for a given inode as stale (`mark_stale_by_ino`).
 
 #### Scenario: Open loads content once (small or cached file)
 - **WHEN** an application opens a file that is smaller than 4 MB or is already present in the disk cache with valid content
-- **THEN** the system loads the file content from writeback buffer, validated disk cache, or Graph API (in that order), stores it in an `OpenFile` entry with `DownloadState::Complete`, allocates a unique file handle, and returns it to the caller
+- **THEN** the system loads the file content from writeback buffer, validated disk cache, or Graph API (in that order), stores it in an `OpenFile` entry with `DownloadState::Complete`, allocates a unique file handle, sets `stale` to `false`, and returns it to the caller
 
 #### Scenario: Open validates disk cache before serving
 - **WHEN** an application opens a file and the disk cache contains content for that file
@@ -109,7 +117,7 @@ The system SHALL maintain an open file table that maps file handles to in-memory
 
 #### Scenario: Open returns immediately for large uncached file
 - **WHEN** an application opens a file that is 4 MB or larger and is not present in the disk cache or writeback buffer (or disk cache content is stale)
-- **THEN** the system pre-allocates a streaming buffer to the file's known size, spawns a background download task, stores the `OpenFile` entry with `DownloadState::Streaming`, allocates a unique file handle, and returns it to the caller without waiting for any bytes to download
+- **THEN** the system pre-allocates a streaming buffer to the file's known size, spawns a background download task, stores the `OpenFile` entry with `DownloadState::Streaming`, allocates a unique file handle, sets `stale` to `false`, and returns it to the caller without waiting for any bytes to download
 
 #### Scenario: Open for writing
 - **WHEN** an application opens a file for writing
@@ -117,11 +125,20 @@ The system SHALL maintain an open file table that maps file handles to in-memory
 
 #### Scenario: Multiple handles to same inode
 - **WHEN** two applications open the same file simultaneously
-- **THEN** each receives an independent file handle with its own content buffer and independent download state
+- **THEN** each receives an independent file handle with its own content buffer, independent download state, and independent `stale` flag
 
 #### Scenario: Release frees buffer
 - **WHEN** the last file handle for a file is released
 - **THEN** the system drops the content buffer from memory
+
+#### Scenario: Query content size by inode
+- **WHEN** `get_content_size_by_ino` is called for an inode with an open handle
+- **THEN** the system returns the content length (for `Complete`) or `total_size` (for `Streaming`) from the first matching handle
+- **AND** if no handle exists for the inode, the system returns `None`
+
+#### Scenario: Mark handles stale by inode
+- **WHEN** `mark_stale_by_ino` is called for an inode
+- **THEN** the system iterates all open handles and sets `stale = true` on every handle whose `ino` matches the given inode
 
 ### Requirement: Handle-based release operation
 The system SHALL implement `release()` to clean up open file state. On release of a dirty handle, the system SHALL flush content to the writeback buffer before dropping the buffer. On release of a handle with an in-progress streaming download, the system SHALL cancel the background download task.
@@ -162,7 +179,7 @@ The system SHALL serve file read requests from the content buffer associated wit
 - **THEN** on `open()`, the system initiates a download (eager for small files, streaming for large files), and subsequent `read()` calls return data from the buffer as it becomes available
 
 ### Requirement: File write operations
-The system SHALL buffer writes in the `OpenFile` content buffer associated with the file handle and flush to the writeback buffer on `flush`/`release`. Writing to a file with an in-progress streaming download SHALL block until the download completes.
+The system SHALL buffer writes in the `OpenFile` content buffer associated with the file handle and flush to the writeback buffer on `flush`/`release`. Writing to a file with an in-progress streaming download SHALL block until the download completes. On Windows, the CfApi `closed` callback SHALL propagate writeback errors instead of silently discarding them. If writeback fails, the callback SHALL log at `error` level, emit a `VfsEvent::WritebackFailed` event, and skip `flush_inode` and `mark_placeholder_synced`.
 
 #### Scenario: Write to a file
 - **WHEN** a write operation is issued with a valid file handle whose content is fully available
@@ -179,6 +196,62 @@ The system SHALL buffer writes in the `OpenFile` content buffer associated with 
 #### Scenario: Write conflict detected
 - **WHEN** uploading a modified file and the remote eTag differs from the local eTag (another user modified the file)
 - **THEN** the system saves the local version as `<filename>.conflict.<timestamp>` in the same directory, downloads the remote version as the primary file, and emits a notification about the conflict
+
+#### Scenario: CfApi closed writeback error
+- **WHEN** the CfApi `closed` callback attempts to write file content to the writeback buffer and the write fails (e.g., disk full)
+- **THEN** the system logs the error at `error` level with the file path, emits a `VfsEvent::WritebackFailed` event, does NOT call `flush_inode`, and does NOT call `mark_placeholder_synced`
+- **AND** the file remains marked as pending so the user is aware the change was not persisted
+
+#### Scenario: CfApi closed streams large files to writeback
+- **WHEN** the CfApi `closed` callback processes a file larger than 4 MB
+- **THEN** the system reads the file in chunks (64 KiB) and writes each chunk directly to the writeback layer without accumulating the entire file in memory
+- **AND** if any chunk write fails, the system logs the error, emits a `VfsEvent::WritebackFailed` event, and aborts the writeback
+
+### Requirement: Conditional upload with If-Match
+The system SHALL use the `If-Match` HTTP header when uploading modified files to close the TOCTOU window between conflict detection and upload. When `flush_inode` detects no local conflict (cached eTag matches server eTag), it SHALL pass the server eTag as an `If-Match` header to the upload request. If the server returns 412 Precondition Failed, the system SHALL treat it as a conflict and follow the standard conflict resolution path.
+
+#### Scenario: Upload with matching eTag
+- **WHEN** `flush_inode` uploads a modified file and the server eTag has not changed since the conflict check
+- **THEN** the upload succeeds with the `If-Match` header and the local metadata is updated with the new eTag
+
+#### Scenario: Upload with stale eTag (412 response)
+- **WHEN** `flush_inode` uploads a modified file with an `If-Match` header and the server returns 412 Precondition Failed
+- **THEN** the system treats this as a conflict: saves the local version as `<filename>.conflict.<timestamp>`, downloads the server version, and emits a conflict notification
+
+#### Scenario: Upload of newly created file (no eTag)
+- **WHEN** `flush_inode` uploads a newly created file that has no server eTag (first upload)
+- **THEN** the upload proceeds without an `If-Match` header (no conflict check needed for new files)
+
+### Requirement: Rename conflict copy safety
+When a rename operation overwrites an existing destination that has divergent server content, the system SHALL upload a conflict copy of the destination's server content before proceeding with the delete-and-rename. If the conflict copy upload fails, the system SHALL abort the rename and return an error rather than proceeding with the deletion of the original destination.
+
+#### Scenario: Rename conflict copy succeeds
+- **WHEN** a rename targets an existing destination with a different server eTag, and the conflict copy uploads successfully
+- **THEN** the system deletes the original destination and completes the rename
+
+#### Scenario: Rename conflict copy upload fails
+- **WHEN** a rename targets an existing destination with a different server eTag, and the conflict copy upload fails (network error, 5xx)
+- **THEN** the system aborts the rename, returns an error to the caller, and the original destination file is preserved unchanged
+
+### Requirement: Memory-efficient content handling
+The system SHALL avoid unbounded memory allocations proportional to file size in the following paths: streaming buffer initialization, flush upload, range reads from disk cache, and crash recovery uploads.
+
+#### Scenario: Streaming buffer uses incremental allocation
+- **WHEN** an application opens a large file for streaming download
+- **THEN** the system allocates memory incrementally as chunks are downloaded, using a chunk-based buffer (e.g., 256 KiB chunks), instead of pre-allocating the entire file size
+
+#### Scenario: flush_inode avoids content clone
+- **WHEN** `flush_inode` uploads a modified file
+- **THEN** the system moves the content `Vec<u8>` into `Bytes` (zero-copy) instead of cloning it
+- **AND** if a conflict is detected, the content is cloned only at that point for the conflict copy upload
+
+#### Scenario: Range read from disk cache
+- **WHEN** `read_range_direct` serves a byte range from a file in the disk cache
+- **THEN** the system reads only the requested byte range from disk (via seek + read), not the entire file
+
+#### Scenario: Crash recovery streams large pending files
+- **WHEN** crash recovery processes a pending write larger than 4 MB
+- **THEN** the system uploads it via the chunked upload session (`upload_large`) instead of loading the entire file into memory
 
 ### Requirement: Streaming download disk cache population
 The system SHALL populate the disk cache with the complete file content when a streaming background download finishes successfully.
@@ -214,7 +287,7 @@ The system SHALL support creating new files and folders in mounted drives. `crea
 - **AND** the parent's existing children and metadata remain unchanged
 
 ### Requirement: Delete operations
-The system SHALL support deleting files and folders from mounted drives. After deleting a child, the system SHALL surgically remove the child from the parent's in-memory children cache rather than invalidating the entire parent entry.
+The system SHALL support deleting files and folders from mounted drives. After deleting a child, the system SHALL surgically remove the child from the parent's in-memory children cache rather than invalidating the entire parent entry. On Windows, the CfApi `delete` callback SHALL delegate to `CoreOps::unlink()` for files and `CoreOps::rmdir()` for folders, using the same shared logic as the FUSE backend. The CfApi callback SHALL resolve the parent inode from the relative path, determine whether the item is a file or folder, and call the appropriate `CoreOps` method. If the `CoreOps` method returns an error, the callback SHALL log at `warn` level and return `Ok(())` without calling `ticket.pass()`, so the OS sees the operation as incomplete and may retry.
 
 #### Scenario: Delete a file
 - **WHEN** an application deletes a file (e.g., `rm`, Delete key in Explorer)
@@ -235,8 +308,18 @@ The system SHALL support deleting files and folders from mounted drives. After d
 - **THEN** the system removes the deleted folder's name from the parent's children `HashMap`
 - **AND** the parent's remaining children and metadata remain unchanged
 
+#### Scenario: CfApi delete delegates to CoreOps
+- **WHEN** the CfApi `delete` callback is invoked for a file on Windows
+- **THEN** the system resolves the parent inode and child name from the relative path, calls `CoreOps::unlink(parent_ino, name)`, and on success calls `ticket.pass()`
+- **AND** if the item is a folder, the system calls `CoreOps::rmdir(parent_ino, name)` instead
+
+#### Scenario: CfApi delete error handling
+- **WHEN** the CfApi `delete` callback invokes `CoreOps::unlink()` or `CoreOps::rmdir()` and it returns an error (e.g., network failure, 403 Forbidden, directory not empty)
+- **THEN** the system logs the error at `warn` level with the file path and error details, does NOT call `ticket.pass()`, and returns `Ok(())` to the proxy
+- **AND** local caches are NOT purged (the `CoreOps` method handles cache cleanup only on success)
+
 ### Requirement: Rename and move operations
-The system SHALL support renaming and moving files and folders within a mounted drive. After renaming or moving a child, the system SHALL surgically update the affected parent directories' in-memory children caches rather than invalidating them.
+The system SHALL support renaming and moving files and folders within a mounted drive. After renaming or moving a child, the system SHALL surgically update the affected parent directories' in-memory children caches rather than invalidating them. On Windows, the CfApi `rename` callback SHALL delegate to `CoreOps::rename()`, gaining eTag-based conflict detection on destination overwrite, error propagation, and parent cache invalidation. If the `CoreOps` method returns an error, the callback SHALL log at `warn` level and return `Ok(())` without calling `ticket.pass()`.
 
 #### Scenario: Rename a file in the same directory
 - **WHEN** an application renames a file
@@ -256,6 +339,35 @@ The system SHALL support renaming and moving files and folders within a mounted 
 - **THEN** the system removes the old name from the source parent's children `HashMap` and inserts the new name into the destination parent's children `HashMap`
 - **AND** no Graph API `list_children` call is triggered for either parent directory
 
+#### Scenario: CfApi rename delegates to CoreOps
+- **WHEN** the CfApi `rename` callback is invoked on Windows
+- **THEN** the system resolves source parent inode and child name from the source relative path, resolves destination parent inode and child name from the target relative path, calls `CoreOps::rename(src_parent_ino, src_name, dst_parent_ino, dst_name)`, and on success calls `ticket.pass()`
+
+#### Scenario: CfApi rename conflict detection
+- **WHEN** the CfApi `rename` callback invokes `CoreOps::rename()` and the destination file exists with a different eTag on the server
+- **THEN** the system creates a `.conflict.{timestamp}` copy of the server version (same as FUSE behavior), completes the rename, and emits a conflict VfsEvent
+
+#### Scenario: CfApi rename error handling
+- **WHEN** the CfApi `rename` callback invokes `CoreOps::rename()` and it returns an error
+- **THEN** the system logs the error at `warn` level with source and target paths, does NOT call `ticket.pass()`, and returns `Ok(())` to the proxy
+
+### Requirement: Lossless path handling on Windows
+The CfApi backend SHALL handle file paths without lossy Unicode conversion. The `relative_path` helper SHALL return pre-split path components as `OsString` values, preserving any NTFS-legal filenames that contain unpaired UTF-16 surrogates. `CoreOps::resolve_path()` SHALL accept `OsStr` path components and compare them against cache entries using lossless conversion. If an `OsStr` component cannot be converted to a valid `&str`, the lookup SHALL fail gracefully (return `None`) rather than silently corrupting the name.
+
+#### Scenario: Filename with unpaired UTF-16 surrogate
+- **WHEN** the CfApi backend receives a callback for a file whose NTFS name contains an unpaired UTF-16 surrogate (valid WTF-16, invalid UTF-8)
+- **THEN** the system preserves the `OsString` representation through path resolution
+- **AND** the cache lookup fails gracefully (the Graph API cannot store such names, so no match exists)
+- **AND** no U+FFFD replacement character is silently substituted into the path
+
+#### Scenario: Normal Unicode filename
+- **WHEN** the CfApi backend receives a callback for a file with a standard Unicode name
+- **THEN** the `OsStr` component converts losslessly to `&str` and the cache lookup proceeds normally
+
+#### Scenario: FUSE path handling unchanged
+- **WHEN** the FUSE backend passes an `OsStr` filename from the kernel to `CoreOps`
+- **THEN** the behavior is identical to the current implementation (FUSE filenames are already `OsStr`)
+
 ### Requirement: O(1) child lookup by name
 The system SHALL look up a child item by name under a parent directory in O(1) time using the parent's children `HashMap`, instead of iterating all children.
 
@@ -269,7 +381,7 @@ The system SHALL look up a child item by name under a parent directory in O(1) t
 - **AND** the populated `HashMap` is keyed by child name for subsequent O(1) lookups
 
 ### Requirement: Graceful unmount
-The system SHALL cleanly unmount drives without data loss.
+The system SHALL cleanly unmount drives without data loss. The `shutdown_on_signal` function SHALL release the mounts mutex before performing blocking unmount operations to prevent deadlock under concurrent access.
 
 #### Scenario: User-initiated unmount
 - **WHEN** the user clicks "Unmount" in the tray app
@@ -278,6 +390,11 @@ The system SHALL cleanly unmount drives without data loss.
 #### Scenario: Forced unmount on shutdown
 - **WHEN** the system receives a shutdown signal (SIGTERM, system reboot)
 - **THEN** the system flushes pending writes with a 10-second timeout, forcefully unmounts the FUSE filesystem, and saves any unflushed changes to a pending-uploads queue for retry on next start
+
+#### Scenario: shutdown_on_signal releases mutex before unmount
+- **WHEN** `shutdown_on_signal` is triggered by a signal
+- **THEN** the system drains the mount handles out of the mutex (via `std::mem::take`), releases the mutex lock, then iterates through the handles and unmounts each one sequentially
+- **AND** other threads can access the (now-empty) mounts collection during the unmount process
 
 ### Requirement: Pending writes flushed on unmount via shared implementation
 On unmount, both the FUSE and CfApi backends SHALL flush any pending write-back
@@ -380,6 +497,32 @@ The system SHALL implement the FUSE `copy_file_range` operation to optimize file
 - **WHEN** a file copy is performed on macOS (which lacks FUSE `copy_file_range`) or on Windows (CfApi)
 - **THEN** the copy proceeds via the existing read+write path with no behavior change
 ## Requirements
+### Requirement: Atomic inode allocation
+The InodeTable SHALL guarantee a 1:1 mapping between `item_id` and `inode` under concurrent access. The `allocate()` method SHALL use a single lock to perform the lookup-or-insert operation atomically — no window SHALL exist between checking for an existing mapping and inserting a new one. All mutating methods (`allocate`, `reassign`, `set_root`, `remove_by_item_id`) SHALL hold a single unified lock covering both the inode-to-item and item-to-inode maps.
+
+#### Scenario: Concurrent allocation for the same item_id
+- **WHEN** two threads call `allocate("item123")` simultaneously and no mapping exists yet
+- **THEN** exactly one inode SHALL be allocated, and both calls SHALL return the same inode number
+
+#### Scenario: No ghost inode entries after concurrent access
+- **WHEN** `allocate()` is called concurrently for the same `item_id`
+- **THEN** the `inode_to_item` and `item_to_inode` maps SHALL contain exactly one entry each for that `item_id`, with no orphaned inode numbers
+
+### Requirement: CfApi closed callback skips unmodified files
+On Windows, the CfApi `closed()` callback SHALL skip the writeback and upload cycle when the file was not modified since last sync. The system SHALL compare the file's Last Write Time (from filesystem metadata) against the cached `DriveItem.last_modified` timestamp. If the timestamps match within a 1-second tolerance, the system SHALL return immediately without reading file content, writing to the writeback buffer, or calling `flush_inode`.
+
+#### Scenario: Read-only file open on Windows
+- **WHEN** a user opens a hydrated file in a read-only application (e.g., preview, viewer) and closes it without modification
+- **THEN** the `closed()` callback SHALL detect that the file's Last Write Time matches the cached server timestamp and SHALL NOT trigger any Graph API calls
+
+#### Scenario: Modified file close on Windows
+- **WHEN** a user edits a file and saves changes, causing Windows to update the file's Last Write Time
+- **THEN** the `closed()` callback SHALL detect the mtime mismatch and proceed with the full writeback and upload cycle including conflict detection
+
+#### Scenario: Newly hydrated file close
+- **WHEN** `fetch_data` hydrates a placeholder file and the user closes it without editing
+- **THEN** the `closed()` callback SHALL detect that the file's Last Write Time (set by `mark_placeholder_synced`) matches the cached server timestamp and SHALL skip the upload
+
 ### Requirement: TOCTOU-safe placeholder population on Windows
 The system SHALL handle `ERROR_CLOUD_FILE_INVALID_REQUEST` returned by `CfCreatePlaceholders` as a per-item recoverable condition during the `FetchPlaceholders` callback. When a TOCTOU collision is detected, the system SHALL log a `warn!`-level message identifying the item and continue processing remaining items. The system SHALL NOT propagate `ERROR_CLOUD_FILE_INVALID_REQUEST` as a callback error, and SHALL NOT allow such a collision to crash the process. The `FetchPlaceholders` callback SHALL iterate over candidate placeholder items individually so that each item's result can be inspected independently.
 
@@ -400,7 +543,13 @@ The system SHALL handle `ERROR_CLOUD_FILE_INVALID_REQUEST` returned by `CfCreate
 - **THEN** the system filters out those items before calling `CfCreatePlaceholders`, reducing unnecessary API calls; the per-item error handling acts as a safety net for items that appear between the filter check and the API call
 
 ### Requirement: Resilient CfApi callback error handling
-On Windows, CfApi sync filter callbacks (`fetch_data`, `delete`, `rename`, `dehydrate`) SHALL NOT propagate errors to the cloud-filter proxy. When a callback encounters any error, it SHALL log the error at `warn` level with sufficient context (callback name, file path, error details) and return success to the proxy. The failure SHALL be surfaced through OS-level mechanisms (e.g., an I/O error returned to the reading application, an OS-level retry of the operation) rather than through process termination. This requirement exists because the `cloud-filter` crate's proxy unconditionally calls `.unwrap()` on its `CfExecute` failure-reporting path; a panicking `.unwrap()` across the `extern "system"` FFI boundary produces `STATUS_STACK_BUFFER_OVERRUN` and terminates the process.
+Each CfApi callback (`fetch_data`, `fetch_placeholders`, `delete`, `rename`, `closed`, `validate_data`, `state_changed`) SHALL handle errors gracefully without panicking or propagating unhandled exceptions across the FFI boundary. On error, each callback SHALL log sufficient context (callback name, file path, error details) and return `Ok(())` or skip the failing operation rather than returning an error that could trigger Windows error dialogs or cloud-filter panics.
+
+Writeback failures in `closed()` (file read, writeback write, chunk write, finalize, and flush_inode) SHALL emit a `VfsEvent::WritebackFailed { file_name }` event so the UI can notify the user that their changes may not have been saved. This ensures every error path in `closed()` surfaces user feedback.
+
+The CfApi `closed()` callback SHALL only proceed with the writeback cycle when the file has been modified since last sync (see: CfApi closed callback skips unmodified files).
+
+The `CfMountHandle` struct SHALL name the `Connection` field without a leading underscore (i.e., `connection`, not `_connection`) because its drop order relative to `sync_root_id` is safety-critical. The field SHALL be documented to explain that it must be dropped before `sync_root_id` is unregistered.
 
 #### Scenario: fetch_data cannot resolve the file path
 - **WHEN** the `fetch_data` callback is invoked for a file whose path cannot be resolved in the cache or via the Graph API
@@ -432,8 +581,26 @@ On Windows, CfApi sync filter callbacks (`fetch_data`, `delete`, `rename`, `dehy
 - **THEN** the system logs a warning and returns success to the proxy
 - **AND** the OS may retry the dehydrate callback; the disk cache removal is idempotent
 
+#### Scenario: fetch_data logs path on write_at failure
+- **WHEN** `ticket.write_at()` fails during chunked data transfer in `fetch_data`
+- **THEN** the callback logs a warning with the file's absolute path (not an undefined variable) and breaks the write loop without panicking
+
+#### Scenario: closed skips unmodified files
+- **WHEN** `closed()` fires for a file whose Last Write Time matches the cached server timestamp
+- **THEN** the callback returns immediately without reading file content or calling flush_inode
+
+#### Scenario: closed flush_inode failure emits event
+- **WHEN** `flush_inode()` returns an error after a successful writeback write in `closed()`
+- **THEN** a `VfsEvent::WritebackFailed { file_name }` event is emitted and the error is logged
+
+#### Scenario: CfMountHandle drop order correctness
+- **WHEN** a `CfMountHandle` is dropped (either via `unmount()` or implicit drop)
+- **THEN** the `connection` field is dropped before `sync_root_id` is unregistered, preventing Windows from rejecting the unregistration due to an active connection
+
 ### Requirement: CfApi fetch_data immediate failure signaling
 On Windows, the `fetch_data` Cloud Files API callback SHALL signal failure to the operating system immediately on any error, rather than returning without issuing any CfExecute operation. Returning without a CfExecute call leaves Windows waiting until its 60-second internal timeout expires, resulting in error 426 for the requesting process. The callback SHALL resolve the item ID from the placeholder blob set at creation time (`request.file_blob()`), without making any Graph API network call for item resolution.
+
+All `tracing` log calls in `fetch_data` SHALL reference the absolute path variable (`abs_path`) for the file being processed. No undefined variables SHALL appear in log format strings.
 
 #### Scenario: fetch_data — item ID decoded from placeholder blob
 - **WHEN** the OS dispatches a `fetch_data` callback for a dehydrated file
@@ -462,6 +629,46 @@ On Windows, the `fetch_data` Cloud Files API callback SHALL signal failure to th
 
 #### Scenario: fetch_data — write_at failure mid-transfer
 - **WHEN** a `write_at` call fails during the chunk transfer loop (e.g., connection closed)
-- **THEN** the system aborts the transfer and returns a failure status to the OS immediately
+- **THEN** the system aborts the transfer, logs a warning with the absolute file path and error details, and returns a failure status to the OS immediately
 - **AND** Windows discards the partial transfer and leaves the file in dehydrated state
+
+### Requirement: CfApi closed callback surfaces upload failures
+On Windows, the `closed()` Cloud Files API callback SHALL emit a `VfsEvent::WritebackFailed` event on every error path, including when `flush_inode` fails after a successful writeback write. The system SHALL NOT silently log upload failures without notifying the user.
+
+#### Scenario: flush_inode fails after writeback write succeeds
+- **WHEN** the `closed()` callback successfully writes file content to the writeback buffer but the subsequent `flush_inode()` upload fails (network error, auth error, conflict error)
+- **THEN** the system logs the error at `error` level and emits a `VfsEvent::WritebackFailed` event with the file name
+- **AND** the UI surfaces a notification to the user indicating the file was not uploaded
+
+#### Scenario: writeback write fails
+- **WHEN** the `closed()` callback fails to write file content to the writeback buffer
+- **THEN** the system logs the error at `error` level, emits a `VfsEvent::WritebackFailed` event, and skips the `flush_inode` call
+
+### Requirement: CfApi writeback failure notification
+The system SHALL emit a `VfsEvent::WritebackFailed` event when a CfApi `closed` callback fails to persist file content to the writeback buffer. The app layer SHALL surface this event as a desktop notification informing the user that their changes were not saved.
+
+#### Scenario: Writeback failure emits VfsEvent
+- **WHEN** the CfApi `closed` callback fails to write content to the writeback buffer
+- **THEN** the system emits a `VfsEvent::WritebackFailed { file_name }` event containing the affected file name
+
+#### Scenario: App surfaces writeback failure notification
+- **WHEN** the app layer receives a `VfsEvent::WritebackFailed` event
+- **THEN** the system displays a desktop notification: "Failed to save changes to {file_name}. Your edits may be lost."
+
+### Requirement: CfApi state_changed invalidates parent directory cache
+On Windows, when the `state_changed()` Cloud Files API callback fires for a placeholder, the system SHALL invalidate both the changed item's cache entry and its parent directory's cache entry. This ensures that subsequent `list_children` calls on the parent directory return fresh results reflecting the state change.
+
+#### Scenario: state_changed for a file in a directory
+- **WHEN** the OS fires `state_changed` for a file placeholder inside a directory
+- **THEN** the system invalidates the file's inode cache entry AND the parent directory's inode cache entry
+- **AND** the next `list_children` call on the parent directory fetches fresh data
+
+#### Scenario: state_changed for the sync root itself
+- **WHEN** the OS fires `state_changed` for the sync root path (empty relative components)
+- **THEN** the system invalidates only the sync root's own cache entry
+- **AND** no parent invalidation is attempted (the sync root has no parent within the mount)
+
+#### Scenario: state_changed for an unresolvable path
+- **WHEN** the OS fires `state_changed` for a path that cannot be resolved to an inode
+- **THEN** the system skips invalidation for that path and continues processing remaining paths
 

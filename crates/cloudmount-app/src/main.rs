@@ -49,6 +49,8 @@ use cloudmount_auth::AuthManager;
 use cloudmount_cache::CacheManager;
 use cloudmount_cache::sync::run_delta_sync;
 use cloudmount_core::config::MountConfig;
+// cache_dir is used in start_mount (FUSE on Linux/macOS) and in desktop start_mount (Windows).
+// The cfg union covers both headless unix builds and desktop builds (any platform).
 #[cfg(any(target_os = "linux", target_os = "macos", feature = "desktop"))]
 use cloudmount_core::config::cache_dir;
 use cloudmount_graph::GraphClient;
@@ -65,20 +67,31 @@ use std::collections::HashMap;
 #[cfg(feature = "desktop")]
 use std::sync::Mutex;
 
-/// Per-mount cache entry: `(CacheManager, InodeTable)` keyed by drive_id.
+/// Per-mount cache entry: `(CacheManager, InodeTable, DeltaSyncObserver)` keyed by drive_id.
 #[cfg(feature = "desktop")]
-type MountCacheEntry = (Arc<CacheManager>, Arc<InodeTable>);
+type MountCacheEntry = (
+    Arc<CacheManager>,
+    Arc<InodeTable>,
+    Option<Arc<dyn cloudmount_core::DeltaSyncObserver>>,
+);
 
-/// Snapshot row used by the delta-sync loop: (drive_id, mount_id, mount_name, cache, inodes).
+/// Snapshot row used by the delta-sync loop.
 #[cfg(feature = "desktop")]
-type SyncSnapshotRow = (String, String, String, Arc<CacheManager>, Arc<InodeTable>);
+type SyncSnapshotRow = (
+    String,
+    String,
+    String,
+    Arc<CacheManager>,
+    Arc<InodeTable>,
+    Option<Arc<dyn cloudmount_core::DeltaSyncObserver>>,
+);
 
 const CLIENT_ID: &str = "8ebe3ef7-f509-4146-8fef-c9b5d7c22252";
 
 /// Annotated default configuration printed by `--print-default-config`.
 const DEFAULT_CONFIG_TOML: &str = "\
 # CloudMount configuration
-# Location: ~/.config/cloudmount/config.toml
+# Location: see --print-config-path
 
 [general]
 # Start CloudMount on login (systemd user unit / launchd / registry)
@@ -681,8 +694,24 @@ fn start_all_mounts(app: &tauri::AppHandle) {
     tray::update_tray_menu(app);
 }
 
-#[cfg(all(feature = "desktop", any(target_os = "linux", target_os = "macos")))]
-fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(), String> {
+/// Shared mount setup resources extracted from platform-specific `start_mount` functions.
+#[cfg(feature = "desktop")]
+struct MountContext {
+    drive_id: String,
+    mountpoint: String,
+    cache: Arc<CacheManager>,
+    inodes: Arc<InodeTable>,
+    event_tx: tokio::sync::mpsc::UnboundedSender<cloudmount_vfs::core_ops::VfsEvent>,
+    event_rx: tokio::sync::mpsc::UnboundedReceiver<cloudmount_vfs::core_ops::VfsEvent>,
+    rt: tokio::runtime::Handle,
+}
+
+/// Validate the drive, set up cache/inodes/event channel — shared by FUSE and CfApi mounts.
+#[cfg(feature = "desktop")]
+fn start_mount_common(
+    app: &tauri::AppHandle,
+    mount_config: &MountConfig,
+) -> Result<Option<MountContext>, String> {
     use tauri::Manager;
 
     let drive_id = mount_config
@@ -708,7 +737,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
                 );
                 remove_mount_from_config(app, &mount_config.id);
                 notify::mount_not_found(app, &mount_config.name);
-                return Ok(());
+                return Ok(None);
             }
             Err(cloudmount_core::Error::GraphApi { status: 403, .. }) => {
                 tracing::warn!(
@@ -716,26 +745,19 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
                     mount_config.name
                 );
                 notify::mount_access_denied(app, &mount_config.name);
-                return Ok(());
+                return Ok(None);
             }
             Err(e) => {
                 tracing::warn!(
                     "transient error validating mount '{}': {e}, skipping",
                     mount_config.name
                 );
-                return Ok(());
+                return Ok(None);
             }
         }
     }
 
     let mountpoint = expand_mount_point(&mount_config.mount_point);
-
-    if !cloudmount_vfs::cleanup_stale_mount(&mountpoint) {
-        return Err(format!(
-            "stale FUSE mount at {mountpoint} could not be cleaned up — run `fusermount -u {mountpoint}` manually"
-        ));
-    }
-
     std::fs::create_dir_all(&mountpoint).map_err(|e| format!("create mountpoint failed: {e}"))?;
 
     let state = app.state::<AppState>();
@@ -754,12 +776,12 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
 
     let safe_id = drive_id.replace('!', "_");
     let db_path = effective_cache_dir.join(format!("drive-{safe_id}.db"));
-    let mount_cache = Arc::new(
+    let cache = Arc::new(
         CacheManager::new(effective_cache_dir, db_path, max_cache_bytes, metadata_ttl)
             .map_err(|e| e.to_string())?,
     );
-    let max_inode = mount_cache.sqlite.max_inode().unwrap_or(0);
-    let mount_inodes = Arc::new(InodeTable::new_starting_after(max_inode));
+    let max_inode = cache.sqlite.max_inode().unwrap_or(0);
+    let inodes = Arc::new(InodeTable::new_starting_after(max_inode));
 
     let rt = state
         .tokio_handle
@@ -767,24 +789,29 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         .cloned()
         .unwrap_or_else(|| tokio::runtime::Handle::current());
 
-    let (event_tx, mut event_rx) =
+    let (event_tx, event_rx) =
         tokio::sync::mpsc::unbounded_channel::<cloudmount_vfs::core_ops::VfsEvent>();
 
-    let rt_events = rt.clone();
-    let handle = MountHandle::mount(
-        state.graph.clone(),
-        mount_cache.clone(),
-        mount_inodes.clone(),
-        drive_id.to_string(),
-        &mountpoint,
+    Ok(Some(MountContext {
+        drive_id: drive_id.to_string(),
+        mountpoint,
+        cache,
+        inodes,
+        event_tx,
+        event_rx,
         rt,
-        Some(event_tx),
-    )
-    .map_err(|e| e.to_string())?;
+    }))
+}
 
-    // Spawn a task to forward VFS events to desktop notifications
+/// Spawn a task that forwards VFS events to desktop notifications.
+#[cfg(feature = "desktop")]
+fn spawn_event_forwarder(
+    rt: &tokio::runtime::Handle,
+    app: &tauri::AppHandle,
+    mut event_rx: tokio::sync::mpsc::UnboundedReceiver<cloudmount_vfs::core_ops::VfsEvent>,
+) {
     let app_handle = app.clone();
-    rt_events.spawn(async move {
+    rt.spawn(async move {
         while let Some(event) = event_rx.recv().await {
             match event {
                 cloudmount_vfs::core_ops::VfsEvent::ConflictDetected {
@@ -793,15 +820,50 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
                 } => {
                     notify::conflict_detected(&app_handle, &file_name, &conflict_name);
                 }
+                cloudmount_vfs::core_ops::VfsEvent::WritebackFailed { file_name } => {
+                    notify::writeback_failed(&app_handle, &file_name);
+                }
             }
         }
     });
+}
 
+#[cfg(all(feature = "desktop", any(target_os = "linux", target_os = "macos")))]
+fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(), String> {
+    use tauri::Manager;
+
+    let Some(ctx) = start_mount_common(app, mount_config)? else {
+        return Ok(());
+    };
+
+    if !cloudmount_vfs::cleanup_stale_mount(&ctx.mountpoint) {
+        return Err(format!(
+            "stale FUSE mount at {} could not be cleaned up — run `fusermount -u {}` manually",
+            ctx.mountpoint, ctx.mountpoint
+        ));
+    }
+
+    let state = app.state::<AppState>();
+
+    let handle = MountHandle::mount(
+        state.graph.clone(),
+        ctx.cache.clone(),
+        ctx.inodes.clone(),
+        ctx.drive_id.clone(),
+        &ctx.mountpoint,
+        ctx.rt.clone(),
+        Some(ctx.event_tx),
+    )
+    .map_err(|e| e.to_string())?;
+
+    spawn_event_forwarder(&ctx.rt, app, ctx.event_rx);
+
+    let observer = Some(handle.delta_observer());
     state
         .mount_caches
         .lock()
         .unwrap()
-        .insert(drive_id.to_string(), (mount_cache, mount_inodes));
+        .insert(ctx.drive_id.clone(), (ctx.cache, ctx.inodes, observer));
 
     state
         .mounts
@@ -809,8 +871,12 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         .unwrap()
         .insert(mount_config.id.clone(), handle);
 
-    notify::mount_success(app, &mount_config.name, &mountpoint);
-    tracing::info!("mount '{}' started at {mountpoint}", mount_config.name);
+    notify::mount_success(app, &mount_config.name, &ctx.mountpoint);
+    tracing::info!(
+        "mount '{}' started at {}",
+        mount_config.name,
+        ctx.mountpoint
+    );
     tray::update_tray_menu(app);
 
     Ok(())
@@ -820,117 +886,34 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
 fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(), String> {
     use tauri::Manager;
 
-    let drive_id = mount_config
-        .drive_id
-        .as_deref()
-        .ok_or_else(|| format!("mount '{}' has no drive_id", mount_config.name))?;
-
-    // Validate the drive resource exists before mounting.
-    {
-        let state = app.state::<AppState>();
-        let graph = state.graph.clone();
-        let rt = state
-            .tokio_handle
-            .get()
-            .cloned()
-            .unwrap_or_else(|| tokio::runtime::Handle::current());
-        match tokio::task::block_in_place(|| rt.block_on(graph.check_drive_exists(drive_id))) {
-            Ok(()) => {}
-            Err(cloudmount_core::Error::GraphApi { status: 404, .. }) => {
-                tracing::warn!(
-                    "mount '{}' drive not found (404), removing from config",
-                    mount_config.name
-                );
-                remove_mount_from_config(app, &mount_config.id);
-                notify::mount_not_found(app, &mount_config.name);
-                return Ok(());
-            }
-            Err(cloudmount_core::Error::GraphApi { status: 403, .. }) => {
-                tracing::warn!(
-                    "mount '{}' access denied (403), skipping",
-                    mount_config.name
-                );
-                notify::mount_access_denied(app, &mount_config.name);
-                return Ok(());
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "transient error validating mount '{}': {e}, skipping",
-                    mount_config.name
-                );
-                return Ok(());
-            }
-        }
-    }
-
-    let mountpoint = expand_mount_point(&mount_config.mount_point);
-    std::fs::create_dir_all(&mountpoint).map_err(|e| format!("create mountpoint failed: {e}"))?;
+    let Some(ctx) = start_mount_common(app, mount_config)? else {
+        return Ok(());
+    };
 
     let state = app.state::<AppState>();
 
-    let (effective_cache_dir, max_cache_bytes, metadata_ttl) = {
-        let cfg = state.effective_config.lock().map_err(|e| e.to_string())?;
-        let dir = cfg
-            .cache_dir
-            .as_ref()
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(cache_dir);
-        let max_bytes = parse_cache_size(&cfg.cache_max_size);
-        let ttl = Some(cfg.metadata_ttl_secs);
-        (dir, max_bytes, ttl)
-    };
+    // Use the user-visible mount name as account_name (not drive_id).
+    let account_name = mount_config.name.replace('!', "_");
 
-    let safe_id = drive_id.replace('!', "_");
-    let db_path = effective_cache_dir.join(format!("drive-{safe_id}.db"));
-    let mount_cache = Arc::new(
-        CacheManager::new(effective_cache_dir, db_path, max_cache_bytes, metadata_ttl)
-            .map_err(|e| e.to_string())?,
-    );
-    let max_inode = mount_cache.sqlite.max_inode().unwrap_or(0);
-    let mount_inodes = Arc::new(InodeTable::new_starting_after(max_inode));
-
-    let rt = state
-        .tokio_handle
-        .get()
-        .cloned()
-        .unwrap_or_else(|| tokio::runtime::Handle::current());
-
-    let (event_tx, mut event_rx) =
-        tokio::sync::mpsc::unbounded_channel::<cloudmount_vfs::core_ops::VfsEvent>();
-
-    let rt_events = rt.clone();
     let handle = cloudmount_vfs::CfMountHandle::mount(
         state.graph.clone(),
-        mount_cache.clone(),
-        mount_inodes.clone(),
-        drive_id.to_string(),
-        &std::path::PathBuf::from(&mountpoint),
-        rt,
-        drive_id.to_string(),
-        Some(event_tx),
+        ctx.cache.clone(),
+        ctx.inodes.clone(),
+        ctx.drive_id.clone(),
+        &std::path::PathBuf::from(&ctx.mountpoint),
+        ctx.rt.clone(),
+        account_name,
+        Some(ctx.event_tx),
     )
     .map_err(|e| e.to_string())?;
 
-    // Spawn a task to forward VFS events to desktop notifications
-    let app_handle = app.clone();
-    rt_events.spawn(async move {
-        while let Some(event) = event_rx.recv().await {
-            match event {
-                cloudmount_vfs::core_ops::VfsEvent::ConflictDetected {
-                    file_name,
-                    conflict_name,
-                } => {
-                    notify::conflict_detected(&app_handle, &file_name, &conflict_name);
-                }
-            }
-        }
-    });
+    spawn_event_forwarder(&ctx.rt, app, ctx.event_rx);
 
     state
         .mount_caches
         .lock()
         .unwrap()
-        .insert(drive_id.to_string(), (mount_cache, mount_inodes));
+        .insert(ctx.drive_id.clone(), (ctx.cache, ctx.inodes, None));
 
     state
         .mounts
@@ -938,8 +921,12 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         .unwrap()
         .insert(mount_config.id.clone(), handle);
 
-    notify::mount_success(app, &mount_config.name, &mountpoint);
-    tracing::info!("mount '{}' started at {mountpoint}", mount_config.name);
+    notify::mount_success(app, &mount_config.name, &ctx.mountpoint);
+    tracing::info!(
+        "mount '{}' started at {}",
+        mount_config.name,
+        ctx.mountpoint
+    );
     tray::update_tray_menu(app);
 
     Ok(())
@@ -1016,26 +1003,83 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                 let config = state.effective_config.lock().unwrap();
                 caches
                     .iter()
-                    .map(|(drive_id, (c, i))| {
+                    .map(|(drive_id, (c, i, obs))| {
                         let (mount_id, mount_name) = config
                             .mounts
                             .iter()
                             .find(|m| m.drive_id.as_deref() == Some(drive_id.as_str()))
                             .map(|m| (m.id.clone(), m.name.clone()))
                             .unwrap_or_else(|| (drive_id.clone(), drive_id.clone()));
-                        (drive_id.clone(), mount_id, mount_name, c.clone(), i.clone())
+                        (
+                            drive_id.clone(),
+                            mount_id,
+                            mount_name,
+                            c.clone(),
+                            i.clone(),
+                            obs.clone(),
+                        )
                     })
                     .collect()
             };
 
-            for (drive_id, mount_id, mount_name, cache, inodes) in &snapshot {
+            for (drive_id, mount_id, mount_name, cache, inodes, observer) in &snapshot {
                 let inodes = inodes.clone();
                 let inode_allocator: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
                     Arc::new(move |item_id: &str| inodes.allocate(item_id));
-                match run_delta_sync(&graph, cache, drive_id, &inode_allocator).await {
-                    Ok(()) => {
+                match run_delta_sync(
+                    &graph,
+                    cache,
+                    drive_id,
+                    &inode_allocator,
+                    observer.as_deref(),
+                )
+                .await
+                {
+                    Ok(result) => {
                         // Clear 403 state so the user is notified if access is lost again.
                         notified_403.remove(drive_id.as_str());
+
+                        // Apply placeholder updates on Windows
+                        #[cfg(target_os = "windows")]
+                        if !result.changed_items.is_empty() || !result.deleted_items.is_empty() {
+                            use cloudmount_cache::{resolve_deleted_path, resolve_relative_path};
+
+                            let changed: Vec<_> = result
+                                .changed_items
+                                .iter()
+                                .filter_map(|item| {
+                                    resolve_relative_path(item).map(|p| (p, item.clone()))
+                                })
+                                .collect();
+
+                            let deleted: Vec<_> = result
+                                .deleted_items
+                                .iter()
+                                .filter_map(resolve_deleted_path)
+                                .collect();
+
+                            // Look up mount path from state.mounts using mount_id
+                            let mount_path = {
+                                use tauri::Manager;
+                                let st = app_handle.state::<AppState>();
+                                let mounts = st.mounts.lock().unwrap();
+                                mounts.get(mount_id).map(|h| h.mount_path().to_path_buf())
+                            };
+
+                            if let Some(mp) = mount_path {
+                                cloudmount_vfs::apply_delta_placeholder_updates(
+                                    &mp,
+                                    &changed,
+                                    &deleted,
+                                    &cache.writeback,
+                                    drive_id,
+                                );
+                            }
+                        }
+
+                        // Suppress unused variable warning on non-Windows
+                        #[cfg(not(target_os = "windows"))]
+                        let _ = result;
                     }
                     Err(cloudmount_core::Error::GraphApi { status: 404, .. }) => {
                         tracing::warn!(
@@ -1097,7 +1141,7 @@ fn run_crash_recovery(app: &tauri::AppHandle) {
         .unwrap()
         .values()
         .next()
-        .map(|(c, _)| c.clone())
+        .map(|(c, _, _)| c.clone())
     {
         Some(c) => c,
         None => return, // No mounts active; nothing to recover.
@@ -1141,16 +1185,30 @@ pub fn graceful_shutdown(app: &tauri::AppHandle) {
     app.exit(0);
 }
 
+// On Windows the entire function body below the early exit is cfg-gated as
+// #[cfg(not(target_os = "windows"))]; the parameters are only used on non-Windows
+// platforms where the mutable qualifiers are also needed.
+#[cfg_attr(target_os = "windows", allow(unused_variables, unused_mut))]
 fn run_headless(
     mut user_config: UserConfig,
     mut effective: EffectiveConfig,
     overrides: RuntimeOverrides,
 ) {
+    #[cfg(target_os = "windows")]
+    {
+        eprintln!(
+            "Error: headless mode is not supported on Windows. Cloud Files API requires desktop mode. Use 'cloudmount' without --headless."
+        );
+        std::process::exit(1);
+    }
+
+    #[cfg(not(target_os = "windows"))]
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("failed to create tokio runtime");
 
+    #[cfg(not(target_os = "windows"))]
     rt.block_on(async {
         let opener: OpenerFn =
             Arc::new(|url: &str| {
@@ -1247,12 +1305,13 @@ fn run_headless(
         }
 
         // Start mounts and build per-mount cache/inode entries
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        let mut mount_entries: Vec<(String, Arc<CacheManager>, Arc<InodeTable>)> = Vec::new();
-        #[cfg(target_os = "windows")]
-        let mount_entries: Vec<(String, Arc<CacheManager>, Arc<InodeTable>)> = Vec::new();
-
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        type HeadlessMountEntry = (
+            String,
+            Arc<CacheManager>,
+            Arc<InodeTable>,
+            Option<Arc<dyn cloudmount_core::DeltaSyncObserver>>,
+        );
+        let mut mount_entries: Vec<HeadlessMountEntry> = Vec::new();
         let mut mount_handles: Vec<MountHandle> = Vec::new();
 
         let mounts_config: Vec<MountConfig> = effective
@@ -1262,18 +1321,14 @@ fn run_headless(
             .cloned()
             .collect();
 
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let rt_handle = tokio::runtime::Handle::current();
 
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let effective_cache_dir = effective
             .cache_dir
             .as_ref()
             .map(std::path::PathBuf::from)
             .unwrap_or_else(cache_dir);
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let max_cache_bytes = parse_cache_size(&effective.cache_max_size);
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let metadata_ttl = Some(effective.metadata_ttl_secs);
 
         for mount_config in &mounts_config {
@@ -1331,7 +1386,13 @@ fn run_headless(
                 ) {
                     Ok(handle) => {
                         tracing::info!("mount '{}' started at {mountpoint}", mount_config.name);
-                        mount_entries.push((drive_id.to_string(), mount_cache, mount_inodes));
+                        let observer = Some(handle.delta_observer());
+                        mount_entries.push((
+                            drive_id.to_string(),
+                            mount_cache,
+                            mount_inodes,
+                            observer,
+                        ));
                         mount_handles.push(handle);
                     }
                     Err(e) => {
@@ -1340,23 +1401,12 @@ fn run_headless(
                 }
             }
 
-            #[cfg(target_os = "windows")]
-            {
-                tracing::warn!(
-                    "headless mode: CfApi mount for '{}' not started — crash recovery skipped for this mount",
-                    mount_config.name
-                );
-                tracing::warn!(
-                    "headless mode: CfApi mount for '{}' not started — delta sync skipped for this mount",
-                    mount_config.name
-                );
-            }
         }
 
         let mount_count = mount_entries.len();
 
         // Crash recovery (non-blocking — runs in background after mounts are started)
-        if let Some((_, recovery_cache, _)) = mount_entries.first() {
+        if let Some((_, recovery_cache, _, _)) = mount_entries.first() {
             let recovery_graph = graph.clone();
             let recovery_cache = recovery_cache.clone();
             tokio::spawn(async move {
@@ -1384,12 +1434,13 @@ fn run_headless(
                 use std::sync::atomic::Ordering;
 
                 loop {
-                    for (drive_id, cache, inodes) in &sync_entries {
+                    for (drive_id, cache, inodes, observer) in &sync_entries {
                         let inodes = inodes.clone();
                         let inode_allocator: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
                             Arc::new(move |item_id: &str| inodes.allocate(item_id));
-                        match run_delta_sync(&sync_graph, cache, drive_id, &inode_allocator).await {
-                            Ok(()) => {}
+                        let obs_ref = observer.as_deref();
+                        match run_delta_sync(&sync_graph, cache, drive_id, &inode_allocator, obs_ref).await {
+                            Ok(_result) => {}
                             Err(cloudmount_core::Error::Auth(ref msg))
                                 if msg.contains("re-authentication required") =>
                             {
@@ -1428,7 +1479,7 @@ fn run_headless(
             let hup_auth = auth.clone();
             let hup_graph = graph.clone();
             // All per-mount caches share the same writeback dir; any one suffices for flush.
-            let hup_cache = mount_entries.first().map(|(_, c, _)| c.clone());
+            let hup_cache = mount_entries.first().map(|(_, c, _, _)| c.clone());
             let hup_degraded = auth_degraded.clone();
 
             tokio::spawn(async move {
@@ -1486,7 +1537,6 @@ fn run_headless(
         tracing::info!("received shutdown signal");
         cancel.cancel();
 
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
         for handle in mount_handles {
             if let Err(e) = handle.unmount() {
                 tracing::error!("unmount failed: {e}");

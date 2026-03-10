@@ -1,10 +1,25 @@
+use std::sync::Arc;
+
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{Duration, Utc};
 use sha2::{Digest, Sha256};
 
+use cloudmount_auth::AuthManager;
 use cloudmount_auth::oauth::TokenResponse;
 use cloudmount_auth::storage;
+
+fn make_test_tokens() -> TokenResponse {
+    TokenResponse {
+        access_token: "test-access-token".to_string(),
+        refresh_token: "test-refresh-token".to_string(),
+        expires_at: Utc::now() + Duration::hours(1),
+    }
+}
+
+fn make_auth_manager(client_id: &str) -> AuthManager {
+    AuthManager::new(client_id.to_string(), None, Arc::new(|_url: &str| Ok(())))
+}
 
 #[test]
 fn token_serialization_roundtrip() {
@@ -134,6 +149,150 @@ fn pkce_verifier_challenge_validity() {
         challenge, recomputed,
         "challenge must equal SHA256(verifier)"
     );
+}
+
+#[tokio::test]
+async fn finalize_sign_in_migrates_tokens_from_client_id_to_account_id() {
+    let client_id = "test-finalize-client-id-migrate";
+    let account_id = "test-finalize-drive-id-migrate";
+
+    // Cleanup before test to ensure a clean state
+    storage::delete_tokens(client_id).unwrap();
+    storage::delete_tokens(account_id).unwrap();
+
+    // Store tokens under the client_id (simulating the pre-fix state after exchange_code)
+    let tokens = make_test_tokens();
+    storage::store_tokens(client_id, &tokens).unwrap();
+
+    let manager = make_auth_manager(client_id);
+
+    // finalize_sign_in should migrate tokens from client_id → account_id
+    manager.finalize_sign_in(account_id).await.unwrap();
+
+    // Tokens must now exist under account_id
+    let loaded = storage::load_tokens(account_id)
+        .unwrap()
+        .expect("tokens should be under account_id after finalize_sign_in");
+    assert_eq!(loaded.access_token, tokens.access_token);
+
+    // Old client_id entry must be gone
+    let old = storage::load_tokens(client_id).unwrap();
+    assert!(
+        old.is_none(),
+        "tokens under client_id should be deleted after migration"
+    );
+
+    // Cleanup
+    storage::delete_tokens(account_id).unwrap();
+}
+
+#[tokio::test]
+async fn finalize_sign_in_noop_when_key_already_correct() {
+    let client_id = "test-finalize-client-id-noop";
+    let account_id = "test-finalize-drive-id-noop";
+
+    // Cleanup before test
+    storage::delete_tokens(client_id).unwrap();
+    storage::delete_tokens(account_id).unwrap();
+
+    // Pre-set account_id so storage_key() returns account_id already
+    let manager = make_auth_manager(client_id);
+    manager.set_account_id(account_id).await;
+
+    // Store tokens under the correct account_id key
+    let tokens = make_test_tokens();
+    storage::store_tokens(account_id, &tokens).unwrap();
+
+    // finalize_sign_in with the same id — should be a no-op (no migration)
+    manager.finalize_sign_in(account_id).await.unwrap();
+
+    // Tokens must still exist under account_id
+    let loaded = storage::load_tokens(account_id)
+        .unwrap()
+        .expect("tokens should still be under account_id after noop finalize");
+    assert_eq!(loaded.access_token, tokens.access_token);
+
+    // No tokens should have appeared under client_id
+    let under_client = storage::load_tokens(client_id).unwrap();
+    assert!(
+        under_client.is_none(),
+        "no tokens should exist under client_id in noop case"
+    );
+
+    // Cleanup
+    storage::delete_tokens(account_id).unwrap();
+}
+
+#[tokio::test]
+async fn try_restore_falls_back_to_client_id_and_migrates() {
+    let client_id = "test-restore-client-id-fallback";
+    let account_id = "test-restore-drive-id-fallback";
+
+    // Cleanup before test
+    storage::delete_tokens(client_id).unwrap();
+    storage::delete_tokens(account_id).unwrap();
+
+    // Store tokens under client_id only (simulating a broken pre-fix installation)
+    let tokens = make_test_tokens();
+    storage::store_tokens(client_id, &tokens).unwrap();
+
+    let manager = make_auth_manager(client_id);
+
+    // try_restore should fall back, migrate, and succeed
+    let restored = manager.try_restore(account_id).await.unwrap();
+    assert!(
+        restored,
+        "try_restore should succeed via client_id fallback"
+    );
+
+    // Tokens must now be under account_id
+    let loaded = storage::load_tokens(account_id)
+        .unwrap()
+        .expect("tokens should be under account_id after fallback migration");
+    assert_eq!(loaded.access_token, tokens.access_token);
+
+    // Old client_id entry must be cleaned up
+    let old = storage::load_tokens(client_id).unwrap();
+    assert!(
+        old.is_none(),
+        "tokens under client_id should be deleted after migration"
+    );
+
+    // Cleanup
+    storage::delete_tokens(account_id).unwrap();
+}
+
+#[tokio::test]
+async fn try_restore_succeeds_directly_when_tokens_under_account_id() {
+    let client_id = "test-restore-client-id-direct";
+    let account_id = "test-restore-drive-id-direct";
+
+    // Cleanup before test
+    storage::delete_tokens(client_id).unwrap();
+    storage::delete_tokens(account_id).unwrap();
+
+    // Store tokens directly under account_id (normal post-fix state)
+    let tokens = make_test_tokens();
+    storage::store_tokens(account_id, &tokens).unwrap();
+
+    let manager = make_auth_manager(client_id);
+
+    // try_restore should succeed on the first lookup without touching client_id
+    let restored = manager.try_restore(account_id).await.unwrap();
+    assert!(
+        restored,
+        "try_restore should succeed directly from account_id key"
+    );
+
+    // client_id key should remain empty (fallback was not needed)
+    let under_client = storage::load_tokens(client_id).unwrap();
+    assert!(
+        under_client.is_none(),
+        "client_id key should not be touched when account_id key has tokens"
+    );
+
+    // Cleanup
+    storage::delete_tokens(account_id).unwrap();
 }
 
 #[test]

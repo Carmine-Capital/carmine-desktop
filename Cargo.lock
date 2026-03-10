@@ -713,7 +713,6 @@ dependencies = [
  "hyper",
  "hyper-util",
  "keyring",
- "open",
  "rand 0.9.2",
  "reqwest 0.12.28",
  "serde",
@@ -745,6 +744,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "wiremock",
 ]
 
 [[package]]

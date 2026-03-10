@@ -26,8 +26,13 @@ pub fn setup(app: &AppHandle, app_name: &str) -> tauri::Result<()> {
         ])
         .build()?;
 
+    let icon = app
+        .default_window_icon()
+        .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".into()))?
+        .clone();
+
     let tray = TrayIconBuilder::with_id("cloudmount-tray")
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(icon)
         .tooltip(app_name)
         .menu(&menu)
         // Linux AppIndicator backend may not fire TrayIconEvent::Click for

@@ -1,6 +1,20 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// Observer for delta sync content change notifications.
+///
+/// Implemented by the VFS layer to react when delta sync detects that a file's
+/// content has changed on the server (eTag mismatch). This enables the VFS to
+/// mark open file handles as stale and optionally invalidate the kernel page cache.
+///
+/// The trait lives in `cloudmount-core` (shared dependency) to avoid a circular
+/// dependency between `cloudmount-cache` (where delta sync runs) and `cloudmount-vfs`
+/// (where the open file table lives).
+pub trait DeltaSyncObserver: Send + Sync {
+    /// Called when delta sync detects that the content of the given inode has changed.
+    fn on_inode_content_changed(&self, ino: u64);
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriveItem {
     pub id: String,
