@@ -25,7 +25,6 @@ use std::sync::Arc;
 #[cfg(any(feature = "desktop", not(target_os = "windows")))]
 type OpenerFn = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
-#[cfg(not(target_os = "windows"))]
 pub(crate) fn open_with_clean_env(path: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
