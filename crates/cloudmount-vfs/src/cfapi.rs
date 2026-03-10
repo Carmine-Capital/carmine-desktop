@@ -526,6 +526,7 @@ pub struct CfMountHandle {
 }
 
 impl CfMountHandle {
+    #[allow(clippy::too_many_arguments)] // constructor — all params are required
     pub fn mount(
         graph: Arc<GraphClient>,
         cache: Arc<CacheManager>,

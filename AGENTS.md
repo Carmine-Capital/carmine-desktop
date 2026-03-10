@@ -53,8 +53,3 @@ crates/
 All cargo commands run inside the `cloudmount-build` toolbox container — see `Makefile` for targets (`make build`, `make test`, `make clippy`, `make check`). The app itself must run on the host (FUSE mounts are invisible inside toolbox).
 
 GitHub interactions use the `gh` CLI (not GitHub MCP).
-
-## AGENT BEHAVIOR
-
-- Respond in the user's language. Code, comments, commits, and documentation are always in English.
-- Code directly. Planning workflows (OpenSpec, brainstorming) are invoked explicitly when needed.
