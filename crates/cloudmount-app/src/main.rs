@@ -15,15 +15,17 @@ mod update;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use cloudmount_core::config::{
-    AccountMetadata, EffectiveConfig, UserConfig, config_file_path, derive_mount_point,
-    expand_mount_point,
-};
+use cloudmount_core::config::{EffectiveConfig, UserConfig, config_file_path, expand_mount_point};
+#[cfg(not(target_os = "windows"))]
+use cloudmount_core::config::{AccountMetadata, derive_mount_point};
 
+#[cfg(any(feature = "desktop", not(target_os = "windows")))]
 use std::sync::Arc;
 
+#[cfg(any(feature = "desktop", not(target_os = "windows")))]
 type OpenerFn = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn open_with_clean_env(path: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
@@ -45,21 +47,29 @@ pub(crate) fn open_with_clean_env(path: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(any(feature = "desktop", not(target_os = "windows")))]
 use cloudmount_auth::AuthManager;
+#[cfg(any(feature = "desktop", not(target_os = "windows")))]
 use cloudmount_cache::CacheManager;
+#[cfg(any(feature = "desktop", not(target_os = "windows")))]
 use cloudmount_cache::sync::run_delta_sync;
+#[cfg(any(feature = "desktop", not(target_os = "windows")))]
 use cloudmount_core::config::MountConfig;
 // cache_dir is used in start_mount (FUSE on Linux/macOS) and in desktop start_mount (Windows).
 // The cfg union covers both headless unix builds and desktop builds (any platform).
 #[cfg(any(target_os = "linux", target_os = "macos", feature = "desktop"))]
 use cloudmount_core::config::cache_dir;
+#[cfg(any(feature = "desktop", not(target_os = "windows")))]
 use cloudmount_graph::GraphClient;
+#[cfg(any(feature = "desktop", not(target_os = "windows")))]
 use cloudmount_vfs::inode::InodeTable;
+#[cfg(any(feature = "desktop", not(target_os = "windows")))]
 use tokio_util::sync::CancellationToken;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use cloudmount_vfs::MountHandle;
 
+#[cfg(any(feature = "desktop", not(target_os = "windows")))]
 use std::sync::atomic::AtomicBool;
 
 #[cfg(feature = "desktop")]
@@ -86,6 +96,7 @@ type SyncSnapshotRow = (
     Option<Arc<dyn cloudmount_core::DeltaSyncObserver>>,
 );
 
+#[allow(dead_code)] // Used conditionally across platform×feature combos; referenced by tests on all platforms
 const CLIENT_ID: &str = "8ebe3ef7-f509-4146-8fef-c9b5d7c22252";
 
 /// Annotated default configuration printed by `--print-default-config`.
@@ -181,6 +192,7 @@ struct CliArgs {
     print_default_config: bool,
 }
 
+#[allow(dead_code)] // Fields read conditionally across platform×feature combos; referenced by tests
 struct RuntimeOverrides {
     client_id: Option<String>,
     tenant_id: Option<String>,
@@ -222,6 +234,7 @@ fn parse_cache_size(size_str: &str) -> u64 {
     num_part.parse::<u64>().unwrap_or(5) * multiplier
 }
 
+#[cfg(any(feature = "desktop", not(target_os = "windows")))]
 struct Components {
     auth: Arc<AuthManager>,
     graph: Arc<GraphClient>,
@@ -336,6 +349,7 @@ fn preflight_checks() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(any(feature = "desktop", not(target_os = "windows")))]
 fn init_components(overrides: &RuntimeOverrides, opener: OpenerFn) -> Components {
     let client_id = overrides
         .client_id
