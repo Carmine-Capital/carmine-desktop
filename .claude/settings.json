@@ -24,29 +24,7 @@
             "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -q '\\.rs\"'; then toolbox run -c cloudmount-build cargo clippy --all-targets --all-features 2>&1; fi"
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node .claude/hooks/gsd-context-monitor.js"
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node .claude/hooks/gsd-check-update.js"
-          }
-        ]
       }
     ]
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "node .claude/hooks/gsd-statusline.js"
   }
 }
