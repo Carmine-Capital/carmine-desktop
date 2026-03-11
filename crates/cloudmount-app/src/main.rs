@@ -5,6 +5,8 @@
 
 #[cfg(feature = "desktop")]
 mod commands;
+#[cfg(all(feature = "desktop", target_os = "linux"))]
+mod linux_integrations;
 #[cfg(feature = "desktop")]
 mod notify;
 #[cfg(feature = "desktop")]

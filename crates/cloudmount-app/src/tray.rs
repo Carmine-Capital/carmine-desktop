@@ -10,20 +10,26 @@ pub struct TrayState(pub Mutex<tauri::tray::TrayIcon>);
 
 pub fn setup(app: &AppHandle, app_name: &str) -> tauri::Result<()> {
     let settings_item = MenuItemBuilder::with_id("settings", "Settings\u{2026}").build(app)?;
+    #[cfg(target_os = "linux")]
+    let linux_integrations_item =
+        MenuItemBuilder::with_id("toggle_linux_integrations", linux_integrations_menu_label())
+            .build(app)?;
     let update_item =
         MenuItemBuilder::with_id("check_for_updates", "Check for Updates").build(app)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let signout_item = MenuItemBuilder::with_id("sign_out", "Sign Out").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", format!("Quit {app_name}")).build(app)?;
 
-    let menu = MenuBuilder::new(app)
-        .items(&[
-            &settings_item,
-            &update_item,
-            &sep,
-            &signout_item,
-            &quit_item,
-        ])
+    let mut menu = MenuBuilder::new(app).item(&settings_item);
+    #[cfg(target_os = "linux")]
+    {
+        menu = menu.item(&linux_integrations_item);
+    }
+    let menu = menu
+        .item(&update_item)
+        .item(&sep)
+        .item(&signout_item)
+        .item(&quit_item)
         .build()?;
 
     let icon = app
@@ -92,6 +98,29 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 crate::update::handle_manual_check(&app).await;
+            });
+        }
+        #[cfg(target_os = "linux")]
+        "toggle_linux_integrations" => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                match tauri::async_runtime::spawn_blocking(crate::linux_integrations::toggle).await
+                {
+                    Ok(Ok(crate::linux_integrations::IntegrationAction::Installed)) => {
+                        crate::notify::linux_integrations_installed(&app);
+                        update_tray_menu(&app);
+                    }
+                    Ok(Ok(crate::linux_integrations::IntegrationAction::Removed)) => {
+                        crate::notify::linux_integrations_removed(&app);
+                        update_tray_menu(&app);
+                    }
+                    Ok(Err(e)) => {
+                        crate::notify::linux_integrations_failed(&app, &e);
+                    }
+                    Err(e) => {
+                        crate::notify::linux_integrations_failed(&app, &e.to_string());
+                    }
+                }
             });
         }
         "restart_to_update" => {
@@ -261,6 +290,16 @@ pub fn update_tray_menu(app: &AppHandle) {
         let settings = MenuItemBuilder::with_id("settings", "Settings\u{2026}").build(app)?;
         builder = builder.item(&settings);
 
+        #[cfg(target_os = "linux")]
+        {
+            let integrations = MenuItemBuilder::with_id(
+                "toggle_linux_integrations",
+                linux_integrations_menu_label(),
+            )
+            .build(app)?;
+            builder = builder.item(&integrations);
+        }
+
         if let Some(ref version) = pending_update_version {
             let update_item = MenuItemBuilder::with_id(
                 "restart_to_update",
@@ -304,5 +343,17 @@ pub fn update_tray_menu(app: &AppHandle) {
 
     if let Err(e) = result {
         tracing::error!("failed to rebuild tray menu: {e}");
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_integrations_menu_label() -> &'static str {
+    match crate::linux_integrations::status() {
+        crate::linux_integrations::IntegrationStatus::Installed => {
+            "Remove File Manager Integrations"
+        }
+        crate::linux_integrations::IntegrationStatus::NotInstalled => {
+            "Install File Manager Integrations"
+        }
     }
 }
