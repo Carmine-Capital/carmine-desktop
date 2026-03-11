@@ -50,6 +50,11 @@
   },
   "plugins": {
     "notification": null,
+    "deep-link": {
+      "desktop": {
+        "schemes": ["cloudmount"]
+      }
+    },
     "updater": {
       "endpoints": [
         "https://github.com/Nyxa07/cloud-mount/releases/latest/download/latest.json"

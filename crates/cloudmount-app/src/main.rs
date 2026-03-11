@@ -494,6 +494,7 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(update::UpdateState::new())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
@@ -518,6 +519,7 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::open_wizard,
             commands::check_fuse_available,
             commands::get_default_mount_root,
+            commands::open_online,
         ])
         .setup(move |app| {
             // Populate the opener's AppHandle slot now that the app is running.
@@ -531,6 +533,21 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
 
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            // Register deep link handler for runtime URL dispatches (macOS).
+            // On Windows/Linux, the OS spawns a new instance with the URL as a
+            // CLI arg; get_current() in setup_after_launch handles that case.
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let dl_handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    let handle = dl_handle.clone();
+                    let urls = event.urls();
+                    tauri::async_runtime::spawn(async move {
+                        handle_deep_link_urls(&handle, urls).await;
+                    });
+                });
+            }
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -621,6 +638,34 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
             update::spawn_update_checker(app.clone());
         }
         tray::update_tray_menu(app);
+
+        // Register cloudmount:// protocol handler (Linux/Windows runtime registration).
+        // macOS uses Info.plist-based registration handled by the deep-link plugin.
+        #[cfg(not(target_os = "macos"))]
+        {
+            use tauri_plugin_deep_link::DeepLinkExt;
+            if let Err(e) = app.deep_link().register("cloudmount") {
+                tracing::warn!("failed to register cloudmount:// deep link: {e}");
+            }
+        }
+
+        // Check if the app was launched via a deep link (Windows/Linux pass the URL
+        // as a CLI argument; the plugin reads it via get_current()).
+        {
+            use tauri_plugin_deep_link::DeepLinkExt;
+            match app.deep_link().get_current() {
+                Ok(Some(urls)) => {
+                    let handle = app.clone();
+                    tokio::spawn(async move {
+                        handle_deep_link_urls(&handle, urls).await;
+                    });
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!("failed to read startup deep link: {e}");
+                }
+            }
+        }
     } else if first_run {
         tray::open_or_focus_window(app, "wizard", "Setup", "wizard.html");
     } else {
@@ -652,6 +697,62 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
         tracing::info!("received shutdown signal");
         graceful_shutdown(&signal_handle);
     });
+}
+
+// ---------------------------------------------------------------------------
+// Deep link handler
+// ---------------------------------------------------------------------------
+
+/// Process deep link URLs dispatched by the OS (e.g. `cloudmount://open-online?path=...`).
+#[cfg(feature = "desktop")]
+async fn handle_deep_link_urls(app: &tauri::AppHandle, urls: Vec<url::Url>) {
+    for url in urls {
+        handle_deep_link_url(app, url).await;
+    }
+}
+
+/// Handle a single deep link URL.
+///
+/// Supported actions:
+/// - `cloudmount://open-online?path=<percent-encoded-path>`: resolve the local
+///   mount path to its SharePoint URL and open it.
+///
+/// Invalid paths or unrecognized actions produce a desktop notification.
+#[cfg(feature = "desktop")]
+async fn handle_deep_link_url(app: &tauri::AppHandle, url: url::Url) {
+    if url.scheme() != "cloudmount" {
+        return;
+    }
+
+    match url.host_str() {
+        Some("open-online") => {
+            let path = url
+                .query_pairs()
+                .find(|(k, _)| k == "path")
+                .map(|(_, v)| v.into_owned());
+
+            match path {
+                Some(p) => {
+                    tracing::info!("deep link: open-online path={p}");
+                    if let Err(e) = commands::open_online(app.clone(), p).await {
+                        tracing::error!("deep link open-online failed: {e}");
+                        notify::deep_link_failed(app, &e);
+                    }
+                }
+                None => {
+                    let msg = "Missing file path in deep link URL";
+                    tracing::warn!("deep link: {msg} — {url}");
+                    notify::deep_link_failed(app, msg);
+                }
+            }
+        }
+        Some(action) => {
+            tracing::warn!("unrecognized deep link action: {action}");
+        }
+        None => {
+            tracing::warn!("deep link has no action: {url}");
+        }
+    }
 }
 
 #[cfg(feature = "desktop")]
@@ -836,6 +937,12 @@ fn spawn_event_forwarder(
                 }
                 cloudmount_vfs::core_ops::VfsEvent::WritebackFailed { file_name } => {
                     notify::writeback_failed(&app_handle, &file_name);
+                }
+                cloudmount_vfs::core_ops::VfsEvent::UploadFailed { file_name, reason } => {
+                    notify::upload_failed(&app_handle, &file_name, &reason);
+                }
+                cloudmount_vfs::core_ops::VfsEvent::FileLocked { file_name } => {
+                    notify::file_locked(&app_handle, &file_name);
                 }
             }
         }

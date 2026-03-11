@@ -80,6 +80,7 @@ zeroize = { version = "1.8.2", features = ["derive"] }
 cloud-filter = "0.0.6"
 nt-time = { version = "0.8", features = ["chrono"] }
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_SystemInformation", "Win32_System_LibraryLoader"] }
+winreg = "0.52"
 
 # Tauri v2 (desktop GUI)
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
@@ -89,6 +90,7 @@ tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-deep-link = "2"
 
 # URL encoding
 urlencoding = "2.1"

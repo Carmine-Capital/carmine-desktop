@@ -32,13 +32,23 @@ pub struct DriveItem {
     pub parent_reference: Option<ParentReference>,
     pub folder: Option<FolderFacet>,
     pub file: Option<FileFacet>,
+    pub publication: Option<PublicationFacet>,
     #[serde(rename = "@microsoft.graph.downloadUrl")]
     pub download_url: Option<String>,
+    #[serde(rename = "webUrl")]
+    pub web_url: Option<String>,
 }
 
 impl DriveItem {
     pub fn is_folder(&self) -> bool {
         self.folder.is_some()
+    }
+
+    /// Returns `true` if the file is locked (checked out or co-authoring lock).
+    pub fn is_locked(&self) -> bool {
+        self.publication
+            .as_ref()
+            .is_some_and(|p| p.level.as_deref() == Some("checkout"))
     }
 }
 
@@ -69,6 +79,13 @@ pub struct FileHashes {
     pub sha256: Option<String>,
     #[serde(rename = "quickXorHash")]
     pub quick_xor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicationFacet {
+    pub level: Option<String>,
+    #[serde(rename = "versionId")]
+    pub version_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

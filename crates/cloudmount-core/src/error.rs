@@ -23,6 +23,9 @@ pub enum Error {
     #[error("precondition failed: server content changed (412)")]
     PreconditionFailed,
 
+    #[error("resource locked (423)")]
+    Locked,
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 

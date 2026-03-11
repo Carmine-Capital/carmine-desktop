@@ -7,6 +7,7 @@ use cloudmount_cache::sync::run_delta_sync;
 use cloudmount_core::config::{
     AccountMetadata, EffectiveConfig, autostart, config_file_path, expand_mount_point,
 };
+use cloudmount_core::types::DriveItem;
 
 use crate::AppState;
 
@@ -666,4 +667,230 @@ fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {
     let mut effective = state.effective_config.lock().map_err(|e| e.to_string())?;
     *effective = new_effective;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Open in SharePoint
+// ---------------------------------------------------------------------------
+
+/// Open a mounted file in SharePoint / Office Online.
+///
+/// Resolves the local path to its SharePoint `webUrl`, applies Office URI scheme
+/// mapping on Windows/macOS for desktop co-authoring, and opens the result.
+/// Falls back to the plain browser URL if the Office URI fails.
+#[tauri::command]
+pub async fn open_online(app: AppHandle, path: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let web_url = resolve_web_url(&state, &path).await?;
+
+    // Map extension to Office URI scheme (Word/Excel/PowerPoint) or plain URL
+    let extension = std::path::Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{e}"))
+        .unwrap_or_default();
+    let uri = cloudmount_core::open_online::office_uri(&extension, &web_url);
+
+    if uri != web_url {
+        // Office URI — try desktop app first, fall back to browser on failure
+        if let Err(e) = crate::open_with_clean_env(&uri) {
+            tracing::warn!("Office URI scheme failed ({e}), falling back to browser");
+            crate::open_with_clean_env(&web_url).map_err(|e| format!("failed to open URL: {e}"))?;
+        }
+    } else {
+        crate::open_with_clean_env(&web_url).map_err(|e| format!("failed to open URL: {e}"))?;
+    }
+
+    Ok(())
+}
+
+/// Resolve a local mount path to its SharePoint `webUrl`.
+///
+/// Finds the mount containing the path, strips the mount prefix, walks path
+/// components through the cache hierarchy (memory → SQLite → Graph API), and
+/// returns the item's web URL. Falls back to `graph.get_item()` if the cached
+/// item has no `web_url` (e.g. cached before the field was added).
+pub async fn resolve_web_url(state: &AppState, local_path: &str) -> Result<String, String> {
+    let path = std::path::Path::new(local_path);
+
+    // Find which mount this path belongs to
+    let (drive_id, mount_point) = {
+        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+        config
+            .mounts
+            .iter()
+            .filter_map(|m| {
+                let expanded = expand_mount_point(&m.mount_point);
+                let drive_id = m.drive_id.as_ref()?;
+                if path.starts_with(&expanded) {
+                    Some((drive_id.clone(), expanded))
+                } else {
+                    None
+                }
+            })
+            .next()
+            .ok_or_else(|| format!("path is not inside any CloudMount mount: {local_path}"))?
+    };
+
+    let (cache, inodes) = {
+        let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+        let (c, i, _) = caches
+            .get(&drive_id)
+            .ok_or_else(|| format!("no active cache for drive '{drive_id}'"))?;
+        (c.clone(), i.clone())
+    };
+
+    // Strip mount prefix and collect path components
+    let relative = path
+        .strip_prefix(&mount_point)
+        .map_err(|_| format!("failed to strip mount prefix from {local_path}"))?;
+    let components: Vec<&str> = relative
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => s.to_str(),
+            _ => None,
+        })
+        .collect();
+
+    // Walk path through cache tiers to resolve the DriveItem.
+    // This is an async reimplementation of CoreOps::resolve_path — we cannot
+    // call CoreOps directly because its find_child uses rt.block_on(), which
+    // would deadlock when called from within a tokio task.
+    let item = resolve_path_to_item(&cache, &inodes, &state.graph, &drive_id, &components).await?;
+
+    // Return web_url, fetching fresh from Graph API if not cached
+    match item.web_url {
+        Some(url) => Ok(url),
+        None => {
+            let fresh = state
+                .graph
+                .get_item(&drive_id, &item.id)
+                .await
+                .map_err(|e| format!("failed to fetch item web URL: {e}"))?;
+            fresh
+                .web_url
+                .ok_or_else(|| "item has no SharePoint URL".to_string())
+        }
+    }
+}
+
+/// Walk path components through cache tiers (memory → SQLite → Graph API).
+async fn resolve_path_to_item(
+    cache: &cloudmount_cache::CacheManager,
+    inodes: &cloudmount_vfs::inode::InodeTable,
+    graph: &cloudmount_graph::GraphClient,
+    drive_id: &str,
+    components: &[&str],
+) -> Result<DriveItem, String> {
+    use cloudmount_vfs::inode::ROOT_INODE;
+
+    if components.is_empty() {
+        return lookup_cached_item(cache, inodes, ROOT_INODE)
+            .ok_or_else(|| "root item not found in cache".to_string());
+    }
+
+    let mut current_ino = ROOT_INODE;
+    for &name in components {
+        current_ino = find_child_by_name(cache, inodes, graph, drive_id, current_ino, name).await?;
+    }
+
+    lookup_cached_item(cache, inodes, current_ino)
+        .ok_or_else(|| "resolved inode has no cached item".to_string())
+}
+
+/// Look up a [`DriveItem`] by inode from memory cache, then SQLite.
+fn lookup_cached_item(
+    cache: &cloudmount_cache::CacheManager,
+    inodes: &cloudmount_vfs::inode::InodeTable,
+    inode: u64,
+) -> Option<DriveItem> {
+    if let Some(item) = cache.memory.get(inode) {
+        return Some(item);
+    }
+    let item_id = inodes.get_item_id(inode)?;
+    if let Ok(Some((_, item))) = cache.sqlite.get_item_by_id(&item_id) {
+        cache.memory.insert(inode, item.clone());
+        return Some(item);
+    }
+    None
+}
+
+/// Find a child item by name under a parent inode.
+///
+/// Searches memory cache → SQLite → Graph API (async). Mirrors the logic in
+/// `CoreOps::find_child` but uses `.await` instead of `rt.block_on()`.
+async fn find_child_by_name(
+    cache: &cloudmount_cache::CacheManager,
+    inodes: &cloudmount_vfs::inode::InodeTable,
+    graph: &cloudmount_graph::GraphClient,
+    drive_id: &str,
+    parent_ino: u64,
+    name: &str,
+) -> Result<u64, String> {
+    // 1. Memory cache
+    if let Some(children_map) = cache.memory.get_children(parent_ino) {
+        #[cfg(not(target_os = "windows"))]
+        let child_ino = children_map.get(name).copied();
+        #[cfg(target_os = "windows")]
+        let child_ino = children_map
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, &v)| v);
+
+        if let Some(ino) = child_ino {
+            return Ok(ino);
+        }
+    }
+
+    // 2. SQLite
+    if let Ok(children) = cache.sqlite.get_children(parent_ino) {
+        for (_, item) in children {
+            #[cfg(not(target_os = "windows"))]
+            let matches = item.name == name;
+            #[cfg(target_os = "windows")]
+            let matches = item.name.eq_ignore_ascii_case(name);
+
+            if matches {
+                let ino = inodes.allocate(&item.id);
+                cache.memory.insert(ino, item);
+                return Ok(ino);
+            }
+        }
+    }
+
+    // 3. Graph API fallback
+    let parent_item_id = inodes
+        .get_item_id(parent_ino)
+        .ok_or_else(|| format!("parent inode {parent_ino} not found"))?;
+    let children = graph
+        .list_children(drive_id, &parent_item_id)
+        .await
+        .map_err(|e| format!("failed to list children: {e}"))?;
+
+    let mut children_map = std::collections::HashMap::new();
+    let mut found_ino = None;
+
+    for item in &children {
+        let child_ino = inodes.allocate(&item.id);
+        children_map.insert(item.name.clone(), child_ino);
+        cache.memory.insert(child_ino, item.clone());
+
+        #[cfg(not(target_os = "windows"))]
+        let matches = item.name == name;
+        #[cfg(target_os = "windows")]
+        let matches = item.name.eq_ignore_ascii_case(name);
+
+        if matches && found_ino.is_none() {
+            found_ino = Some(child_ino);
+        }
+    }
+
+    // Populate parent's children in memory cache
+    if let Some(parent_item) = lookup_cached_item(cache, inodes, parent_ino) {
+        cache
+            .memory
+            .insert_with_children(parent_ino, parent_item, children_map);
+    }
+
+    found_ino.ok_or_else(|| format!("'{name}' not found"))
 }
