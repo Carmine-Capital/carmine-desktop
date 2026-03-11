@@ -1,6 +1,6 @@
 {
   "productName": "CloudMount",
-  "version": "0.1.0-rc.4",
+  "version": "0.1.0-rc.5",
   "identifier": "com.cloudmount",
   "build": {
     "frontendDist": "./dist"
@@ -52,7 +52,9 @@
     "notification": null,
     "deep-link": {
       "desktop": {
-        "schemes": ["cloudmount"]
+        "schemes": [
+          "cloudmount"
+        ]
       }
     },
     "updater": {
