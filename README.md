@@ -4,7 +4,7 @@ Mount Microsoft OneDrive and SharePoint document libraries as local folders on L
 
 ## Features
 
-- **FUSE filesystem** (Linux/macOS) and **Cloud Files API** (Windows) — files appear as native local folders
+- **FUSE filesystem** (Linux/macOS) and **WinFsp** (Windows) — files appear as native local folders
 - **SharePoint support** — browse sites, select document libraries, mount as folders
 - **Multi-tier cache** — memory → SQLite → disk for fast access with offline support
 - **Write-back** — edit files locally, changes sync to cloud automatically
@@ -18,7 +18,7 @@ Mount Microsoft OneDrive and SharePoint document libraries as local folders on L
 |---|---|
 | Linux | FUSE 3 (`libfuse3-dev` on Debian/Ubuntu, `fuse3` on Fedora) |
 | macOS | [macFUSE](https://osxfuse.github.io/) |
-| Windows | Windows 10 1709+ (Cloud Files API is built-in, no driver needed) |
+| Windows | Windows 10+ — [WinFsp driver](https://winfsp.dev/) (installed automatically or download from winfsp.dev) |
 
 ## Installation
 
