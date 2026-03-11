@@ -931,7 +931,24 @@ fn start_mount_common(
     }
 
     let mountpoint = expand_mount_point(&mount_config.mount_point);
+
+    // FUSE requires the mount directory to exist; WinFsp creates it itself.
+    #[cfg(not(target_os = "windows"))]
     std::fs::create_dir_all(&mountpoint).map_err(|e| format!("create mountpoint failed: {e}"))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        // Ensure the parent directory exists (e.g. ~/Cloud/).
+        if let Some(parent) = std::path::Path::new(&mountpoint).parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create mountpoint parent failed: {e}"))?;
+        }
+        // Remove stale directory left over from CfApi migration or a previous run.
+        let mp = std::path::Path::new(&mountpoint);
+        if mp.exists() {
+            let _ = std::fs::remove_dir_all(mp);
+        }
+    }
 
     let state = app.state::<AppState>();
 
