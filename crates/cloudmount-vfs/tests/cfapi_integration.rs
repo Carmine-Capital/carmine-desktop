@@ -20,8 +20,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use cloudmount_cache::CacheManager;
 use cloudmount_graph::GraphClient;
 use cloudmount_vfs::CfMountHandle;
-use cloudmount_vfs::inode::InodeTable;
 use cloudmount_vfs::active_mount_count;
+use cloudmount_vfs::inode::InodeTable;
 
 const DRIVE_ID: &str = "test-drive";
 const ROOT_ITEM_ID: &str = "root-id";
@@ -380,8 +380,7 @@ async fn cfapi_first_mount_registers_context_menu() {
 
     let final_count = active_mount_count();
     assert_eq!(
-        final_count,
-        initial_count,
+        final_count, initial_count,
         "unmount should decrement active count"
     );
 }
