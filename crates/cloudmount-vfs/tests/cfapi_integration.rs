@@ -301,6 +301,102 @@ async fn cfapi_edit_and_sync_file() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires Windows CfApi"]
+async fn cfapi_external_copy_in_uploads_without_restart() {
+    let server = MockServer::start().await;
+    mock_root_listing(&server).await;
+
+    Mock::given(method("PUT"))
+        .and(path(format!(
+            "/drives/{DRIVE_ID}/items/{ROOT_ITEM_ID}:/copied-in.txt:/content"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(drive_item_json(
+            "new-file-1",
+            "copied-in.txt",
+            12,
+            false,
+        )))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let fixture = CfTestFixture::setup(&server).await;
+
+    let p = fixture.path("copied-in.txt");
+    tokio::task::spawn_blocking(move || std::fs::write(p, b"hello copy-in"))
+        .await
+        .unwrap()
+        .expect("copy-in write failed");
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    fixture.teardown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires Windows CfApi"]
+async fn cfapi_safe_save_reconcile_keeps_final_remote_name() {
+    let server = MockServer::start().await;
+    mock_root_listing(&server).await;
+    mock_file_download(&server, "file-1", b"Hello, world!").await;
+
+    Mock::given(method("GET"))
+        .and(path(format!("/drives/{DRIVE_ID}/items/file-1")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(drive_item_json(
+            "file-1",
+            "hello.txt",
+            13,
+            false,
+        )))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("PUT"))
+        .and(path(format!(
+            "/drives/{DRIVE_ID}/items/{ROOT_ITEM_ID}:/hello.txt:/content"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(drive_item_json(
+            "file-1",
+            "hello.txt",
+            11,
+            false,
+        )))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("PATCH"))
+        .and(path(format!("/drives/{DRIVE_ID}/items/file-1")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(drive_item_json(
+            "file-1",
+            "hello.bak",
+            13,
+            false,
+        )))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let fixture = CfTestFixture::setup(&server).await;
+    fixture.create_root_placeholders();
+
+    let p = fixture.path("hello.txt");
+    let _ = tokio::task::spawn_blocking(move || std::fs::read_to_string(p))
+        .await
+        .unwrap();
+
+    std::fs::rename(fixture.path("hello.txt"), fixture.path("hello.bak"))
+        .expect("backup rename failed");
+    std::fs::write(fixture.path("~$hello.tmp"), "New content").expect("temp write failed");
+    std::fs::rename(fixture.path("~$hello.tmp"), fixture.path("hello.txt"))
+        .expect("replace rename failed");
+
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    fixture.teardown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires Windows CfApi"]
 async fn cfapi_rename_file() {
     let server = MockServer::start().await;
     mock_root_listing(&server).await;

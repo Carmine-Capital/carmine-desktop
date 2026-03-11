@@ -1458,6 +1458,68 @@ impl CoreOps {
         Ok((fh, inode, item))
     }
 
+    /// Register a locally-created file in VFS metadata so it can be flushed via
+    /// the existing writeback/upload pipeline.
+    pub fn register_local_file(
+        &self,
+        parent_ino: u64,
+        name: &str,
+        file_size: u64,
+        modified: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> VfsResult<(u64, DriveItem)> {
+        if let Some((child_ino, child_item)) = self.find_child(parent_ino, OsStr::new(name)) {
+            return Ok((child_ino, child_item));
+        }
+
+        let parent_item_id = self
+            .inodes
+            .get_item_id(parent_ino)
+            .ok_or(VfsError::NotFound)?;
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp_item_id = format!("local:{nanos}");
+        let now = Utc::now();
+
+        let item = DriveItem {
+            id: temp_item_id.clone(),
+            name: name.to_string(),
+            size: file_size as i64,
+            last_modified: modified.or(Some(now)),
+            created: Some(now),
+            etag: None,
+            parent_reference: Some(ParentReference {
+                drive_id: Some(self.drive_id.clone()),
+                id: Some(parent_item_id),
+                path: None,
+            }),
+            folder: None,
+            file: Some(FileFacet {
+                mime_type: None,
+                hashes: None,
+            }),
+            publication: None,
+            download_url: None,
+            web_url: None,
+        };
+
+        let inode = self.inodes.allocate(&temp_item_id);
+        self.cache.memory.insert(inode, item.clone());
+        self.cache.memory.add_child(parent_ino, name, inode);
+
+        if let Err(e) =
+            self.cache
+                .sqlite
+                .upsert_item(inode, &self.drive_id, &item, Some(parent_ino))
+        {
+            tracing::warn!("register_local_file: sqlite upsert failed: {e}");
+        }
+
+        Ok((inode, item))
+    }
+
     pub fn mkdir(&self, parent_ino: u64, name: &str) -> VfsResult<(u64, DriveItem)> {
         let parent_item_id = self
             .inodes

@@ -1,9 +1,11 @@
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
+use std::time::{Duration, Instant};
 
 use cloud_filter::error::{CResult, CloudErrorKind};
 use cloud_filter::filter::{Request, SyncFilter, info, ticket};
@@ -11,8 +13,8 @@ use cloud_filter::metadata::Metadata;
 use cloud_filter::placeholder::{Placeholder, UpdateOptions};
 use cloud_filter::placeholder_file::PlaceholderFile;
 use cloud_filter::root::{
-    Connection, HydrationType, PopulationType, SecurityId, Session, SyncRootId, SyncRootIdBuilder,
-    SyncRootInfo,
+    Connection, HydrationType, PopulationType, SecurityId, Session, SupportedAttribute, SyncRootId,
+    SyncRootIdBuilder, SyncRootInfo,
 };
 use cloud_filter::utility::WriteAt;
 use nt_time::FileTime;
@@ -29,6 +31,26 @@ const PROVIDER_NAME: &str = "CloudMount";
 const PROVIDER_VERSION: &str = env!("CARGO_PKG_VERSION");
 // ticket.write_at() requires 4KiB-aligned chunks (OS restriction)
 const WRITE_CHUNK_SIZE: usize = 4096;
+const SAFE_SAVE_RECONCILE_TIMEOUT: Duration = Duration::from_secs(2);
+const DEFERRED_INGEST_TTL: Duration = Duration::from_secs(30);
+
+#[derive(Clone)]
+struct DeferredIngest {
+    first_seen: Instant,
+    attempts: u32,
+    reason: &'static str,
+}
+
+#[derive(Clone)]
+struct SafeSaveTxn {
+    source_parent_ino: u64,
+    source_name: String,
+    target_parent_ino: u64,
+    target_name: String,
+    source_path: PathBuf,
+    target_path: PathBuf,
+    created_at: Instant,
+}
 
 #[cfg(target_os = "windows")]
 static ACTIVE_CFAPI_MOUNTS: AtomicUsize = AtomicUsize::new(0);
@@ -36,6 +58,8 @@ static ACTIVE_CFAPI_MOUNTS: AtomicUsize = AtomicUsize::new(0);
 pub struct CloudMountCfFilter {
     core: CoreOps,
     mount_path: PathBuf,
+    deferred_ingest: Mutex<HashMap<PathBuf, DeferredIngest>>,
+    safe_save_txns: Mutex<Vec<SafeSaveTxn>>,
 }
 
 impl CloudMountCfFilter {
@@ -55,6 +79,8 @@ impl CloudMountCfFilter {
         Self {
             core: ops,
             mount_path,
+            deferred_ingest: Mutex::new(HashMap::new()),
+            safe_save_txns: Mutex::new(Vec::new()),
         }
     }
 
@@ -109,6 +135,387 @@ impl CloudMountCfFilter {
                     abs_path.display()
                 );
             }
+        }
+    }
+
+    fn log_ingest_outcome(&self, outcome: &str, trigger: &str, path: &Path, reason: &str) {
+        tracing::info!(
+            outcome,
+            trigger,
+            path = %path.display(),
+            reason,
+            "cfapi: local-change ingest"
+        );
+    }
+
+    fn temp_like_name(name: &str) -> bool {
+        let lower = name.to_ascii_lowercase();
+        lower.starts_with("~$")
+            || lower.ends_with('~')
+            || lower.ends_with(".tmp")
+            || lower.ends_with(".bak")
+            || lower.contains("autosave")
+    }
+
+    fn should_defer_rename(src_name: &str, dst_name: &str) -> bool {
+        Self::temp_like_name(src_name) || Self::temp_like_name(dst_name)
+    }
+
+    fn defer_ingest(&self, path: &Path, reason: &'static str) {
+        let mut deferred = self.deferred_ingest.lock().unwrap();
+        let entry = deferred
+            .entry(path.to_path_buf())
+            .or_insert(DeferredIngest {
+                first_seen: Instant::now(),
+                attempts: 0,
+                reason,
+            });
+        entry.attempts += 1;
+        entry.reason = reason;
+        self.log_ingest_outcome("deferred", "ingest", path, reason);
+    }
+
+    fn clear_deferred_ingest(&self, path: &Path) {
+        self.deferred_ingest.lock().unwrap().remove(path);
+    }
+
+    fn process_deferred_timeouts(&self) {
+        let now = Instant::now();
+        self.deferred_ingest.lock().unwrap().retain(|path, state| {
+            if now.duration_since(state.first_seen) >= DEFERRED_INGEST_TTL {
+                tracing::warn!(
+                    path = %path.display(),
+                    attempts = state.attempts,
+                    reason = state.reason,
+                    "cfapi: local ingest deferred entry expired"
+                );
+                return false;
+            }
+            true
+        });
+    }
+
+    fn process_safe_save_timeouts(&self) {
+        let mut expired = Vec::new();
+        {
+            let now = Instant::now();
+            let mut txns = self.safe_save_txns.lock().unwrap();
+            txns.retain(|txn| {
+                if now.duration_since(txn.created_at) >= SAFE_SAVE_RECONCILE_TIMEOUT {
+                    expired.push(txn.clone());
+                    return false;
+                }
+                true
+            });
+        }
+
+        for txn in expired {
+            match self.core.rename(
+                txn.source_parent_ino,
+                &txn.source_name,
+                txn.target_parent_ino,
+                &txn.target_name,
+            ) {
+                Ok(()) => tracing::info!(
+                    path = %txn.source_path.display(),
+                    target = %txn.target_path.display(),
+                    "cfapi: safe-save reconciliation timeout committed as rename"
+                ),
+                Err(e) => tracing::warn!(
+                    path = %txn.source_path.display(),
+                    target = %txn.target_path.display(),
+                    "cfapi: safe-save timeout rename commit failed: {e:?}"
+                ),
+            }
+        }
+    }
+
+    fn reconcile_safe_save_replacement(&self, source: &Path, target: &Path) -> bool {
+        let mut matched = false;
+        let mut txns = self.safe_save_txns.lock().unwrap();
+        txns.retain(|txn| {
+            let is_match = txn.source_path == target || txn.target_path == source;
+            if is_match {
+                matched = true;
+                tracing::info!(
+                    source = %source.display(),
+                    target = %target.display(),
+                    original = %txn.source_path.display(),
+                    "cfapi: safe-save transaction reconciled as content update"
+                );
+            }
+            !is_match
+        });
+        matched
+    }
+
+    fn stage_writeback_from_disk(
+        &self,
+        abs_path: &Path,
+        ino: u64,
+        item: &DriveItem,
+        trigger: &str,
+    ) -> bool {
+        let item_id = match self.core.inodes().get_item_id(ino) {
+            Some(id) => id,
+            None => {
+                self.log_ingest_outcome("skipped", trigger, abs_path, "missing_item_id");
+                return false;
+            }
+        };
+        let drive_id = self.core.drive_id();
+        let file_name = item.name.clone();
+
+        let meta = match std::fs::metadata(abs_path) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(path = %abs_path.display(), "cfapi: ingest metadata failed: {e}");
+                self.log_ingest_outcome("deferred", trigger, abs_path, "metadata_unavailable");
+                self.defer_ingest(abs_path, "metadata_unavailable");
+                return false;
+            }
+        };
+
+        if meta.is_dir() {
+            self.log_ingest_outcome("skipped", trigger, abs_path, "directory");
+            return false;
+        }
+
+        if let Some(server_mtime) = item.last_modified
+            && let Ok(file_sys_time) = meta.modified()
+        {
+            let file_mtime = chrono::DateTime::<chrono::Utc>::from(file_sys_time);
+            let diff = (file_mtime - server_mtime).num_seconds().unsigned_abs();
+            if diff < 1 && meta.len() == item.size as u64 {
+                self.log_ingest_outcome("skipped", trigger, abs_path, "unmodified");
+                return false;
+            }
+        }
+
+        if meta.len() <= SMALL_FILE_LIMIT as u64 {
+            let disk_content = match std::fs::read(abs_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!(
+                        "failed to read file for writeback {}: {e}",
+                        abs_path.display()
+                    );
+                    self.core.send_event(VfsEvent::WritebackFailed {
+                        file_name: file_name.clone(),
+                    });
+                    self.log_ingest_outcome("deferred", trigger, abs_path, "read_failed");
+                    self.defer_ingest(abs_path, "read_failed");
+                    return false;
+                }
+            };
+            if let Err(e) = block_on_compat(
+                self.core.rt(),
+                self.core
+                    .cache()
+                    .writeback
+                    .write(drive_id, &item_id, &disk_content),
+            ) {
+                tracing::error!("writeback write failed for {}: {e}", abs_path.display());
+                self.core.send_event(VfsEvent::WritebackFailed {
+                    file_name: file_name.clone(),
+                });
+                self.log_ingest_outcome("deferred", trigger, abs_path, "writeback_write_failed");
+                self.defer_ingest(abs_path, "writeback_write_failed");
+                return false;
+            }
+        } else {
+            const CHUNK_SIZE: usize = 64 * 1024;
+            use std::io::Read;
+            let file = match std::fs::File::open(abs_path) {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::error!(
+                        "failed to open file for writeback {}: {e}",
+                        abs_path.display()
+                    );
+                    self.core.send_event(VfsEvent::WritebackFailed {
+                        file_name: file_name.clone(),
+                    });
+                    self.log_ingest_outcome("deferred", trigger, abs_path, "open_failed");
+                    self.defer_ingest(abs_path, "open_failed");
+                    return false;
+                }
+            };
+            let mut reader = std::io::BufReader::with_capacity(CHUNK_SIZE, file);
+            let mut buf = vec![0u8; CHUNK_SIZE];
+            let mut offset: u64 = 0;
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if let Err(e) = block_on_compat(
+                            self.core.rt(),
+                            self.core.cache().writeback.write_chunk(
+                                drive_id,
+                                &item_id,
+                                offset,
+                                &buf[..n],
+                            ),
+                        ) {
+                            tracing::error!(
+                                "writeback chunk write failed for {}: {e}",
+                                abs_path.display()
+                            );
+                            self.core.send_event(VfsEvent::WritebackFailed {
+                                file_name: file_name.clone(),
+                            });
+                            self.log_ingest_outcome(
+                                "deferred",
+                                trigger,
+                                abs_path,
+                                "writeback_chunk_failed",
+                            );
+                            self.defer_ingest(abs_path, "writeback_chunk_failed");
+                            return false;
+                        }
+                        offset += n as u64;
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "failed to read chunk for writeback {}: {e}",
+                            abs_path.display()
+                        );
+                        self.core.send_event(VfsEvent::WritebackFailed {
+                            file_name: file_name.clone(),
+                        });
+                        self.log_ingest_outcome("deferred", trigger, abs_path, "chunk_read_failed");
+                        self.defer_ingest(abs_path, "chunk_read_failed");
+                        return false;
+                    }
+                }
+            }
+            if let Err(e) = block_on_compat(
+                self.core.rt(),
+                self.core
+                    .cache()
+                    .writeback
+                    .finish_chunked_write(drive_id, &item_id),
+            ) {
+                tracing::error!("writeback finalize failed for {}: {e}", abs_path.display());
+                self.core.send_event(VfsEvent::WritebackFailed {
+                    file_name: file_name.clone(),
+                });
+                self.log_ingest_outcome("deferred", trigger, abs_path, "writeback_finalize_failed");
+                self.defer_ingest(abs_path, "writeback_finalize_failed");
+                return false;
+            }
+        }
+
+        self.mark_placeholder_pending(abs_path);
+
+        match self.core.flush_inode(ino) {
+            Ok(()) => {
+                if let Some(updated_item) = self.core.lookup_item(ino) {
+                    self.mark_placeholder_synced(abs_path, &updated_item);
+                }
+                self.clear_deferred_ingest(abs_path);
+                self.log_ingest_outcome("enqueued", trigger, abs_path, "flushed");
+                true
+            }
+            Err(e) => {
+                tracing::error!(
+                    "flush after ingest failed for {}: {e:?}",
+                    abs_path.display()
+                );
+                self.core.send_event(VfsEvent::WritebackFailed {
+                    file_name: item.name.clone(),
+                });
+                self.defer_ingest(abs_path, "flush_failed");
+                false
+            }
+        }
+    }
+
+    fn ingest_local_change(&self, abs_path: &Path, trigger: &str) {
+        self.process_safe_save_timeouts();
+        self.process_deferred_timeouts();
+
+        let Some(components) = self.relative_components(abs_path) else {
+            self.log_ingest_outcome("skipped", trigger, abs_path, "outside_sync_root");
+            return;
+        };
+
+        if components.is_empty() {
+            self.log_ingest_outcome("skipped", trigger, abs_path, "sync_root");
+            return;
+        }
+
+        if let Some((ino, item)) = self.core.resolve_path(&components) {
+            if item.is_folder() {
+                self.log_ingest_outcome("skipped", trigger, abs_path, "folder");
+                return;
+            }
+            let _ = self.stage_writeback_from_disk(abs_path, ino, &item, trigger);
+            return;
+        }
+
+        let Some((parent_components, child_name)) = Self::resolve_parent_and_name(&components)
+        else {
+            self.defer_ingest(abs_path, "missing_parent_components");
+            return;
+        };
+
+        let Some((parent_ino, _)) = self.core.resolve_path(parent_components) else {
+            self.defer_ingest(abs_path, "parent_unresolved");
+            return;
+        };
+
+        let meta = match std::fs::metadata(abs_path) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::debug!(path = %abs_path.display(), "cfapi: ingest metadata unavailable: {e}");
+                self.defer_ingest(abs_path, "metadata_unavailable");
+                return;
+            }
+        };
+
+        if meta.is_dir() {
+            self.log_ingest_outcome("skipped", trigger, abs_path, "directory");
+            return;
+        }
+
+        let Some(name) = child_name.to_str() else {
+            self.log_ingest_outcome("skipped", trigger, abs_path, "non_utf8_name");
+            return;
+        };
+
+        let modified = meta
+            .modified()
+            .ok()
+            .map(chrono::DateTime::<chrono::Utc>::from);
+        match self
+            .core
+            .register_local_file(parent_ino, name, meta.len(), modified)
+        {
+            Ok((ino, item)) => {
+                let _ = self.stage_writeback_from_disk(abs_path, ino, &item, trigger);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %abs_path.display(),
+                    "cfapi: local ingest registration failed: {e:?}"
+                );
+                self.defer_ingest(abs_path, "register_local_file_failed");
+            }
+        }
+    }
+
+    fn retry_deferred_ingest(&self) {
+        let pending: Vec<PathBuf> = self
+            .deferred_ingest
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        for path in pending {
+            self.log_ingest_outcome("retried", "state_changed", &path, "deferred_retry");
+            self.ingest_local_change(&path, "state_changed_retry");
         }
     }
 }
@@ -252,170 +659,30 @@ impl SyncFilter for CloudMountCfFilter {
     }
 
     fn closed(&self, request: Request, info: info::Closed) {
-        use crate::core_ops::VfsEvent;
-
+        self.process_safe_save_timeouts();
+        self.process_deferred_timeouts();
         if info.deleted() {
+            tracing::debug!(path = %request.path().display(), "cfapi: closed guard skipped deleted file");
             return;
         }
 
         let abs_path = request.path();
         let Some(components) = self.relative_components(&abs_path) else {
+            tracing::warn!(path = %abs_path.display(), "cfapi: closed guard skipped outside sync root");
             return;
         };
         let Some((ino, item)) = self.core.resolve_path(&components) else {
+            tracing::warn!(path = %abs_path.display(), "cfapi: closed unresolved path, handing off to local-change ingest");
+            self.ingest_local_change(&abs_path, "closed_unresolved");
             return;
         };
 
         if item.is_folder() {
+            tracing::debug!(path = %abs_path.display(), "cfapi: closed guard skipped folder");
             return;
         }
 
-        let item_id = match self.core.inodes().get_item_id(ino) {
-            Some(id) => id,
-            None => return,
-        };
-
-        let drive_id = self.core.drive_id();
-        let file_name = item.name.clone();
-
-        // Retrieve server-side last-modified timestamp for the unmodified-file guard below.
-        let server_mtime: Option<chrono::DateTime<chrono::Utc>> = item.last_modified;
-
-        // For large files, use chunked reading to avoid loading everything into memory.
-        // SMALL_FILE_LIMIT (4MB) is the same threshold used for simple vs session upload.
-        let meta = match std::fs::metadata(&abs_path) {
-            Ok(m) => m,
-            Err(_) => return,
-        };
-        let file_size = meta.len();
-
-        // Guard: skip writeback when the file has not been modified since last sync.
-        // Compare file Last Write Time against the server's lastModifiedDateTime (set
-        // during placeholder creation via mark_placeholder_synced). A read-only open
-        // does NOT change the Last Write Time, so this correctly skips unmodified opens.
-        // Use 1-second tolerance to absorb FAT32/NTFS sub-second rounding differences.
-        if let Some(server_mtime) = server_mtime
-            && let Ok(file_sys_time) = meta.modified()
-        {
-            let file_mtime = chrono::DateTime::<chrono::Utc>::from(file_sys_time);
-            let diff = (file_mtime - server_mtime).num_seconds().unsigned_abs();
-            if diff < 1 {
-                tracing::debug!(
-                    path = %abs_path.display(),
-                    "cfapi: closed skipping unmodified file"
-                );
-                return;
-            }
-            // If meta.modified() is Err, fall through (conservative: assume modified)
-        }
-        // If server_mtime is None, fall through (conservative: assume modified)
-
-        if file_size <= SMALL_FILE_LIMIT as u64 {
-            let disk_content = match std::fs::read(&abs_path) {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::error!(
-                        "failed to read file for writeback {}: {e}",
-                        abs_path.display()
-                    );
-                    self.core
-                        .send_event(VfsEvent::WritebackFailed { file_name });
-                    return;
-                }
-            };
-            if let Err(e) = block_on_compat(
-                self.core.rt(),
-                self.core
-                    .cache()
-                    .writeback
-                    .write(drive_id, &item_id, &disk_content),
-            ) {
-                tracing::error!("writeback write failed for {}: {e}", abs_path.display());
-                self.core
-                    .send_event(VfsEvent::WritebackFailed { file_name });
-                return;
-            }
-        } else {
-            const CHUNK_SIZE: usize = 64 * 1024; // 64 KiB
-            use std::io::Read;
-            let file = match std::fs::File::open(&abs_path) {
-                Ok(f) => f,
-                Err(e) => {
-                    tracing::error!(
-                        "failed to open file for writeback {}: {e}",
-                        abs_path.display()
-                    );
-                    self.core
-                        .send_event(VfsEvent::WritebackFailed { file_name });
-                    return;
-                }
-            };
-            let mut reader = std::io::BufReader::with_capacity(CHUNK_SIZE, file);
-            let mut buf = vec![0u8; CHUNK_SIZE];
-            let mut offset: u64 = 0;
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if let Err(e) = block_on_compat(
-                            self.core.rt(),
-                            self.core.cache().writeback.write_chunk(
-                                drive_id,
-                                &item_id,
-                                offset,
-                                &buf[..n],
-                            ),
-                        ) {
-                            tracing::error!(
-                                "writeback chunk write failed for {}: {e}",
-                                abs_path.display()
-                            );
-                            self.core
-                                .send_event(VfsEvent::WritebackFailed { file_name });
-                            return;
-                        }
-                        offset += n as u64;
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "failed to read chunk for writeback {}: {e}",
-                            abs_path.display()
-                        );
-                        self.core
-                            .send_event(VfsEvent::WritebackFailed { file_name });
-                        return;
-                    }
-                }
-            }
-            if let Err(e) = block_on_compat(
-                self.core.rt(),
-                self.core
-                    .cache()
-                    .writeback
-                    .finish_chunked_write(drive_id, &item_id),
-            ) {
-                tracing::error!("writeback finalize failed for {}: {e}", abs_path.display());
-                self.core
-                    .send_event(VfsEvent::WritebackFailed { file_name });
-                return;
-            }
-        }
-
-        self.mark_placeholder_pending(&abs_path);
-
-        match self.core.flush_inode(ino) {
-            Ok(()) => {
-                if let Some(updated_item) = self.core.lookup_item(ino) {
-                    self.mark_placeholder_synced(&abs_path, &updated_item);
-                }
-            }
-            Err(e) => {
-                tracing::error!("flush after close failed for {}: {e:?}", abs_path.display());
-                self.core.send_event(VfsEvent::WritebackFailed {
-                    file_name: file_name.clone(),
-                });
-            }
-        }
+        let _ = self.stage_writeback_from_disk(&abs_path, ino, &item, "closed");
     }
 
     fn dehydrate(
@@ -493,6 +760,9 @@ impl SyncFilter for CloudMountCfFilter {
     }
 
     fn rename(&self, request: Request, ticket: ticket::Rename, info: info::Rename) -> CResult<()> {
+        self.process_safe_save_timeouts();
+        self.process_deferred_timeouts();
+
         let abs_path = request.path();
         let src_components = self
             .relative_components(&abs_path)
@@ -530,6 +800,44 @@ impl SyncFilter for CloudMountCfFilter {
             return Ok(());
         };
 
+        if self.reconcile_safe_save_replacement(&abs_path, &target_path) {
+            if let Err(e) = ticket.pass() {
+                tracing::warn!(
+                    path = %abs_path.display(),
+                    target = %target_path.display(),
+                    "cfapi: rename safe-save replacement ticket.pass() failed: {e:?}"
+                );
+            }
+            self.ingest_local_change(&target_path, "rename_safe_save_reconcile");
+            return Ok(());
+        }
+
+        if Self::should_defer_rename(src_name, dst_name) {
+            let txn = SafeSaveTxn {
+                source_parent_ino: src_parent_ino,
+                source_name: src_name.to_string(),
+                target_parent_ino: dst_parent_ino,
+                target_name: dst_name.to_string(),
+                source_path: abs_path.clone(),
+                target_path: target_path.clone(),
+                created_at: Instant::now(),
+            };
+            self.safe_save_txns.lock().unwrap().push(txn);
+            tracing::info!(
+                source = %abs_path.display(),
+                target = %target_path.display(),
+                "cfapi: safe-save rename deferred for reconciliation"
+            );
+            if let Err(e) = ticket.pass() {
+                tracing::warn!(
+                    path = %abs_path.display(),
+                    target = %target_path.display(),
+                    "cfapi: rename deferred ticket.pass() failed: {e:?}"
+                );
+            }
+            return Ok(());
+        }
+
         match self
             .core
             .rename(src_parent_ino, src_name, dst_parent_ino, dst_name)
@@ -557,22 +865,34 @@ impl SyncFilter for CloudMountCfFilter {
     fn state_changed(&self, changes: Vec<PathBuf>) {
         for path in &changes {
             tracing::debug!("state changed: {}", path.display());
-            if let Some(components) = self.relative_components(path)
-                && let Some((ino, _)) = self.core.resolve_path(&components)
-            {
-                self.core.cache().memory.invalidate(ino);
+            if let Some(components) = self.relative_components(path) {
+                if let Some((ino, _)) = self.core.resolve_path(&components) {
+                    self.core.cache().memory.invalidate(ino);
 
-                // Invalidate parent directory so list_children returns fresh results.
-                // Skip only when the sync root itself changed (components is empty);
-                // for files at the root level, resolve_path(&[]) yields ROOT_INODE.
-                if !components.is_empty() {
-                    let parent_components = &components[..components.len() - 1];
-                    if let Some((parent_ino, _)) = self.core.resolve_path(parent_components) {
-                        self.core.cache().memory.invalidate(parent_ino);
+                    if !components.is_empty() {
+                        let parent_components = &components[..components.len() - 1];
+                        if let Some((parent_ino, _)) = self.core.resolve_path(parent_components) {
+                            self.core.cache().memory.invalidate(parent_ino);
+                        }
                     }
+                } else {
+                    tracing::warn!(
+                        path = %path.display(),
+                        "cfapi: state_changed unresolved path, attempting best-effort ingest"
+                    );
                 }
+
+                if !components.is_empty() {
+                    self.ingest_local_change(path, "state_changed");
+                }
+            } else {
+                tracing::warn!(
+                    path = %path.display(),
+                    "cfapi: state_changed ignored path outside sync root"
+                );
             }
         }
+        self.retry_deferred_ingest();
     }
 }
 
@@ -858,6 +1178,12 @@ fn register_sync_root(
         .with_icon(icon_path)
         .with_hydration_type(HydrationType::Progressive)
         .with_population_type(PopulationType::Full)
+        .with_supported_attribute(
+            SupportedAttribute::FileLastWriteTime
+                | SupportedAttribute::DirectoryLastWriteTime
+                | SupportedAttribute::FileCreationTime
+                | SupportedAttribute::DirectoryCreationTime,
+        )
         .with_allow_pinning(true)
         .with_show_siblings_as_group(false)
         .with_path(mount_path)

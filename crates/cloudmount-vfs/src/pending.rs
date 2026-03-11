@@ -226,3 +226,52 @@ pub async fn recover_pending_writes(
 
     recovered
 }
+
+/// Retry pending uploads for a specific mounted drive during normal runtime.
+///
+/// Returns number of successful uploads in this pass.
+pub async fn retry_pending_writes_for_drive(
+    cache: &CacheManager,
+    graph: &GraphClient,
+    drive_id: &str,
+    label: &str,
+) -> usize {
+    let pending = match cache.writeback.list_pending().await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("{label}: failed to list pending writes: {e}");
+            return 0;
+        }
+    };
+
+    let drive_pending: Vec<_> = pending
+        .into_iter()
+        .filter(|(d, item)| d == drive_id && !item.starts_with("local:"))
+        .collect();
+
+    if drive_pending.is_empty() {
+        return 0;
+    }
+
+    let mut uploaded = 0usize;
+    for (pending_drive_id, item_id) in &drive_pending {
+        if recover_single(cache, graph, pending_drive_id, item_id, None, label).await {
+            uploaded += 1;
+            tracing::info!(
+                label,
+                drive_id = pending_drive_id,
+                item_id,
+                "pending write retried successfully"
+            );
+        } else {
+            tracing::warn!(
+                label,
+                drive_id = pending_drive_id,
+                item_id,
+                "pending write retry failed, will retry again"
+            );
+        }
+    }
+
+    uploaded
+}

@@ -3,6 +3,7 @@ pub mod inode;
 pub(crate) mod pending;
 
 pub use pending::recover_pending_writes;
+pub use pending::retry_pending_writes_for_drive;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod fuse_fs;

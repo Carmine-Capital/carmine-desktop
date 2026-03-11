@@ -1123,6 +1123,10 @@ fn start_delta_sync(app: &tauri::AppHandle) {
 
     let graph = state.graph.clone();
     let app_handle = app.clone();
+    let retry_graph = state.graph.clone();
+    let retry_app_handle = app.clone();
+    let delta_cancel = cancel.clone();
+    let retry_cancel = cancel.clone();
 
     tauri::async_runtime::spawn(async move {
         // Tracks drives that already sent a 403 notification to avoid spam.
@@ -1256,8 +1260,39 @@ fn start_delta_sync(app: &tauri::AppHandle) {
 
             let wait = std::time::Duration::from_secs(interval);
             tokio::select! {
-                _ = cancel.cancelled() => break,
+                _ = delta_cancel.cancelled() => break,
                 _ = tokio::time::sleep(wait) => {}
+            }
+        }
+    });
+
+    tauri::async_runtime::spawn(async move {
+        let retry_interval = std::time::Duration::from_secs(15);
+
+        loop {
+            let snapshot: Vec<(String, Arc<CacheManager>)> = {
+                use tauri::Manager;
+                let state = retry_app_handle.state::<AppState>();
+                let caches = state.mount_caches.lock().unwrap();
+                caches
+                    .iter()
+                    .map(|(drive_id, (cache, _, _))| (drive_id.clone(), cache.clone()))
+                    .collect()
+            };
+
+            for (drive_id, cache) in &snapshot {
+                let _ = cloudmount_vfs::retry_pending_writes_for_drive(
+                    cache,
+                    &retry_graph,
+                    drive_id,
+                    "mounted retry",
+                )
+                .await;
+            }
+
+            tokio::select! {
+                _ = retry_cancel.cancelled() => break,
+                _ = tokio::time::sleep(retry_interval) => {}
             }
         }
     });
