@@ -914,16 +914,19 @@ impl SyncFilter for CloudMountCfFilter {
     }
 }
 
-/// Delegate `SyncFilter` to `Arc<CloudMountCfFilter>` so we can pass a pre-wrapped
-/// `Arc` into `Session::connect()` while retaining a clone for watcher/timer threads.
-impl SyncFilter for Arc<CloudMountCfFilter> {
+/// Newtype wrapper to implement `SyncFilter` for `Arc<CloudMountCfFilter>`.
+/// Required because the orphan rule prevents implementing a foreign trait
+/// (`SyncFilter` from cloud_filter) for a foreign type (`Arc` from std).
+struct FilterWrapper(Arc<CloudMountCfFilter>);
+
+impl SyncFilter for FilterWrapper {
     fn fetch_data(
         &self,
         request: Request,
         ticket: ticket::FetchData,
         info: info::FetchData,
     ) -> CResult<()> {
-        (**self).fetch_data(request, ticket, info)
+        self.0.fetch_data(request, ticket, info)
     }
 
     fn fetch_placeholders(
@@ -932,11 +935,11 @@ impl SyncFilter for Arc<CloudMountCfFilter> {
         ticket: ticket::FetchPlaceholders,
         info: info::FetchPlaceholders,
     ) -> CResult<()> {
-        (**self).fetch_placeholders(request, ticket, info)
+        self.0.fetch_placeholders(request, ticket, info)
     }
 
     fn closed(&self, request: Request, info: info::Closed) {
-        (**self).closed(request, info)
+        self.0.closed(request, info)
     }
 
     fn dehydrate(
@@ -945,19 +948,19 @@ impl SyncFilter for Arc<CloudMountCfFilter> {
         ticket: ticket::Dehydrate,
         info: info::Dehydrate,
     ) -> CResult<()> {
-        (**self).dehydrate(request, ticket, info)
+        self.0.dehydrate(request, ticket, info)
     }
 
     fn delete(&self, request: Request, ticket: ticket::Delete, info: info::Delete) -> CResult<()> {
-        (**self).delete(request, ticket, info)
+        self.0.delete(request, ticket, info)
     }
 
     fn rename(&self, request: Request, ticket: ticket::Rename, info: info::Rename) -> CResult<()> {
-        (**self).rename(request, ticket, info)
+        self.0.rename(request, ticket, info)
     }
 
     fn state_changed(&self, changes: Vec<PathBuf>) {
-        (**self).state_changed(changes)
+        self.0.state_changed(changes)
     }
 }
 
@@ -1487,7 +1490,7 @@ pub fn spawn_periodic_timer(
 
 pub struct CfMountHandle {
     /// Must be dropped before `sync_root_id` is unregistered. See `unmount()`.
-    connection: Connection<Arc<CloudMountCfFilter>>,
+    connection: Connection<FilterWrapper>,
     sync_root_id: SyncRootId,
     cache: Arc<CacheManager>,
     graph: Arc<GraphClient>,
@@ -1568,7 +1571,7 @@ impl CfMountHandle {
         // process timeouts.
         let filter_for_threads = filter.clone();
 
-        let connection = Session::new().connect(mount_path, filter).map_err(|e| {
+        let connection = Session::new().connect(mount_path, FilterWrapper(filter)).map_err(|e| {
             cloudmount_core::Error::Filesystem(format!("CfApi connect failed: {e:?}"))
         })?;
 
