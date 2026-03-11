@@ -3,7 +3,7 @@
 //! Implements the WinFsp `FileSystemContext` trait by delegating all filesystem
 //! operations to [`CoreOps`], mirroring the FUSE backend pattern in `fuse_fs.rs`.
 
-use std::ffi::{c_void, OsString};
+use std::ffi::{OsString, c_void};
 use std::os::windows::ffi::OsStringExt;
 use std::sync::Arc;
 
@@ -15,18 +15,18 @@ use windows_sys::Win32::Foundation::{
     STATUS_OBJECT_NAME_NOT_FOUND,
 };
 use windows_sys::Win32::Storage::FileSystem::FILE_ACCESS_RIGHTS;
+use winfsp::U16CStr;
 use winfsp::filesystem::{
     DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo, VolumeInfo,
     WideNameInfo,
 };
 use winfsp::host::{FileSystemHost, VolumeParams};
-use winfsp::U16CStr;
 
 use crate::core_ops::{CoreOps, OpenFileTable, VfsError, VfsEvent};
 use crate::inode::{InodeTable, ROOT_INODE};
 use cloudmount_cache::CacheManager;
-use cloudmount_core::types::DriveItem;
 use cloudmount_core::DeltaSyncObserver;
+use cloudmount_core::types::DriveItem;
 use cloudmount_graph::GraphClient;
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -321,6 +321,14 @@ impl FileSystemContext for CloudMountWinFsp {
             Some(handle)
         };
 
+        // Re-fetch item after open_file() which may have refreshed the memory
+        // cache with fresh server metadata. Using the stale pre-refresh `item`
+        // would produce incorrect timestamps in the returned FileInfo.
+        let fresh_item = self
+            .ops
+            .lookup_item(ino)
+            .ok_or(winfsp::FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND))?;
+
         // Determine file size: prefer open handle size for consistency.
         let handle_size = if !is_dir {
             self.open_files.get_content_size_by_ino(ino)
@@ -328,7 +336,7 @@ impl FileSystemContext for CloudMountWinFsp {
             None
         };
 
-        let fi = item_to_file_info(&item, handle_size);
+        let fi = item_to_file_info(&fresh_item, handle_size);
         *file_info.as_mut() = fi;
 
         Ok(WinFspFileContext { ino, fh, is_dir })
@@ -717,6 +725,44 @@ impl FileSystemContext for CloudMountWinFsp {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // 5.5  flush
+    // ──────────────────────────────────────────────────────────────────────
+
+    fn flush(&self, context: &Self::FileContext, file_info: &mut FileInfo) -> winfsp::Result<()> {
+        let fh = match context.fh {
+            Some(fh) => fh,
+            None => return Ok(()), // directories — nothing to flush
+        };
+
+        match self.ops.flush_handle(fh) {
+            Ok(()) => {
+                // Update FileInfo with fresh metadata after successful flush.
+                let item = self
+                    .ops
+                    .lookup_item(context.ino)
+                    .ok_or(winfsp::FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND))?;
+                let handle_size = self.open_files.get_content_size_by_ino(context.ino);
+                *file_info = item_to_file_info(&item, handle_size);
+                Ok(())
+            }
+            Err(e) => {
+                let file_name = self
+                    .ops
+                    .lookup_item(context.ino)
+                    .map(|i| i.name)
+                    .unwrap_or_default();
+                if !file_name.is_empty() {
+                    self.ops.send_event(VfsEvent::UploadFailed {
+                        file_name,
+                        reason: format!("{e:?}"),
+                    });
+                }
+                Err(vfs_err_to_ntstatus(e))
             }
         }
     }

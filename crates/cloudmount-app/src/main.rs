@@ -315,10 +315,7 @@ fn preflight_checks() -> Result<(), String> {
             // WinFsp registers under SOFTWARE\WinFsp on native-bitness installs,
             // but under SOFTWARE\WOW6432Node\WinFsp when the 32-bit installer
             // is used on 64-bit Windows. Check both.
-            let reg_keys = [
-                r"HKLM\SOFTWARE\WinFsp",
-                r"HKLM\SOFTWARE\WOW6432Node\WinFsp",
-            ];
+            let reg_keys = [r"HKLM\SOFTWARE\WinFsp", r"HKLM\SOFTWARE\WOW6432Node\WinFsp"];
             for key in reg_keys {
                 let output = std::process::Command::new("reg")
                     .args(["query", key, "/v", "InstallDir"])

@@ -340,6 +340,25 @@ pub enum VfsEvent {
     FileLocked { file_name: String },
 }
 
+/// Check if a filename matches known transient file patterns that should not
+/// be uploaded to the server.
+///
+/// These files are meaningful only locally (Office lock files, Windows/macOS
+/// system metadata, etc.). The check is a pure function of the filename.
+pub fn is_transient_file(name: &str) -> bool {
+    // Office lock files: ~$Book1.xlsx, ~$Report.docx
+    if name.starts_with("~$") {
+        return true;
+    }
+    // Office temp files: ~WRS0001.tmp, ~DF1234.tmp
+    if name.starts_with('~') && name.to_ascii_lowercase().ends_with(".tmp") {
+        return true;
+    }
+    // Windows/macOS system files (case-insensitive for cross-platform compat)
+    let lower = name.to_ascii_lowercase();
+    matches!(lower.as_str(), "thumbs.db" | "desktop.ini" | ".ds_store")
+}
+
 /// Generate a conflict filename that preserves the original extension.
 ///
 /// `report.docx` → `report.conflict.1741...docx`
@@ -909,6 +928,15 @@ impl CoreOps {
             Some(item) => item,
             None => return Err(VfsError::IoError("item metadata not found".to_string())),
         };
+
+        // Skip upload for transient files (Office lock files, system metadata, etc.)
+        if is_transient_file(&item.name) {
+            tracing::debug!(ino, name = %item.name, "skipping upload for transient file");
+            let _ = self
+                .rt
+                .block_on(self.cache.writeback.remove(&self.drive_id, &item_id));
+            return Ok(());
+        }
 
         let parent_id = item
             .parent_reference
