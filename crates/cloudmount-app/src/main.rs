@@ -312,22 +312,33 @@ fn preflight_checks() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let winfsp_installed = (|| -> bool {
-            let output = std::process::Command::new("reg")
-                .args(["query", r"HKLM\SOFTWARE\WinFsp", "/v", "InstallDir"])
-                .output()
-                .ok();
-            let Some(output) = output else { return false };
-            if !output.status.success() {
-                return false;
-            }
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                if let Some(idx) = line.find("REG_SZ") {
-                    let install_dir = line[idx + "REG_SZ".len()..].trim();
-                    let dll_path = std::path::Path::new(install_dir)
-                        .join("bin")
-                        .join("winfsp-x64.dll");
-                    return dll_path.exists();
+            // WinFsp registers under SOFTWARE\WinFsp on native-bitness installs,
+            // but under SOFTWARE\WOW6432Node\WinFsp when the 32-bit installer
+            // is used on 64-bit Windows. Check both.
+            let reg_keys = [
+                r"HKLM\SOFTWARE\WinFsp",
+                r"HKLM\SOFTWARE\WOW6432Node\WinFsp",
+            ];
+            for key in reg_keys {
+                let output = std::process::Command::new("reg")
+                    .args(["query", key, "/v", "InstallDir"])
+                    .output()
+                    .ok();
+                let Some(output) = output else { continue };
+                if !output.status.success() {
+                    continue;
+                }
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    if let Some(idx) = line.find("REG_SZ") {
+                        let install_dir = line[idx + "REG_SZ".len()..].trim();
+                        let dll_path = std::path::Path::new(install_dir)
+                            .join("bin")
+                            .join("winfsp-x64.dll");
+                        if dll_path.exists() {
+                            return true;
+                        }
+                    }
                 }
             }
             false
