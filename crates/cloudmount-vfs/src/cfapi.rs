@@ -798,7 +798,9 @@ fn unregister_context_menu() -> cloudmount_core::Result<()> {
 #[cfg(target_os = "windows")]
 fn on_mount_added() {
     let prev = ACTIVE_CFAPI_MOUNTS.fetch_add(1, Ordering::SeqCst);
-    if prev == 0 && let Err(e) = register_context_menu() {
+    if prev == 0
+        && let Err(e) = register_context_menu()
+    {
         tracing::error!("failed to register context menu on first mount: {e}");
     }
 }
@@ -806,7 +808,9 @@ fn on_mount_added() {
 #[cfg(target_os = "windows")]
 fn on_mount_removed() {
     let prev = ACTIVE_CFAPI_MOUNTS.fetch_sub(1, Ordering::SeqCst);
-    if prev == 1 && let Err(e) = unregister_context_menu() {
+    if prev == 1
+        && let Err(e) = unregister_context_menu()
+    {
         tracing::error!("failed to unregister context menu on last mount: {e}");
     }
 }
