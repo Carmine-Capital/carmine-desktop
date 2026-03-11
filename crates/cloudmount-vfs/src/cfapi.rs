@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -1293,10 +1293,34 @@ pub fn spawn_local_watcher(
     mount_path: PathBuf,
     filter: Arc<CloudMountCfFilter>,
     stop_flag: Arc<AtomicBool>,
+    thread_handle_out: Arc<AtomicIsize>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::Builder::new()
         .name("cfapi-local-watcher".into())
         .spawn(move || {
+            // Store a duplicated handle to this thread so that unmount() can
+            // call CancelSynchronousIo to break out of the blocking
+            // ReadDirectoryChangesW call.
+            unsafe {
+                use windows_sys::Win32::Foundation::DuplicateHandle;
+                use windows_sys::Win32::System::Threading::{
+                    GetCurrentProcess, GetCurrentThread,
+                };
+                let process = GetCurrentProcess();
+                let mut real_handle: isize = 0;
+                if DuplicateHandle(
+                    process,
+                    GetCurrentThread(),
+                    process,
+                    &mut real_handle,
+                    0,
+                    0,
+                    2, // DUPLICATE_SAME_ACCESS
+                ) != 0
+                {
+                    thread_handle_out.store(real_handle, Ordering::Release);
+                }
+            }
             local_watcher_loop(&mount_path, &filter, &stop_flag);
         })
         .expect("failed to spawn local watcher thread")
@@ -1499,6 +1523,10 @@ pub struct CfMountHandle {
     mount_path: PathBuf,
     stop_flag: Arc<AtomicBool>,
     watcher_handle: Option<std::thread::JoinHandle<()>>,
+    /// Duplicated native Windows thread handle for the watcher thread.
+    /// Used to call `CancelSynchronousIo` during unmount so the blocking
+    /// `ReadDirectoryChangesW` call can be interrupted.
+    watcher_thread_handle: Arc<AtomicIsize>,
     timer_handle: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -1571,15 +1599,19 @@ impl CfMountHandle {
         // process timeouts.
         let filter_for_threads = filter.clone();
 
-        let connection = Session::new().connect(mount_path, FilterWrapper(filter)).map_err(|e| {
-            cloudmount_core::Error::Filesystem(format!("CfApi connect failed: {e:?}"))
-        })?;
+        let connection = Session::new()
+            .connect(mount_path, FilterWrapper(filter))
+            .map_err(|e| {
+                cloudmount_core::Error::Filesystem(format!("CfApi connect failed: {e:?}"))
+            })?;
 
         let stop_flag = Arc::new(AtomicBool::new(false));
+        let watcher_thread_handle = Arc::new(AtomicIsize::new(0));
         let watcher_handle = Some(spawn_local_watcher(
             mount_path.to_path_buf(),
             filter_for_threads.clone(),
             stop_flag.clone(),
+            watcher_thread_handle.clone(),
         ));
         let timer_handle = Some(spawn_periodic_timer(filter_for_threads, stop_flag.clone()));
 
@@ -1597,6 +1629,7 @@ impl CfMountHandle {
             mount_path: mount_path.to_path_buf(),
             stop_flag,
             watcher_handle,
+            watcher_thread_handle,
             timer_handle,
         })
     }
@@ -1622,11 +1655,30 @@ impl CfMountHandle {
         // Signal watcher and timer threads to stop, then join them before
         // disconnecting from the CfApi (which happens when Connection drops).
         self.stop_flag.store(true, Ordering::Relaxed);
+
+        // The watcher thread may be blocked inside a synchronous
+        // ReadDirectoryChangesW call. CancelSynchronousIo interrupts it so
+        // the thread can observe the stop_flag and exit.
+        let watcher_native = self.watcher_thread_handle.load(Ordering::Acquire);
+        if watcher_native != 0 {
+            unsafe {
+                windows_sys::Win32::System::IO::CancelSynchronousIo(watcher_native);
+            }
+        }
+
         if let Some(h) = self.watcher_handle.take() {
             if let Err(e) = h.join() {
                 tracing::warn!("cfapi watcher thread panicked: {e:?}");
             }
         }
+
+        // Close the duplicated thread handle now that the thread has exited.
+        if watcher_native != 0 {
+            unsafe {
+                windows_sys::Win32::Foundation::CloseHandle(watcher_native);
+            }
+        }
+
         if let Some(h) = self.timer_handle.take() {
             if let Err(e) = h.join() {
                 tracing::warn!("cfapi timer thread panicked: {e:?}");
