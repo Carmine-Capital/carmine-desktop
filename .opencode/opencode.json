@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "read": {
+      "/var/home/nyxa/Projets/CloudMount/cloud-mount/.opencode/get-shit-done/*": "allow"
+    },
+    "external_directory": {
+      "/var/home/nyxa/Projets/CloudMount/cloud-mount/.opencode/get-shit-done/*": "allow"
+    }
+  }
+}
