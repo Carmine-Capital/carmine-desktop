@@ -1302,12 +1302,12 @@ pub fn spawn_local_watcher(
             // call CancelSynchronousIo to break out of the blocking
             // ReadDirectoryChangesW call.
             unsafe {
-                use windows_sys::Win32::Foundation::DuplicateHandle;
+                use windows_sys::Win32::Foundation::{DuplicateHandle, HANDLE};
                 use windows_sys::Win32::System::Threading::{
                     GetCurrentProcess, GetCurrentThread,
                 };
                 let process = GetCurrentProcess();
-                let mut real_handle: isize = 0;
+                let mut real_handle: HANDLE = 0;
                 if DuplicateHandle(
                     process,
                     GetCurrentThread(),
@@ -1318,7 +1318,7 @@ pub fn spawn_local_watcher(
                     2, // DUPLICATE_SAME_ACCESS
                 ) != 0
                 {
-                    thread_handle_out.store(real_handle, Ordering::Release);
+                    thread_handle_out.store(real_handle as isize, Ordering::Release);
                 }
             }
             local_watcher_loop(&mount_path, &filter, &stop_flag);
@@ -1662,7 +1662,7 @@ impl CfMountHandle {
         let watcher_native = self.watcher_thread_handle.load(Ordering::Acquire);
         if watcher_native != 0 {
             unsafe {
-                windows_sys::Win32::System::IO::CancelSynchronousIo(watcher_native);
+                windows_sys::Win32::System::IO::CancelSynchronousIo(watcher_native as *mut _);
             }
         }
 
@@ -1675,7 +1675,7 @@ impl CfMountHandle {
         // Close the duplicated thread handle now that the thread has exited.
         if watcher_native != 0 {
             unsafe {
-                windows_sys::Win32::Foundation::CloseHandle(watcher_native);
+                windows_sys::Win32::Foundation::CloseHandle(watcher_native as *mut _);
             }
         }
 
