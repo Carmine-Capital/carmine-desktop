@@ -76,8 +76,9 @@ aes-gcm = { version = "0.10.3", features = ["zeroize"] }
 argon2 = { version = "0.5.3", default-features = false, features = ["alloc", "zeroize"] }
 zeroize = { version = "1.8.2", features = ["derive"] }
 
-# Windows Cloud Files API (virtual filesystem)
-cloud-filter = "0.0.6"
+# WinFsp filesystem driver (Windows virtual filesystem)
+winfsp = "0.12"
+winfsp-sys = "0.2"
 nt-time = { version = "0.8", features = ["chrono"] }
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_SystemInformation", "Win32_System_LibraryLoader"] }
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }

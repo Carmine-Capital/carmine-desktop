@@ -215,7 +215,7 @@ pub struct AppState {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub mounts: Mutex<HashMap<String, MountHandle>>,
     #[cfg(target_os = "windows")]
-    pub mounts: Mutex<HashMap<String, cloudmount_vfs::CfMountHandle>>,
+    pub mounts: Mutex<HashMap<String, cloudmount_vfs::WinFspMountHandle>>,
     pub sync_cancel: Mutex<Option<CancellationToken>>,
     pub active_sign_in: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub authenticated: AtomicBool,
@@ -264,44 +264,6 @@ pub(crate) fn fuse_available() -> bool {
     }
 }
 
-/// Checks that the Windows version meets the Cloud Files API minimum (10.0.16299).
-/// Extracted for testability — callers can pass a custom minimum version.
-#[cfg(target_os = "windows")]
-fn cfapi_version_meets(min_major: u32, min_minor: u32, min_build: u32) -> bool {
-    use std::mem;
-    use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
-    use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
-    use windows::core::{s, w};
-
-    // VerifyVersionInfoW lies about the OS version on Windows 10+ unless the binary
-    // carries a Windows 10 compatibility manifest (test runners and generic builds
-    // do not). RtlGetVersion from ntdll bypasses this and returns the true version.
-    type RtlGetVersionFn = unsafe extern "system" fn(*mut OSVERSIONINFOW) -> i32;
-
-    let mut osvi = OSVERSIONINFOW {
-        dwOSVersionInfoSize: mem::size_of::<OSVERSIONINFOW>() as u32,
-        ..Default::default()
-    };
-
-    unsafe {
-        let ntdll = match GetModuleHandleW(w!("ntdll.dll")) {
-            Ok(h) => h,
-            Err(_) => return false,
-        };
-        let Some(proc) = GetProcAddress(ntdll, s!("RtlGetVersion")) else {
-            return false;
-        };
-        let rtl_get_version: RtlGetVersionFn = mem::transmute(proc);
-        if rtl_get_version(&mut osvi) != 0 {
-            // Non-zero NTSTATUS means failure
-            return false;
-        }
-    }
-
-    let actual = (osvi.dwMajorVersion, osvi.dwMinorVersion, osvi.dwBuildNumber);
-    actual >= (min_major, min_minor, min_build)
-}
-
 /// Show a native Win32 error dialog. Only compiled on Windows release desktop builds
 /// where `windows_subsystem = "windows"` detaches the console (making eprintln invisible).
 #[cfg(all(target_os = "windows", feature = "desktop", not(debug_assertions)))]
@@ -345,11 +307,37 @@ fn preflight_checks() -> Result<(), String> {
         tracing::warn!("FUSE not available \u{2014} install macFUSE to enable filesystem mounts");
     }
 
+    // WinFsp driver required — Windows installer should bundle or require WinFsp.
+    // See https://winfsp.dev/ for MSI installer.
     #[cfg(target_os = "windows")]
-    if !cfapi_version_meets(10, 0, 16299) {
-        return Err(
-            "Cloud Files API requires Windows 10 version 1709 (build 16299) or later".to_string(),
-        );
+    {
+        let winfsp_installed = (|| -> bool {
+            let output = std::process::Command::new("reg")
+                .args(["query", r"HKLM\SOFTWARE\WinFsp", "/v", "InstallDir"])
+                .output()
+                .ok();
+            let Some(output) = output else { return false };
+            if !output.status.success() {
+                return false;
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if let Some(idx) = line.find("REG_SZ") {
+                    let install_dir = line[idx + "REG_SZ".len()..].trim();
+                    let dll_path = std::path::Path::new(install_dir)
+                        .join("bin")
+                        .join("winfsp-x64.dll");
+                    return dll_path.exists();
+                }
+            }
+            false
+        })();
+
+        if !winfsp_installed {
+            return Err(
+                "WinFsp driver not found. Install WinFsp from https://winfsp.dev/ to enable filesystem mounts.".to_string(),
+            );
+        }
     }
 
     Ok(())
@@ -589,6 +577,44 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
     #[cfg(target_os = "linux")]
     if let Err(e) = crate::linux_integrations::reconcile_existing_installation() {
         tracing::warn!("failed to reconcile Linux file manager integrations: {e}");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let needs_migration = {
+            let config = state.user_config.lock().unwrap();
+            !config
+                .general
+                .as_ref()
+                .and_then(|g| g.cfapi_migrated)
+                .unwrap_or(false)
+        };
+
+        if needs_migration {
+            tracing::info!("performing one-time CfApi sync root cleanup after WinFsp migration");
+            match cleanup_cfapi_sync_roots() {
+                Ok(count) => {
+                    if count > 0 {
+                        tracing::info!("removed {count} CfApi sync root(s)");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("CfApi sync root cleanup failed (non-fatal): {e}");
+                }
+            }
+
+            // Mark migration as complete regardless of cleanup result
+            {
+                let mut user_config = state.user_config.lock().unwrap();
+                let general = user_config.general.get_or_insert_with(Default::default);
+                general.cfapi_migrated = Some(true);
+                if let Ok(cfg_path) = cloudmount_core::config::config_file_path() {
+                    if let Err(e) = user_config.save_to_file(&cfg_path) {
+                        tracing::warn!("failed to save cfapi_migrated flag: {e}");
+                    }
+                }
+            }
+        }
     }
 
     let account = {
@@ -842,7 +868,7 @@ struct MountContext {
     rt: tokio::runtime::Handle,
 }
 
-/// Validate the drive, set up cache/inodes/event channel — shared by FUSE and CfApi mounts.
+/// Validate the drive, set up cache/inodes/event channel — shared by FUSE and WinFsp mounts.
 #[cfg(feature = "desktop")]
 fn start_mount_common(
     app: &tauri::AppHandle,
@@ -1033,29 +1059,25 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
 
     let state = app.state::<AppState>();
 
-    // account_name is part of sync root ID and must not contain '!'.
-    let account_name = mount_config.name.replace('!', "_");
-
-    let handle = cloudmount_vfs::CfMountHandle::mount(
+    let handle = cloudmount_vfs::WinFspMountHandle::mount(
         state.graph.clone(),
         ctx.cache.clone(),
         ctx.inodes.clone(),
         ctx.drive_id.clone(),
-        &std::path::PathBuf::from(&ctx.mountpoint),
+        &ctx.mountpoint,
         ctx.rt.clone(),
-        account_name,
-        mount_config.name.clone(),
         Some(ctx.event_tx),
     )
     .map_err(|e| e.to_string())?;
 
     spawn_event_forwarder(&ctx.rt, app, ctx.event_rx);
 
+    let observer = Some(handle.delta_observer());
     state
         .mount_caches
         .lock()
         .unwrap()
-        .insert(ctx.drive_id.clone(), (ctx.cache, ctx.inodes, None));
+        .insert(ctx.drive_id.clone(), (ctx.cache, ctx.inodes, observer));
 
     state
         .mounts
@@ -1180,51 +1202,9 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                 )
                 .await
                 {
-                    Ok(result) => {
+                    Ok(_result) => {
                         // Clear 403 state so the user is notified if access is lost again.
                         notified_403.remove(drive_id.as_str());
-
-                        // Apply placeholder updates on Windows
-                        #[cfg(target_os = "windows")]
-                        if !result.changed_items.is_empty() || !result.deleted_items.is_empty() {
-                            use cloudmount_cache::{resolve_deleted_path, resolve_relative_path};
-
-                            let changed: Vec<_> = result
-                                .changed_items
-                                .iter()
-                                .filter_map(|item| {
-                                    resolve_relative_path(item).map(|p| (p, item.clone()))
-                                })
-                                .collect();
-
-                            let deleted: Vec<_> = result
-                                .deleted_items
-                                .iter()
-                                .filter_map(resolve_deleted_path)
-                                .collect();
-
-                            // Look up mount path from state.mounts using mount_id
-                            let mount_path = {
-                                use tauri::Manager;
-                                let st = app_handle.state::<AppState>();
-                                let mounts = st.mounts.lock().unwrap();
-                                mounts.get(mount_id).map(|h| h.mount_path().to_path_buf())
-                            };
-
-                            if let Some(mp) = mount_path {
-                                cloudmount_vfs::apply_delta_placeholder_updates(
-                                    &mp,
-                                    &changed,
-                                    &deleted,
-                                    &cache.writeback,
-                                    drive_id,
-                                );
-                            }
-                        }
-
-                        // Suppress unused variable warning on non-Windows
-                        #[cfg(not(target_os = "windows"))]
-                        let _ = result;
                     }
                     Err(cloudmount_core::Error::GraphApi { status: 404, .. }) => {
                         tracing::warn!(
@@ -1361,23 +1341,51 @@ pub fn graceful_shutdown(app: &tauri::AppHandle) {
     app.exit(0);
 }
 
-// On Windows the entire function body below the early exit is cfg-gated as
-// #[cfg(not(target_os = "windows"))]; the parameters are only used on non-Windows
-// platforms where the mutable qualifiers are also needed.
+/// Attempt to unregister CfApi sync roots left over from the previous backend.
+/// Returns the number of roots successfully unregistered.
+#[cfg(target_os = "windows")]
+fn cleanup_cfapi_sync_roots() -> Result<usize, String> {
+    // CfApi sync roots are registered under the SyncRootManager registry key.
+    // Since we removed the cloud-filter dependency, we enumerate via `reg query`
+    // and delete entries containing "CloudMount".
+    let output = std::process::Command::new("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager",
+            "/s",
+        ])
+        .output()
+        .map_err(|e| format!("reg query failed: {e}"))?;
+
+    if !output.status.success() {
+        // No sync roots registered — nothing to clean up
+        return Ok(0);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut removed = 0;
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("HKCU\\") && trimmed.to_lowercase().contains("cloudmount") {
+            let _ = std::process::Command::new("reg")
+                .args(["delete", trimmed, "/f"])
+                .output();
+            removed += 1;
+        }
+    }
+
+    Ok(removed)
+}
+
+// On Windows the function body is cfg-gated as #[cfg(not(target_os = "windows"))];
+// full Windows headless support with WinFsp is planned but not yet implemented.
 #[cfg_attr(target_os = "windows", allow(unused_variables, unused_mut))]
 fn run_headless(
     mut user_config: UserConfig,
     mut effective: EffectiveConfig,
     overrides: RuntimeOverrides,
 ) {
-    #[cfg(target_os = "windows")]
-    {
-        eprintln!(
-            "Error: headless mode is not supported on Windows. Cloud Files API requires desktop mode. Use 'cloudmount' without --headless."
-        );
-        std::process::exit(1);
-    }
-
     #[cfg(not(target_os = "windows"))]
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1779,11 +1787,10 @@ mod tests {
     #[test]
     fn test_preflight_checks_succeeds() {
         // preflight_checks no longer validates client ID (it's hardcoded)
-        // On Linux/macOS it only warns about FUSE; on Windows it checks CfApi version.
+        // On Linux/macOS it only warns about FUSE; on Windows it checks for WinFsp.
         // Non-Windows: just verify it doesn't panic and returns a Result.
         #[cfg(not(target_os = "windows"))]
         {
-            // On Linux/macOS preflight only warns (no error path for FUSE) unless CfApi
             let _result = preflight_checks();
         }
     }
@@ -1820,22 +1827,5 @@ mod tests {
             .unwrap_or_else(|| CLIENT_ID.to_string());
         assert_eq!(client_id, CLIENT_ID);
         assert!(no_overrides.tenant_id.is_none());
-    }
-
-    // Windows-only test that simulates CfApi version check failure.
-    // Uses an impossibly high version requirement to exercise the failure path of
-    // cfapi_version_meets, which is the same code called by preflight_checks.
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn test_cfapi_version_meets_fails_on_impossible_version() {
-        // Requesting Windows 99 guarantees failure on any real system, simulating
-        // a machine that does not meet the CfApi requirement.
-        assert!(
-            !cfapi_version_meets(99, 0, 0),
-            "cfapi_version_meets should return false for an unreachable version"
-        );
-        // Verify the error string that preflight_checks would emit is correct.
-        let err = "Cloud Files API requires Windows 10 version 1709 (build 16299) or later";
-        assert!(err.contains("Windows 10 version 1709"));
     }
 }

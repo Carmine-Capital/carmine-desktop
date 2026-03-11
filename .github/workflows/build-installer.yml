@@ -48,6 +48,12 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install macfuse
 
+      - name: Install WinFsp SDK (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install winfsp -y --params '/Developer'
+          echo "WINFSP_INSTALL_DIR=C:\Program Files (x86)\WinFsp" >> $env:GITHUB_ENV
+
       - name: Generate build/defaults.toml
         shell: bash
         run: |

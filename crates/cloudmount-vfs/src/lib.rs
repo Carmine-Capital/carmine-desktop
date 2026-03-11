@@ -24,13 +24,10 @@ pub use mount::MountHandle;
 pub use mount::cleanup_stale_mount;
 
 #[cfg(target_os = "windows")]
-pub mod cfapi;
+pub mod winfsp_fs;
 
 #[cfg(target_os = "windows")]
-pub use cfapi::CfMountHandle;
+pub use winfsp_fs::WinFspMountHandle;
 
 #[cfg(target_os = "windows")]
-pub use cfapi::apply_delta_placeholder_updates;
-
-#[cfg(target_os = "windows")]
-pub use cfapi::active_mount_count;
+pub use winfsp_fs::WinFspDeltaObserver;

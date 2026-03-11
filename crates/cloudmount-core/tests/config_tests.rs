@@ -161,6 +161,7 @@ fn test_user_config_save_and_load_roundtrip() -> cloudmount_core::Result<()> {
             log_level: Some("debug".to_string()),
             notifications: Some(false),
             root_dir: None,
+            cfapi_migrated: None,
         }),
         mounts: vec![MountConfig {
             id: "user-mount1".to_string(),

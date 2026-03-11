@@ -21,7 +21,7 @@ fuser = { workspace = true }
 libc = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-cloud-filter = { workspace = true }
+winfsp = { workspace = true }
 nt-time = { workspace = true }
 windows-sys = { workspace = true }
 winreg = { workspace = true }

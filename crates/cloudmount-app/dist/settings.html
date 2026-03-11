@@ -13,6 +13,7 @@
     <div class="tab" data-panel="mounts" role="tab" tabindex="-1" aria-selected="false" aria-controls="mounts" id="tab-mounts">Mounts</div>
     <div class="tab" data-panel="account" role="tab" tabindex="-1" aria-selected="false" aria-controls="account" id="tab-account">Account</div>
     <div class="tab" data-panel="advanced" role="tab" tabindex="-1" aria-selected="false" aria-controls="advanced" id="tab-advanced">Advanced</div>
+    <div class="tab" data-panel="about" role="tab" tabindex="-1" aria-selected="false" aria-controls="about" id="tab-about">About</div>
   </div>
 
   <div id="unsaved-badge" class="unsaved-badge" style="display:none" aria-live="polite">Unsaved changes</div>
@@ -79,6 +80,13 @@
       <button id="btn-save-advanced">Save</button>
       <button id="btn-clear-cache" class="btn-danger">Clear Cache</button>
     </div>
+  </div>
+
+  <div id="about" class="panel" role="tabpanel" aria-labelledby="tab-about">
+    <h3>CloudMount</h3>
+    <p id="app-version"></p>
+    <h4>Open Source Licenses</h4>
+    <p class="attribution">WinFsp — Windows File System Proxy, Copyright (C) Bill Zissimopoulos. Licensed under GPLv3.</p>
   </div>
 
   <div id="status-bar" role="status" aria-live="polite"></div>

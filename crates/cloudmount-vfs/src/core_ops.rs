@@ -1,12 +1,11 @@
-//! Shared VFS operations used by both FUSE (Linux/macOS) and CfApi (Windows) backends.
+//! Shared VFS operations used by both FUSE (Linux/macOS) and WinFsp (Windows) backends.
 //!
 //! This module contains the core business logic for cache lookups, Graph API interactions,
 //! inode management, and write-back operations. Platform-specific backends (FUSE callbacks,
-//! CfApi sync filter) delegate to [`CoreOps`] instead of duplicating this logic.
+//! WinFsp filesystem context) delegate to [`CoreOps`] instead of duplicating this logic.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -24,7 +23,7 @@ use cloudmount_core::types::{DriveItem, DriveQuota, FileFacet, ParentReference};
 use cloudmount_graph::{CopyStatus, GraphClient, SMALL_FILE_LIMIT};
 
 /// Compare item names for child lookup.
-/// Windows (NTFS/CfApi) uses OrdinalIgnoreCase — ASCII case-insensitive.
+/// Windows (NTFS/WinFsp) uses OrdinalIgnoreCase — ASCII case-insensitive.
 /// FUSE on Linux/macOS uses exact (case-sensitive) comparison.
 #[cfg(target_os = "windows")]
 fn names_match(stored: &str, query: &str) -> bool {
@@ -333,7 +332,7 @@ pub enum VfsEvent {
         file_name: String,
         conflict_name: String,
     },
-    /// A CfApi closed callback failed to persist file content to the writeback buffer.
+    /// A backend callback failed to persist file content to the writeback buffer.
     WritebackFailed { file_name: String },
     /// An upload failed (generic — not conflict or lock-specific).
     UploadFailed { file_name: String, reason: String },
@@ -358,7 +357,7 @@ pub fn conflict_name(original: &str, timestamp: i64) -> String {
 /// Errors from core VFS operations.
 ///
 /// Each platform backend maps these to its own error type
-/// (e.g., `fuser::Errno` for FUSE, `CloudErrorKind` for CfApi).
+/// (e.g., `fuser::Errno` for FUSE, `NTSTATUS` for WinFsp).
 #[derive(Debug)]
 pub enum VfsError {
     /// Item not found (FUSE: ENOENT, Windows: STATUS_OBJECT_NAME_NOT_FOUND)
@@ -440,9 +439,6 @@ pub struct CoreOps {
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
     quota_cache: std::sync::Mutex<Option<(Instant, DriveQuota)>>,
     inode_invalidator: Option<InodeInvalidator>,
-    /// Absolute path to the mount/sync root on disk. Set by CfApi backend on
-    /// Windows for post-upload placeholder conversion; `None` on FUSE.
-    mount_path: Option<PathBuf>,
 }
 
 impl CoreOps {
@@ -463,7 +459,6 @@ impl CoreOps {
             event_tx: None,
             quota_cache: std::sync::Mutex::new(None),
             inode_invalidator: None,
-            mount_path: None,
         }
     }
 
@@ -474,11 +469,6 @@ impl CoreOps {
 
     pub fn with_inode_invalidator(mut self, f: InodeInvalidator) -> Self {
         self.inode_invalidator = Some(f);
-        self
-    }
-
-    pub fn with_mount_path(mut self, path: PathBuf) -> Self {
-        self.mount_path = Some(path);
         self
     }
 
@@ -580,33 +570,6 @@ impl CoreOps {
 
         let item = self.lookup_item(current_ino)?;
         Some((current_ino, item))
-    }
-
-    /// Build the absolute filesystem path for a given inode by walking up the
-    /// parent chain to the root and prepending `mount_path`. Returns `None` if
-    /// `mount_path` is not set or the parent chain cannot be fully resolved.
-    #[cfg(target_os = "windows")]
-    fn build_absolute_path(&self, ino: u64) -> Option<PathBuf> {
-        let mount = self.mount_path.as_ref()?;
-        let mut segments: Vec<String> = Vec::new();
-        let mut current = ino;
-
-        while current != crate::inode::ROOT_INODE {
-            let item = self.lookup_item(current)?;
-            segments.push(item.name.clone());
-            let parent_item_id = item
-                .parent_reference
-                .as_ref()
-                .and_then(|p| p.id.as_deref())?;
-            current = self.inodes.get_inode(parent_item_id)?;
-        }
-
-        segments.reverse();
-        let mut path = mount.clone();
-        for seg in &segments {
-            path.push(seg);
-        }
-        Some(path)
     }
 
     /// Look up a [`DriveItem`] by inode from cache (memory → SQLite).
@@ -1048,39 +1011,6 @@ impl CoreOps {
                 let _ = self
                     .rt
                     .block_on(self.cache.writeback.remove(&self.drive_id, &item_id));
-
-                // Convert newly uploaded local files to CfApi placeholders so
-                // future operations use the CfApi callback pipeline instead of
-                // the slower filesystem watcher path.
-                #[cfg(target_os = "windows")]
-                if is_new_file {
-                    if let Some(abs_path) = self.build_absolute_path(ino) {
-                        match cloud_filter::placeholder::Placeholder::open(&abs_path) {
-                            Ok(mut ph) => {
-                                let opts = cloud_filter::placeholder::ConvertOptions::default()
-                                    .blob(updated_item.id.as_bytes().to_vec())
-                                    .mark_in_sync();
-                                if let Err(e) = ph.convert_to_placeholder(opts, None) {
-                                    tracing::warn!(
-                                        path = %abs_path.display(),
-                                        "post-upload placeholder conversion failed: {e:?}"
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    path = %abs_path.display(),
-                                    "failed to open file for placeholder conversion: {e:?}"
-                                );
-                            }
-                        }
-                    } else {
-                        tracing::warn!(
-                            ino,
-                            "cannot resolve absolute path for placeholder conversion"
-                        );
-                    }
-                }
 
                 Ok(())
             }
@@ -1990,7 +1920,7 @@ impl CoreOps {
     }
 
     /// Read a byte range directly from disk cache or via a range download.
-    /// Used by CfApi's fetch_data to avoid the streaming/open-file machinery.
+    /// Used by WinFsp's read callback to avoid the streaming/open-file machinery.
     pub fn read_range_direct(&self, ino: u64, offset: u64, length: u64) -> VfsResult<Vec<u8>> {
         let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
 
