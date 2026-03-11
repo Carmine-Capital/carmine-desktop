@@ -22,6 +22,19 @@ pub fn mount_success(app: &AppHandle, name: &str, path: &str) {
     );
 }
 
+pub fn mounts_summary(app: &AppHandle, succeeded: usize, failed: usize) {
+    let body = match (succeeded, failed) {
+        (s, 0) if s > 0 => format!("{s} drive{} mounted", if s == 1 { "" } else { "s" }),
+        (s, f) if s > 0 && f > 0 => format!(
+            "{s} drive{} mounted, {f} failed",
+            if s == 1 { "" } else { "s" }
+        ),
+        (0, f) if f > 0 => format!("Failed to mount {f} drive{}", if f == 1 { "" } else { "s" }),
+        _ => return,
+    };
+    send(app, "Mounts Ready", &body);
+}
+
 pub fn mount_not_found(app: &AppHandle, name: &str) {
     send(
         app,

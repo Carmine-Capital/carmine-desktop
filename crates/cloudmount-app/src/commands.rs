@@ -313,10 +313,17 @@ pub fn add_mount(
             let config = state.effective_config.lock().map_err(|e| e.to_string())?;
             config.mounts.iter().find(|m| m.id == mount_id).cloned()
         };
-        if let Some(mount_config) = mount_config_opt
-            && let Err(e) = crate::start_mount(&app, &mount_config)
-        {
-            tracing::error!("failed to start new mount: {e}");
+        if let Some(mount_config) = mount_config_opt {
+            let mountpoint = expand_mount_point(&mount_config.mount_point);
+            match crate::start_mount(&app, &mount_config) {
+                Ok(()) => {
+                    crate::notify::mount_success(&app, &mount_config.name, &mountpoint);
+                }
+                Err(e) => {
+                    tracing::error!("failed to start new mount: {e}");
+                    crate::notify::mount_failed(&app, &mount_config.name, &e);
+                }
+            }
         }
     }
 
@@ -365,7 +372,16 @@ pub fn toggle_mount(app: AppHandle, id: String) -> Result<Option<bool>, String> 
                 config.mounts.iter().find(|m| m.id == id).cloned()
             };
             if let Some(mount_config) = mount_config_opt {
-                let _ = crate::start_mount(&app, &mount_config);
+                let mountpoint = expand_mount_point(&mount_config.mount_point);
+                match crate::start_mount(&app, &mount_config) {
+                    Ok(()) => {
+                        crate::notify::mount_success(&app, &mount_config.name, &mountpoint);
+                    }
+                    Err(e) => {
+                        tracing::error!("failed to start mount '{}': {e}", mount_config.name);
+                        crate::notify::mount_failed(&app, &mount_config.name, &e);
+                    }
+                }
             }
         } else {
             let _ = crate::stop_mount(&app, &id);

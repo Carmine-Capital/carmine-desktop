@@ -812,11 +812,20 @@ fn start_all_mounts(app: &tauri::AppHandle) {
             .collect()
     };
 
+    let mut succeeded = 0usize;
+    let mut failed = 0usize;
+
     for mount_config in &mounts_config {
         if let Err(e) = start_mount(app, mount_config) {
             tracing::error!("failed to start mount '{}': {e}", mount_config.name);
-            notify::mount_failed(app, &mount_config.name, &e);
+            failed += 1;
+        } else {
+            succeeded += 1;
         }
+    }
+
+    if succeeded > 0 || failed > 0 {
+        notify::mounts_summary(app, succeeded, failed);
     }
     tray::update_tray_menu(app);
 }
@@ -1004,7 +1013,6 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         .unwrap()
         .insert(mount_config.id.clone(), handle);
 
-    notify::mount_success(app, &mount_config.name, &ctx.mountpoint);
     tracing::info!(
         "mount '{}' started at {}",
         mount_config.name,
@@ -1055,7 +1063,6 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         .unwrap()
         .insert(mount_config.id.clone(), handle);
 
-    notify::mount_success(app, &mount_config.name, &ctx.mountpoint);
     tracing::info!(
         "mount '{}' started at {}",
         mount_config.name,
