@@ -73,11 +73,12 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install macfuse
 
-      - name: Install WinFsp SDK (Windows)
+      - name: Install WinFsp SDK and LLVM (Windows)
         if: runner.os == 'Windows'
         run: |
-          choco install winfsp -y --params '/Developer'
+          choco install winfsp llvm -y --params '/Developer'
           echo "WINFSP_INSTALL_DIR=C:\Program Files (x86)\WinFsp" >> $env:GITHUB_ENV
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
 
       - name: Cache cargo
         uses: actions/cache@v4
