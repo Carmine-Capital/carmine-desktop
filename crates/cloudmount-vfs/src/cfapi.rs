@@ -1,6 +1,9 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use cloud_filter::error::{CResult, CloudErrorKind};
 use cloud_filter::filter::{Request, SyncFilter, info, ticket};
@@ -26,6 +29,9 @@ const PROVIDER_NAME: &str = "CloudMount";
 const PROVIDER_VERSION: &str = env!("CARGO_PKG_VERSION");
 // ticket.write_at() requires 4KiB-aligned chunks (OS restriction)
 const WRITE_CHUNK_SIZE: usize = 4096;
+
+#[cfg(target_os = "windows")]
+static ACTIVE_CFAPI_MOUNTS: AtomicUsize = AtomicUsize::new(0);
 
 pub struct CloudMountCfFilter {
     core: CoreOps,
@@ -740,7 +746,7 @@ fn register_context_menu() -> cloudmount_core::Result<()> {
     let shell_path = r"Software\Classes\*\shell\CloudMount.OpenInSharePoint";
     let command_path = format!("{}\\command", shell_path);
 
-    let (shell_key, _disp) = hkcu.create_subkey(shell_path).map_err(|e| {
+    let (shell_key, _) = hkcu.create_subkey(shell_path).map_err(|e| {
         cloudmount_core::Error::Filesystem(format!("failed to create shell key: {e:?}"))
     })?;
 
@@ -750,11 +756,11 @@ fn register_context_menu() -> cloudmount_core::Result<()> {
             cloudmount_core::Error::Filesystem(format!("failed to set display name: {e:?}"))
         })?;
 
-    let (command_key, _disp) = hkcu.create_subkey(&command_path).map_err(|e| {
+    let (command_key, _) = hkcu.create_subkey(&command_path).map_err(|e| {
         cloudmount_core::Error::Filesystem(format!("failed to create command key: {e:?}"))
     })?;
 
-    let cmd_value = r"cmd /c start cloudmount://open-online?path=%1";
+    let cmd_value = r#"powershell -NoProfile -WindowStyle Hidden -Command "$path = $args[0]; $encoded = [Uri]::EscapeDataString($path); Start-Process ('cloudmount://open-online?path=' + $encoded)" "%1""#;
     command_key
         .set_value("", &cmd_value.to_string())
         .map_err(|e| cloudmount_core::Error::Filesystem(format!("failed to set command: {e:?}")))?;
@@ -771,12 +777,54 @@ fn unregister_context_menu() -> cloudmount_core::Result<()> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let shell_path = r"Software\Classes\*\shell\CloudMount.OpenInSharePoint";
 
-    hkcu.delete_subkey_all(shell_path).map_err(|e| {
-        cloudmount_core::Error::Filesystem(format!("failed to remove context menu keys: {e:?}"))
-    })?;
+    let result = hkcu.delete_subkey_all(shell_path);
+    match result {
+        Ok(()) => {
+            tracing::info!("unregistered Windows Explorer context menu");
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::debug!("context menu keys already absent, treating as success");
+        }
+        Err(e) => {
+            return Err(cloudmount_core::Error::Filesystem(format!(
+                "failed to remove context menu keys: {e:?}"
+            )));
+        }
+    }
 
-    tracing::info!("unregistered Windows Explorer context menu");
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn on_mount_added() {
+    let prev = ACTIVE_CFAPI_MOUNTS.fetch_add(1, Ordering::SeqCst);
+    if prev == 0 {
+        if let Err(e) = register_context_menu() {
+            tracing::error!("failed to register context menu on first mount: {e}");
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn on_mount_removed() {
+    let prev = ACTIVE_CFAPI_MOUNTS.fetch_sub(1, Ordering::SeqCst);
+    if prev == 1 {
+        if let Err(e) = unregister_context_menu() {
+            tracing::error!("failed to unregister context menu on last mount: {e}");
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn on_mount_added() {}
+
+#[cfg(not(target_os = "windows"))]
+fn on_mount_removed() {}
+
+#[cfg(test)]
+#[cfg(target_os = "windows")]
+pub fn active_mount_count() -> usize {
+    ACTIVE_CFAPI_MOUNTS.load(Ordering::SeqCst)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -871,7 +919,6 @@ impl CfMountHandle {
 
         if !is_registered {
             register_sync_root(&sync_root_id, mount_path)?;
-            register_context_menu()?;
         }
 
         let root_item = block_on_compat(&rt, graph.get_item(&drive_id, "root")).map_err(|e| {
@@ -899,6 +946,8 @@ impl CfMountHandle {
         let connection = Session::new().connect(mount_path, filter).map_err(|e| {
             cloudmount_core::Error::Filesystem(format!("CfApi connect failed: {e:?}"))
         })?;
+
+        on_mount_added();
 
         tracing::info!("mounted at {} via Cloud Files API", mount_path.display());
 
@@ -930,12 +979,12 @@ impl CfMountHandle {
             &self.rt,
             crate::pending::flush_pending(&self.cache, &self.graph, &self.drive_id),
         );
-        // Drop order: connection drops first, then unregister
         drop(self.connection);
-        self.sync_root_id.unregister().map_err(|e| {
+        let unregister_result = self.sync_root_id.unregister();
+        on_mount_removed();
+        unregister_result.map_err(|e| {
             cloudmount_core::Error::Filesystem(format!("sync root unregister failed: {e:?}"))
         })?;
-        unregister_context_menu()?;
         tracing::info!("unregistered sync root for {}", self.mount_path.display());
         Ok(())
     }

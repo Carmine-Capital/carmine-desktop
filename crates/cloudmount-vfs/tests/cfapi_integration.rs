@@ -21,6 +21,7 @@ use cloudmount_cache::CacheManager;
 use cloudmount_graph::GraphClient;
 use cloudmount_vfs::CfMountHandle;
 use cloudmount_vfs::inode::InodeTable;
+use cloudmount_vfs::active_mount_count;
 
 const DRIVE_ID: &str = "test-drive";
 const ROOT_ITEM_ID: &str = "root-id";
@@ -357,4 +358,67 @@ async fn cfapi_delete_file() {
     );
 
     fixture.teardown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires Windows CfApi"]
+async fn cfapi_first_mount_registers_context_menu() {
+    let server = MockServer::start().await;
+    mock_root_listing(&server).await;
+
+    let initial_count = active_mount_count();
+    let fixture = CfTestFixture::setup(&server).await;
+
+    let new_count = active_mount_count();
+    assert_eq!(
+        new_count,
+        initial_count + 1,
+        "mount should increment active count"
+    );
+
+    fixture.teardown();
+
+    let final_count = active_mount_count();
+    assert_eq!(
+        final_count,
+        initial_count,
+        "unmount should decrement active count"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires Windows CfApi"]
+async fn cfapi_multi_mount_lifecycle() {
+    let server = MockServer::start().await;
+    mock_root_listing(&server).await;
+
+    let initial_count = active_mount_count();
+
+    let fixture1 = CfTestFixture::setup(&server).await;
+    assert_eq!(
+        active_mount_count(),
+        initial_count + 1,
+        "first mount should increment count"
+    );
+
+    let fixture2 = CfTestFixture::setup(&server).await;
+    assert_eq!(
+        active_mount_count(),
+        initial_count + 2,
+        "second mount should increment count"
+    );
+
+    fixture1.teardown();
+    assert_eq!(
+        active_mount_count(),
+        initial_count + 1,
+        "first unmount should decrement but not clear count"
+    );
+
+    fixture2.teardown();
+    assert_eq!(
+        active_mount_count(),
+        initial_count,
+        "final unmount should clear count"
+    );
 }
