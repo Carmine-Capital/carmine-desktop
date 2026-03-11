@@ -821,7 +821,6 @@ fn on_mount_added() {}
 #[cfg(not(target_os = "windows"))]
 fn on_mount_removed() {}
 
-#[cfg(test)]
 #[cfg(target_os = "windows")]
 pub fn active_mount_count() -> usize {
     ACTIVE_CFAPI_MOUNTS.load(Ordering::SeqCst)

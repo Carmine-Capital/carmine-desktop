@@ -31,5 +31,5 @@ pub use cfapi::CfMountHandle;
 #[cfg(target_os = "windows")]
 pub use cfapi::apply_delta_placeholder_updates;
 
-#[cfg(all(test, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 pub use cfapi::active_mount_count;
