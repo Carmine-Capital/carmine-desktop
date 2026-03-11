@@ -23,7 +23,9 @@ fn test_drive_item(id: &str, name: &str, is_folder: bool) -> DriveItem {
             None
         },
         file: None,
+        publication: None,
         download_url: None,
+        web_url: None,
     }
 }
 
@@ -799,7 +801,9 @@ fn test_sync_resolve_relative_path_nested() {
         }),
         folder: None,
         file: None,
+        publication: None,
         download_url: None,
+        web_url: None,
     };
 
     let result = resolve_relative_path(&item);
@@ -829,7 +833,9 @@ fn test_sync_resolve_relative_path_root_level() {
         }),
         folder: None,
         file: None,
+        publication: None,
         download_url: None,
+        web_url: None,
     };
 
     let result = resolve_relative_path(&item);
@@ -850,7 +856,9 @@ fn test_sync_resolve_relative_path_missing_parent_reference() {
         parent_reference: None,
         folder: None,
         file: None,
+        publication: None,
         download_url: None,
+        web_url: None,
     };
 
     let result = resolve_relative_path(&item);
@@ -877,7 +885,9 @@ fn test_sync_resolve_relative_path_drives_prefix() {
         }),
         folder: None,
         file: None,
+        publication: None,
         download_url: None,
+        web_url: None,
     };
 
     let result = resolve_relative_path(&item);
@@ -1046,7 +1056,9 @@ async fn test_delta_sync_observer_called_on_etag_change() {
             mime_type: None,
             hashes: None,
         }),
+        publication: None,
         download_url: None,
+        web_url: None,
     };
     cache
         .sqlite

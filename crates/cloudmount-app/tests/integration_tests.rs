@@ -39,7 +39,9 @@ fn test_drive_item(id: &str, name: &str, is_folder: bool) -> DriveItem {
             None
         },
         file: None,
+        publication: None,
         download_url: None,
+        web_url: None,
     }
 }
 

@@ -424,14 +424,27 @@ impl Filesystem for CloudMountFs {
     fn flush(
         &self,
         _req: &Request,
-        _ino: INodeNo,
+        ino: INodeNo,
         fh: FileHandle,
         _lock_owner: LockOwner,
         reply: ReplyEmpty,
     ) {
         match self.ops.flush_handle(fh.0) {
             Ok(()) => reply.ok(),
-            Err(e) => reply.error(Self::vfs_err_to_errno(e)),
+            Err(e) => {
+                let file_name = self
+                    .ops
+                    .lookup_item(ino.0)
+                    .map(|i| i.name)
+                    .unwrap_or_default();
+                if !file_name.is_empty() {
+                    self.ops.send_event(VfsEvent::UploadFailed {
+                        file_name,
+                        reason: format!("{e:?}"),
+                    });
+                }
+                reply.error(Self::vfs_err_to_errno(e));
+            }
         }
     }
 

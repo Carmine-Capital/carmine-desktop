@@ -334,6 +334,10 @@ pub enum VfsEvent {
     },
     /// A CfApi closed callback failed to persist file content to the writeback buffer.
     WritebackFailed { file_name: String },
+    /// An upload failed (generic — not conflict or lock-specific).
+    UploadFailed { file_name: String, reason: String },
+    /// The file is locked on OneDrive (co-authoring or checkout).
+    FileLocked { file_name: String },
 }
 
 /// Generate a conflict filename that preserves the original extension.
@@ -914,6 +918,7 @@ impl CoreOps {
             .to_string();
 
         let is_new_file = item_id.starts_with("local:");
+        let content_bytes = Bytes::from(content);
 
         // Conflict check: compare cached eTag with server eTag.
         // On match, use the server eTag as If-Match for the upload to close the TOCTOU window.
@@ -936,23 +941,22 @@ impl CoreOps {
                         );
                         let timestamp = Utc::now().timestamp();
                         let cname = conflict_name(&item.name, timestamp);
-                        if !parent_id.is_empty() {
-                            // Clone content only for conflict copy (lazy clone)
-                            if let Err(e) = self.rt.block_on(self.graph.upload_small(
+                        if !parent_id.is_empty()
+                            && let Err(e) = self.rt.block_on(self.graph.upload_small(
                                 &self.drive_id,
                                 &parent_id,
                                 &cname,
-                                Bytes::from(content.clone()),
+                                content_bytes.clone(),
                                 None,
-                            )) {
-                                tracing::error!(
-                                    "conflict copy upload failed for {}, aborting flush: {e}",
-                                    item.name
-                                );
-                                return Err(VfsError::IoError(format!(
-                                    "conflict copy upload failed: {e}"
-                                )));
-                            }
+                            ))
+                        {
+                            tracing::error!(
+                                "conflict copy upload failed for {}, aborting flush: {e}",
+                                item.name
+                            );
+                            return Err(VfsError::IoError(format!(
+                                "conflict copy upload failed: {e}"
+                            )));
                         }
                         self.send_event(VfsEvent::ConflictDetected {
                             file_name: item.name.clone(),
@@ -984,7 +988,7 @@ impl CoreOps {
                 &self.drive_id,
                 &parent_id,
                 &item.name,
-                Bytes::from(content),
+                content_bytes.clone(),
                 None, // new files have no eTag
             ))
         } else {
@@ -993,7 +997,7 @@ impl CoreOps {
                 &parent_id,
                 Some(&item_id),
                 &item.name,
-                Bytes::from(content),
+                content_bytes.clone(),
                 if_match,
             ))
         };
@@ -1021,6 +1025,46 @@ impl CoreOps {
                 });
                 Err(VfsError::IoError(
                     "upload conflict: server content changed".to_string(),
+                ))
+            }
+            Err(cloudmount_core::Error::Locked) => {
+                // File is locked (co-authoring or checkout) — save as conflict copy
+                tracing::warn!(
+                    "upload locked for {} (423), saving as conflict copy",
+                    item.name
+                );
+                let timestamp = Utc::now().timestamp();
+                let cname = conflict_name(&item.name, timestamp);
+                if !parent_id.is_empty() {
+                    match self.rt.block_on(self.graph.upload_small(
+                        &self.drive_id,
+                        &parent_id,
+                        &cname,
+                        content_bytes,
+                        None,
+                    )) {
+                        Ok(_) => {
+                            let _ = self
+                                .rt
+                                .block_on(self.cache.writeback.remove(&self.drive_id, &item_id));
+                            self.send_event(VfsEvent::FileLocked {
+                                file_name: item.name.clone(),
+                            });
+                            // Conflict copy saved — return Ok so flush_handle clears
+                            // dirty and release_file doesn't re-write to writeback.
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "conflict copy upload failed for {} (locked): {e}",
+                                item.name
+                            );
+                            // Preserve writeback buffer for crash recovery
+                        }
+                    }
+                }
+                Err(VfsError::IoError(
+                    "file is locked on OneDrive, conflict copy upload failed".to_string(),
                 ))
             }
             Err(e) => {
@@ -1068,43 +1112,23 @@ impl CoreOps {
                 .insert(ino, DownloadState::Complete(content)));
         }
 
-        // Check disk cache with freshness validation
-        if !self.cache.dirty_inodes.contains(&ino)
-            && let Some((content, disk_etag)) = self
-                .rt
-                .block_on(self.cache.disk.get_with_etag(&self.drive_id, &item_id))
-        {
-            // Validate: size must match metadata
-            let size_ok = item
-                .as_ref()
-                .map(|i| content.len() == i.size as usize)
-                .unwrap_or(false);
-            // Validate: eTag must match metadata (if both present)
-            let etag_ok = match (&disk_etag, item.as_ref().and_then(|i| i.etag.as_ref())) {
-                (Some(de), Some(ie)) => de == ie,
-                _ => false,
-            };
-            if size_ok && etag_ok {
-                return Ok(self
-                    .open_files
-                    .insert(ino, DownloadState::Complete(content)));
-            }
-            // Stale — remove and fall through to download
-            let _ = self
-                .rt
-                .block_on(self.cache.disk.remove(&self.drive_id, &item_id));
-        }
-
-        // Refresh metadata from the server before downloading.
+        // Refresh metadata from the server BEFORE checking the disk cache.
         // With FUSE_WRITEBACK_CACHE the kernel ignores size/mtime updates from
-        // getattr, so a stale cached size causes reads to be truncated.  A cheap
-        // get_item() call here detects the mismatch and invalidates the kernel
-        // inode so subsequent reads use the correct size.
+        // getattr, so a stale cached size causes reads to be truncated.
+        // Without this, the disk cache validation compares against memory-cached
+        // metadata which may also be stale — both have the old eTag, so the
+        // stale content passes validation and is served as-is (corruption).
         let item = match self
             .rt
             .block_on(self.graph.get_item(&self.drive_id, &item_id))
         {
             Ok(fresh) => {
+                // Check if file is locked (co-authoring, checkout)
+                if fresh.is_locked() {
+                    let file_name = fresh.name.clone();
+                    self.send_event(VfsEvent::FileLocked { file_name });
+                }
+
                 let stale = item.as_ref().and_then(|i| i.etag.as_ref()) != fresh.etag.as_ref();
                 if stale {
                     tracing::debug!(
@@ -1137,6 +1161,33 @@ impl CoreOps {
                 item
             }
         };
+
+        // Check disk cache with freshness validation (now against fresh server metadata)
+        if !self.cache.dirty_inodes.contains(&ino)
+            && let Some((content, disk_etag)) = self
+                .rt
+                .block_on(self.cache.disk.get_with_etag(&self.drive_id, &item_id))
+        {
+            // Validate: size must match metadata
+            let size_ok = item
+                .as_ref()
+                .map(|i| content.len() == i.size as usize)
+                .unwrap_or(false);
+            // Validate: eTag must match metadata (if both present)
+            let etag_ok = match (&disk_etag, item.as_ref().and_then(|i| i.etag.as_ref())) {
+                (Some(de), Some(ie)) => de == ie,
+                _ => false,
+            };
+            if size_ok && etag_ok {
+                return Ok(self
+                    .open_files
+                    .insert(ino, DownloadState::Complete(content)));
+            }
+            // Stale — remove and fall through to download
+            let _ = self
+                .rt
+                .block_on(self.cache.disk.remove(&self.drive_id, &item_id));
+        }
 
         // Not cached or stale — check file size for streaming decision
         let file_size = item.as_ref().map(|i| i.size).unwrap_or(0) as usize;
@@ -1390,7 +1441,9 @@ impl CoreOps {
                 mime_type: None,
                 hashes: None,
             }),
+            publication: None,
             download_url: None,
+            web_url: None,
         };
 
         let inode = self.inodes.allocate(&temp_item_id);

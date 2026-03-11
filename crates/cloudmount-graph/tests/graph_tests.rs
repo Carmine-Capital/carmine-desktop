@@ -17,6 +17,7 @@ fn drive_item_json(id: &str, name: &str, size: i64) -> serde_json::Value {
         "id": id,
         "name": name,
         "size": size,
+        "webUrl": format!("https://contoso.sharepoint.com/Shared%20Documents/{name}"),
     })
 }
 
@@ -70,8 +71,52 @@ async fn list_children_paginates_two_pages() {
     assert_eq!(items.len(), 2);
     assert_eq!(items[0].id, "item1");
     assert_eq!(items[0].name, "file1.txt");
+    assert_eq!(
+        items[0].web_url.as_deref(),
+        Some("https://contoso.sharepoint.com/Shared%20Documents/file1.txt")
+    );
     assert_eq!(items[1].id, "item2");
     assert_eq!(items[1].name, "file2.txt");
+    assert_eq!(
+        items[1].web_url.as_deref(),
+        Some("https://contoso.sharepoint.com/Shared%20Documents/file2.txt")
+    );
+}
+
+#[tokio::test]
+async fn list_root_children_includes_web_url() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/drives/d1/root/children"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "id": "item1",
+                    "name": "report.docx",
+                    "size": 4096,
+                    "webUrl": "https://contoso.sharepoint.com/sites/eng/Shared%20Documents/report.docx",
+                },
+                {
+                    "id": "item2",
+                    "name": "data.xlsx",
+                    "size": 2048,
+                }
+            ],
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let items = client.list_root_children("d1").await.unwrap();
+
+    assert_eq!(items.len(), 2);
+    assert_eq!(
+        items[0].web_url.as_deref(),
+        Some("https://contoso.sharepoint.com/sites/eng/Shared%20Documents/report.docx")
+    );
+    // Item without webUrl in response should deserialize as None
+    assert!(items[1].web_url.is_none());
 }
 
 #[tokio::test]
@@ -667,4 +712,27 @@ async fn get_drive_without_quota() {
     let drive = client.get_drive("d2").await.unwrap();
     assert_eq!(drive.id, "d2");
     assert!(drive.quota.is_none());
+}
+
+#[tokio::test]
+async fn handle_error_maps_423_to_locked() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/drives/d1/items/locked-file"))
+        .respond_with(ResponseTemplate::new(423).set_body_json(json!({
+            "error": {
+                "code": "notAllowed",
+                "message": "The resource you are attempting to access is locked"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let err = client.get_item("d1", "locked-file").await.unwrap_err();
+    assert!(
+        matches!(err, cloudmount_core::Error::Locked),
+        "expected Error::Locked, got: {err:?}"
+    );
 }

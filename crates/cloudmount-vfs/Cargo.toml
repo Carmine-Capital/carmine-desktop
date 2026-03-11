@@ -23,6 +23,7 @@ libc = { workspace = true }
 [target.'cfg(target_os = "windows")'.dependencies]
 cloud-filter = { workspace = true }
 nt-time = { workspace = true }
+winreg = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

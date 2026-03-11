@@ -54,7 +54,9 @@ fn setup_core_ops(graph: Arc<GraphClient>, cache: Arc<CacheManager>) -> Arc<Core
             parent_reference: None,
             folder: Some(cloudmount_core::types::FolderFacet { child_count: 0 }),
             file: None,
+            publication: None,
             download_url: None,
+            web_url: None,
         },
     );
 
@@ -78,7 +80,9 @@ fn setup_core_ops(graph: Arc<GraphClient>, cache: Arc<CacheManager>) -> Arc<Core
                 mime_type: None,
                 hashes: None,
             }),
+            publication: None,
             download_url: None,
+            web_url: None,
         },
     );
 
@@ -408,7 +412,9 @@ fn setup_core_ops_two_files(
             parent_reference: None,
             folder: Some(cloudmount_core::types::FolderFacet { child_count: 0 }),
             file: None,
+            publication: None,
             download_url: None,
+            web_url: None,
         },
     );
 
@@ -432,7 +438,9 @@ fn setup_core_ops_two_files(
                 mime_type: None,
                 hashes: None,
             }),
+            publication: None,
             download_url: None,
+            web_url: None,
         },
     );
 
@@ -456,7 +464,9 @@ fn setup_core_ops_two_files(
                 mime_type: None,
                 hashes: None,
             }),
+            publication: None,
             download_url: None,
+            web_url: None,
         },
     );
 
@@ -571,7 +581,9 @@ async fn copy_file_range_ineligible_local_source() {
             parent_reference: None,
             folder: Some(cloudmount_core::types::FolderFacet { child_count: 0 }),
             file: None,
+            publication: None,
             download_url: None,
+            web_url: None,
         },
     );
 
@@ -597,7 +609,9 @@ async fn copy_file_range_ineligible_local_source() {
                 mime_type: None,
                 hashes: None,
             }),
+            publication: None,
             download_url: None,
+            web_url: None,
         },
     );
 
@@ -621,7 +635,9 @@ async fn copy_file_range_ineligible_local_source() {
                 mime_type: None,
                 hashes: None,
             }),
+            publication: None,
             download_url: None,
+            web_url: None,
         },
     );
 
@@ -798,7 +814,9 @@ fn setup_core_ops_large_file(
             parent_reference: None,
             folder: Some(cloudmount_core::types::FolderFacet { child_count: 0 }),
             file: None,
+            publication: None,
             download_url: None,
+            web_url: None,
         },
     );
 
@@ -822,7 +840,9 @@ fn setup_core_ops_large_file(
                 mime_type: None,
                 hashes: None,
             }),
+            publication: None,
             download_url: None,
+            web_url: None,
         },
     );
 
@@ -1548,6 +1568,241 @@ async fn test_lookup_item_for_getattr_returns_handle_size() {
     })
     .await
     .unwrap();
+
+    cleanup(&base);
+}
+
+// ============================================================================
+// SERVER METADATA REFRESH — stale cache and offline fallback
+// ============================================================================
+
+/// Helper: mock get_item endpoint returning fresh metadata with a new eTag
+async fn mock_get_item_fresh(server: &MockServer, etag: &str, size: i64) {
+    Mock::given(method("GET"))
+        .and(path(format!("/drives/{DRIVE_ID}/items/{FILE_ITEM_ID}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": FILE_ITEM_ID,
+            "name": "hello.txt",
+            "size": size,
+            "eTag": etag,
+            "parentReference": { "driveId": DRIVE_ID, "id": ROOT_ITEM_ID },
+            "file": { "mimeType": "text/plain" }
+        })))
+        .mount(server)
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn open_file_serves_fresh_content_when_server_etag_differs() {
+    let server = MockServer::start().await;
+
+    // Server returns updated metadata (etag-2, size 11)
+    mock_get_item_fresh(&server, "etag-2", 11).await;
+
+    // Download endpoint returns the NEW content
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/drives/{DRIVE_ID}/items/{FILE_ITEM_ID}/content"
+        )))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(b"new content".to_vec(), "application/octet-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let (cache, base) = make_cache("stale-cache-refresh");
+    let graph = make_graph(&server.uri());
+
+    // Pre-populate disk cache with OLD content and OLD etag
+    let _ = cache
+        .disk
+        .put(DRIVE_ID, FILE_ITEM_ID, b"Hello, world!", Some("etag-1"))
+        .await;
+
+    let ops = setup_core_ops(graph, cache);
+
+    let ops2 = ops.clone();
+    tokio::task::spawn_blocking(move || {
+        let fh = ops2.open_file(2).unwrap();
+        let data = ops2.read_handle(fh, 0, 100).unwrap();
+        assert_eq!(
+            data, b"new content",
+            "should serve fresh content, not stale disk cache"
+        );
+        let _ = ops2.release_file(fh);
+    })
+    .await
+    .unwrap();
+
+    cleanup(&base);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn open_file_falls_back_to_disk_cache_when_get_item_fails() {
+    let server = MockServer::start().await;
+
+    // No get_item mock — the call will fail (404 from wiremock)
+
+    let (cache, base) = make_cache("offline-fallback");
+    let graph = make_graph(&server.uri());
+
+    // Pre-populate disk cache with content matching the cached metadata
+    let _ = cache
+        .disk
+        .put(DRIVE_ID, FILE_ITEM_ID, b"Hello, world!", Some("etag-1"))
+        .await;
+
+    // Memory cache has etag-1, size 13 (from setup_core_ops)
+    // Disk cache has etag-1 and 13 bytes — should match
+    let ops = setup_core_ops(graph, cache);
+
+    let ops2 = ops.clone();
+    tokio::task::spawn_blocking(move || {
+        let fh = ops2.open_file(2).unwrap();
+        let data = ops2.read_handle(fh, 0, 100).unwrap();
+        assert_eq!(
+            data, b"Hello, world!",
+            "should fall back to disk cache when get_item fails"
+        );
+        let _ = ops2.release_file(fh);
+    })
+    .await
+    .unwrap();
+
+    cleanup(&base);
+}
+
+// ============================================================================
+// FLUSH INODE — 423 Locked handling
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread")]
+async fn flush_inode_creates_conflict_copy_on_423_locked() {
+    let server = MockServer::start().await;
+    mock_file_download(&server, b"original").await;
+
+    // get_item for conflict check — eTags match (no prior conflict)
+    Mock::given(method("GET"))
+        .and(path(format!("/drives/{DRIVE_ID}/items/{FILE_ITEM_ID}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": FILE_ITEM_ID,
+            "name": "hello.txt",
+            "size": 8,
+            "eTag": "etag-1",
+            "parentReference": { "driveId": DRIVE_ID, "id": ROOT_ITEM_ID },
+            "file": { "mimeType": "text/plain" }
+        })))
+        .mount(&server)
+        .await;
+
+    // Main upload has If-Match header (from conflict check) → 423 Locked
+    Mock::given(method("PUT"))
+        .and(header_exists("If-Match"))
+        .respond_with(ResponseTemplate::new(423).set_body_json(json!({
+            "error": {
+                "code": "notAllowed",
+                "message": "The resource you are attempting to access is locked"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    // Conflict copy has no If-Match header → 200 success
+    Mock::given(method("PUT"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "conflict-copy-id",
+            "name": "hello.conflict.123.txt",
+            "size": 7,
+        })))
+        .mount(&server)
+        .await;
+
+    let (cache, base) = make_cache("flush-423");
+    let graph = make_graph(&server.uri());
+    let ops = setup_core_ops(graph, cache.clone());
+
+    let ops2 = ops.clone();
+    tokio::task::spawn_blocking(move || {
+        let fh = ops2.open_file(2).unwrap();
+        ops2.write_handle(fh, 0, b"changed").unwrap();
+        // flush_handle returns Ok when conflict copy upload succeeds
+        // (data is safe as conflict copy, dirty is cleared)
+        ops2.flush_handle(fh)
+            .expect("flush should succeed after conflict copy upload");
+        let _ = ops2.release_file(fh);
+    })
+    .await
+    .unwrap();
+
+    // Writeback buffer should be cleared (conflict copy was uploaded)
+    let wb = cache.writeback.read(DRIVE_ID, FILE_ITEM_ID).await;
+    assert!(
+        wb.is_none(),
+        "writeback should be cleared after conflict copy upload"
+    );
+
+    cleanup(&base);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn flush_inode_preserves_writeback_when_conflict_copy_also_fails() {
+    let server = MockServer::start().await;
+    mock_file_download(&server, b"original").await;
+
+    // get_item for conflict check — eTags match
+    Mock::given(method("GET"))
+        .and(path(format!("/drives/{DRIVE_ID}/items/{FILE_ITEM_ID}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": FILE_ITEM_ID,
+            "name": "hello.txt",
+            "size": 8,
+            "eTag": "etag-1",
+            "parentReference": { "driveId": DRIVE_ID, "id": ROOT_ITEM_ID },
+            "file": { "mimeType": "text/plain" }
+        })))
+        .mount(&server)
+        .await;
+
+    // Catch-all PUT → 500 (conflict copy also fails)
+    Mock::given(method("PUT"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+
+    // Main upload has If-Match header → 423 Locked
+    Mock::given(method("PUT"))
+        .and(header_exists("If-Match"))
+        .respond_with(ResponseTemplate::new(423).set_body_json(json!({
+            "error": {
+                "code": "notAllowed",
+                "message": "locked"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let (cache, base) = make_cache("flush-423-copy-fail");
+    let graph = make_graph(&server.uri());
+    let ops = setup_core_ops(graph, cache.clone());
+
+    let ops2 = ops.clone();
+    tokio::task::spawn_blocking(move || {
+        let fh = ops2.open_file(2).unwrap();
+        ops2.write_handle(fh, 0, b"changed").unwrap();
+        let result = ops2.flush_handle(fh);
+        assert!(result.is_err(), "flush should fail");
+        let _ = ops2.release_file(fh);
+    })
+    .await
+    .unwrap();
+
+    // Writeback buffer should still have content (crash recovery safety net)
+    let wb = cache.writeback.read(DRIVE_ID, FILE_ITEM_ID).await;
+    assert!(
+        wb.is_some(),
+        "writeback should be preserved when conflict copy also fails"
+    );
 
     cleanup(&base);
 }

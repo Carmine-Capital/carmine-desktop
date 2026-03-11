@@ -731,6 +731,64 @@ fn strip_win32_long_path_prefix(path: &Path) -> std::borrow::Cow<'_, Path> {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn register_context_menu() -> cloudmount_core::Result<()> {
+    use winreg::RegKey;
+    use winreg::enums::*;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let shell_path = r"Software\Classes\*\shell\CloudMount.OpenInSharePoint";
+    let command_path = format!("{}\\command", shell_path);
+
+    let (shell_key, _disp) = hkcu.create_subkey(shell_path).map_err(|e| {
+        cloudmount_core::Error::Filesystem(format!("failed to create shell key: {e:?}"))
+    })?;
+
+    shell_key
+        .set_value("", &"Open in SharePoint".to_string())
+        .map_err(|e| {
+            cloudmount_core::Error::Filesystem(format!("failed to set display name: {e:?}"))
+        })?;
+
+    let (command_key, _disp) = hkcu.create_subkey(&command_path).map_err(|e| {
+        cloudmount_core::Error::Filesystem(format!("failed to create command key: {e:?}"))
+    })?;
+
+    let cmd_value = r"cmd /c start cloudmount://open-online?path=%1";
+    command_key
+        .set_value("", &cmd_value.to_string())
+        .map_err(|e| cloudmount_core::Error::Filesystem(format!("failed to set command: {e:?}")))?;
+
+    tracing::info!("registered Windows Explorer context menu for 'Open in SharePoint'");
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn unregister_context_menu() -> cloudmount_core::Result<()> {
+    use winreg::RegKey;
+    use winreg::enums::*;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let shell_path = r"Software\Classes\*\shell\CloudMount.OpenInSharePoint";
+
+    hkcu.delete_subkey_all(shell_path).map_err(|e| {
+        cloudmount_core::Error::Filesystem(format!("failed to remove context menu keys: {e:?}"))
+    })?;
+
+    tracing::info!("unregistered Windows Explorer context menu");
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn register_context_menu() -> cloudmount_core::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn unregister_context_menu() -> cloudmount_core::Result<()> {
+    Ok(())
+}
+
 fn register_sync_root(sync_root_id: &SyncRootId, mount_path: &Path) -> cloudmount_core::Result<()> {
     let info = SyncRootInfo::default()
         .with_display_name(PROVIDER_NAME)
@@ -813,6 +871,7 @@ impl CfMountHandle {
 
         if !is_registered {
             register_sync_root(&sync_root_id, mount_path)?;
+            register_context_menu()?;
         }
 
         let root_item = block_on_compat(&rt, graph.get_item(&drive_id, "root")).map_err(|e| {
@@ -876,6 +935,7 @@ impl CfMountHandle {
         self.sync_root_id.unregister().map_err(|e| {
             cloudmount_core::Error::Filesystem(format!("sync root unregister failed: {e:?}"))
         })?;
+        unregister_context_menu()?;
         tracing::info!("unregistered sync root for {}", self.mount_path.display());
         Ok(())
     }

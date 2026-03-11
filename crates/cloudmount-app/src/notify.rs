@@ -118,6 +118,32 @@ pub fn writeback_failed(app: &AppHandle, file_name: &str) {
     );
 }
 
+pub fn upload_failed(app: &AppHandle, file_name: &str, reason: &str) {
+    send(
+        app,
+        "Upload Failed",
+        &format!("Failed to upload '{file_name}': {reason}"),
+    );
+}
+
+pub fn file_locked(app: &AppHandle, file_name: &str) {
+    send(
+        app,
+        "File Locked",
+        &format!(
+            "'{file_name}' is being edited online. Local changes will be saved as a separate copy."
+        ),
+    );
+}
+
+pub fn deep_link_failed(app: &AppHandle, reason: &str) {
+    send(
+        app,
+        "Open in SharePoint",
+        &format!("Could not open file: {reason}"),
+    );
+}
+
 pub fn files_recovered(app: &AppHandle, count: usize, path: &str) {
     send(
         app,

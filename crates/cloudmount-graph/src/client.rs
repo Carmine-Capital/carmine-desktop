@@ -93,6 +93,10 @@ impl GraphClient {
             return Err(cloudmount_core::Error::PreconditionFailed);
         }
 
+        if status.as_u16() == 423 {
+            return Err(cloudmount_core::Error::Locked);
+        }
+
         if status == StatusCode::TOO_MANY_REQUESTS {
             let retry_after = resp
                 .headers()
@@ -154,7 +158,7 @@ impl GraphClient {
         let base_url = &self.base_url;
         let mut items = Vec::new();
         let mut url = format!(
-            "{base_url}/drives/{drive_id}/items/{item_id}/children?$top=200&$select=id,name,size,lastModifiedDateTime,createdDateTime,eTag,parentReference,folder,file,@microsoft.graph.downloadUrl"
+            "{base_url}/drives/{drive_id}/items/{item_id}/children?$top=200&$select=id,name,size,lastModifiedDateTime,createdDateTime,eTag,parentReference,folder,file,@microsoft.graph.downloadUrl,webUrl"
         );
 
         loop {
@@ -176,7 +180,7 @@ impl GraphClient {
         let base_url = &self.base_url;
         let mut items = Vec::new();
         let mut url = format!(
-            "{base_url}/drives/{drive_id}/root/children?$top=200&$select=id,name,size,lastModifiedDateTime,createdDateTime,eTag,parentReference,folder,file,@microsoft.graph.downloadUrl"
+            "{base_url}/drives/{drive_id}/root/children?$top=200&$select=id,name,size,lastModifiedDateTime,createdDateTime,eTag,parentReference,folder,file,@microsoft.graph.downloadUrl,webUrl"
         );
 
         loop {
