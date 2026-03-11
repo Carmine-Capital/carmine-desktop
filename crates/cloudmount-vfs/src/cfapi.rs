@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -72,7 +72,8 @@ impl CloudMountCfFilter {
         mount_path: PathBuf,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
     ) -> Self {
-        let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt);
+        let mut ops =
+            CoreOps::new(graph, cache, inodes, drive_id, rt).with_mount_path(mount_path.clone());
         if let Some(tx) = event_tx {
             ops = ops.with_event_sender(tx);
         }
@@ -281,7 +282,13 @@ impl CloudMountCfFilter {
             return false;
         }
 
-        if let Some(server_mtime) = item.last_modified
+        // Skip the unmodified guard for local:* items — they haven't been
+        // uploaded yet, so the cached DriveItem was created with the SAME mtime
+        // and size as the local file, making the comparison always conclude
+        // "unmodified".  The guard is only meaningful for items that already
+        // exist on OneDrive.
+        if !item_id.starts_with("local:")
+            && let Some(server_mtime) = item.last_modified
             && let Ok(file_sys_time) = meta.modified()
         {
             let file_mtime = chrono::DateTime::<chrono::Utc>::from(file_sys_time);
@@ -856,6 +863,17 @@ impl SyncFilter for CloudMountCfFilter {
                     target = %target_path.display(),
                     "cfapi: rename failed: {e:?}"
                 );
+                if let Err(te) = ticket.pass() {
+                    tracing::warn!(
+                        path = %abs_path.display(),
+                        "cfapi: rename ticket.pass() failed after Graph error: {te:?}"
+                    );
+                }
+                tracing::info!(
+                    path = %abs_path.display(),
+                    target = %target_path.display(),
+                    "cfapi: rename acknowledged to OS despite Graph API failure"
+                );
             }
         }
 
@@ -893,6 +911,53 @@ impl SyncFilter for CloudMountCfFilter {
             }
         }
         self.retry_deferred_ingest();
+    }
+}
+
+/// Delegate `SyncFilter` to `Arc<CloudMountCfFilter>` so we can pass a pre-wrapped
+/// `Arc` into `Session::connect()` while retaining a clone for watcher/timer threads.
+impl SyncFilter for Arc<CloudMountCfFilter> {
+    fn fetch_data(
+        &self,
+        request: Request,
+        ticket: ticket::FetchData,
+        info: info::FetchData,
+    ) -> CResult<()> {
+        (**self).fetch_data(request, ticket, info)
+    }
+
+    fn fetch_placeholders(
+        &self,
+        request: Request,
+        ticket: ticket::FetchPlaceholders,
+        info: info::FetchPlaceholders,
+    ) -> CResult<()> {
+        (**self).fetch_placeholders(request, ticket, info)
+    }
+
+    fn closed(&self, request: Request, info: info::Closed) {
+        (**self).closed(request, info)
+    }
+
+    fn dehydrate(
+        &self,
+        request: Request,
+        ticket: ticket::Dehydrate,
+        info: info::Dehydrate,
+    ) -> CResult<()> {
+        (**self).dehydrate(request, ticket, info)
+    }
+
+    fn delete(&self, request: Request, ticket: ticket::Delete, info: info::Delete) -> CResult<()> {
+        (**self).delete(request, ticket, info)
+    }
+
+    fn rename(&self, request: Request, ticket: ticket::Rename, info: info::Rename) -> CResult<()> {
+        (**self).rename(request, ticket, info)
+    }
+
+    fn state_changed(&self, changes: Vec<PathBuf>) {
+        (**self).state_changed(changes)
     }
 }
 
@@ -1208,15 +1273,230 @@ fn register_sync_root(
     Ok(())
 }
 
+/// Debounce window for filesystem watcher events. Events for the same path
+/// within this interval are collapsed into a single `ingest_local_change()` call.
+const WATCHER_DEBOUNCE: Duration = Duration::from_millis(500);
+
+/// Buffer size for `ReadDirectoryChangesW` notification data (~64 KiB).
+const WATCHER_BUF_SIZE: usize = 64 * 1024;
+
+/// Spawn a dedicated OS thread that monitors `mount_path` for local filesystem
+/// changes using `ReadDirectoryChangesW` (synchronous/blocking mode). Events are
+/// debounced per-path and routed to [`CloudMountCfFilter::ingest_local_change`].
+///
+/// The thread runs until `stop_flag` is set to `true` or the directory handle
+/// becomes invalid (e.g. sync root unmounted).
+pub fn spawn_local_watcher(
+    mount_path: PathBuf,
+    filter: Arc<CloudMountCfFilter>,
+    stop_flag: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("cfapi-local-watcher".into())
+        .spawn(move || {
+            local_watcher_loop(&mount_path, &filter, &stop_flag);
+        })
+        .expect("failed to spawn local watcher thread")
+}
+
+fn local_watcher_loop(mount_path: &Path, filter: &CloudMountCfFilter, stop_flag: &AtomicBool) {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE},
+        Storage::FileSystem::{
+            CreateFileW, FILE_ACTION_ADDED, FILE_ACTION_MODIFIED, FILE_ACTION_REMOVED,
+            FILE_ACTION_RENAMED_NEW_NAME, FILE_ACTION_RENAMED_OLD_NAME, FILE_FLAG_BACKUP_SEMANTICS,
+            FILE_LIST_DIRECTORY, FILE_NOTIFY_CHANGE_DIR_NAME, FILE_NOTIFY_CHANGE_FILE_NAME,
+            FILE_NOTIFY_CHANGE_LAST_WRITE, FILE_NOTIFY_CHANGE_SIZE, FILE_NOTIFY_INFORMATION,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+            ReadDirectoryChangesW,
+        },
+    };
+
+    let wide_path: Vec<u16> = mount_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // Open directory handle with backup semantics for ReadDirectoryChangesW.
+    let handle = unsafe {
+        CreateFileW(
+            wide_path.as_ptr(),
+            FILE_LIST_DIRECTORY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        )
+    };
+
+    if handle == INVALID_HANDLE_VALUE {
+        tracing::error!(
+            path = %mount_path.display(),
+            "cfapi watcher: failed to open directory handle"
+        );
+        return;
+    }
+
+    // Ensure the handle is closed when the function returns.
+    struct HandleGuard(HANDLE);
+    impl Drop for HandleGuard {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+    let _guard = HandleGuard(handle);
+
+    let notify_filter = FILE_NOTIFY_CHANGE_FILE_NAME
+        | FILE_NOTIFY_CHANGE_DIR_NAME
+        | FILE_NOTIFY_CHANGE_SIZE
+        | FILE_NOTIFY_CHANGE_LAST_WRITE;
+
+    let mut buffer = vec![0u8; WATCHER_BUF_SIZE];
+    let mut debounce: HashMap<PathBuf, Instant> = HashMap::new();
+
+    tracing::info!(
+        path = %mount_path.display(),
+        "cfapi watcher: started local filesystem watcher"
+    );
+
+    while !stop_flag.load(Ordering::Relaxed) {
+        let mut bytes_returned: u32 = 0;
+
+        // Synchronous (blocking) call — the dedicated thread is expected to block here.
+        let ok = unsafe {
+            ReadDirectoryChangesW(
+                handle,
+                buffer.as_mut_ptr().cast(),
+                buffer.len() as u32,
+                1, // bWatchSubtree = TRUE (recursive)
+                notify_filter,
+                &mut bytes_returned,
+                std::ptr::null_mut(), // no overlapped — synchronous
+                None,                 // no completion routine
+            )
+        };
+
+        if ok == 0 {
+            if stop_flag.load(Ordering::Relaxed) {
+                break;
+            }
+            tracing::warn!(
+                path = %mount_path.display(),
+                "cfapi watcher: ReadDirectoryChangesW failed, retrying in 1s"
+            );
+            std::thread::sleep(Duration::from_secs(1));
+            continue;
+        }
+
+        if bytes_returned == 0 {
+            continue;
+        }
+
+        // Parse FILE_NOTIFY_INFORMATION entries and collect affected paths.
+        let now = Instant::now();
+        let mut offset: usize = 0;
+        loop {
+            if offset + std::mem::size_of::<FILE_NOTIFY_INFORMATION>() > bytes_returned as usize {
+                break;
+            }
+
+            // Safety: offset is validated above and aligns to a FILE_NOTIFY_INFORMATION header.
+            let info = unsafe { &*(buffer.as_ptr().add(offset) as *const FILE_NOTIFY_INFORMATION) };
+
+            let action = info.Action;
+            let name_len_bytes = info.FileNameLength as usize;
+            // The FileName field sits at a fixed byte offset within FILE_NOTIFY_INFORMATION.
+            let name_offset = std::mem::offset_of!(FILE_NOTIFY_INFORMATION, FileName);
+            let name_ptr = unsafe { buffer.as_ptr().add(offset).add(name_offset) as *const u16 };
+            let name_len_u16 = name_len_bytes / std::mem::size_of::<u16>();
+
+            // Safety: name_ptr points into our buffer within bounds.
+            let name_slice = unsafe { std::slice::from_raw_parts(name_ptr, name_len_u16) };
+            let relative = OsString::from_wide(name_slice);
+            let abs_path = mount_path.join(&relative);
+
+            let trigger = match action {
+                FILE_ACTION_ADDED => "watcher:added",
+                FILE_ACTION_MODIFIED => "watcher:modified",
+                FILE_ACTION_REMOVED => "watcher:removed",
+                FILE_ACTION_RENAMED_OLD_NAME => "watcher:renamed_old",
+                FILE_ACTION_RENAMED_NEW_NAME => "watcher:renamed_new",
+                _ => "watcher:unknown",
+            };
+
+            // Per-path debouncing: skip if last event for this path was < 500ms ago.
+            let should_ingest = debounce
+                .get(&abs_path)
+                .map_or(true, |last| now.duration_since(*last) >= WATCHER_DEBOUNCE);
+
+            if should_ingest {
+                debounce.insert(abs_path.clone(), now);
+                filter.ingest_local_change(&abs_path, trigger);
+            }
+
+            // Advance to next entry or break.
+            if info.NextEntryOffset == 0 {
+                break;
+            }
+            offset += info.NextEntryOffset as usize;
+        }
+
+        // Flush expired debounce entries to prevent unbounded memory growth.
+        debounce.retain(|_, last| now.duration_since(*last) < WATCHER_DEBOUNCE * 4);
+    }
+
+    tracing::info!(
+        path = %mount_path.display(),
+        "cfapi watcher: local filesystem watcher stopped"
+    );
+}
+
+/// Spawns a background thread that periodically processes deferred operations.
+///
+/// Wakes every 500ms to run `process_safe_save_timeouts()`, `process_deferred_timeouts()`,
+/// and `retry_deferred_ingest()`. This ensures deferred items are processed even when no
+/// further CfApi callback fires within the timeout window.
+pub fn spawn_periodic_timer(
+    filter: Arc<CloudMountCfFilter>,
+    stop_flag: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("cfapi-periodic-timer".into())
+        .spawn(move || {
+            tracing::info!("cfapi periodic timer: started");
+
+            while !stop_flag.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(500));
+
+                if stop_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                filter.process_safe_save_timeouts();
+                filter.process_deferred_timeouts();
+                filter.retry_deferred_ingest();
+            }
+
+            tracing::info!("cfapi periodic timer: stopped");
+        })
+        .expect("failed to spawn periodic timer thread")
+}
+
 pub struct CfMountHandle {
     /// Must be dropped before `sync_root_id` is unregistered. See `unmount()`.
-    connection: Connection<CloudMountCfFilter>,
+    connection: Connection<Arc<CloudMountCfFilter>>,
     sync_root_id: SyncRootId,
     cache: Arc<CacheManager>,
     graph: Arc<GraphClient>,
     drive_id: String,
     rt: Handle,
     mount_path: PathBuf,
+    stop_flag: Arc<AtomicBool>,
+    watcher_handle: Option<std::thread::JoinHandle<()>>,
+    timer_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl CfMountHandle {
@@ -1272,7 +1552,7 @@ impl CfMountHandle {
             .sqlite
             .upsert_item(ROOT_INODE, &drive_id, &root_item, None)?;
 
-        let filter = CloudMountCfFilter::new(
+        let filter = Arc::new(CloudMountCfFilter::new(
             graph.clone(),
             cache.clone(),
             inodes,
@@ -1280,11 +1560,25 @@ impl CfMountHandle {
             rt.clone(),
             mount_path.to_path_buf(),
             event_tx,
-        );
+        ));
+
+        // Clone the Arc before Session::connect() takes ownership of the
+        // outer Arc<CloudMountCfFilter> value. The watcher and timer threads
+        // share the same filter instance to call ingest_local_change() and
+        // process timeouts.
+        let filter_for_threads = filter.clone();
 
         let connection = Session::new().connect(mount_path, filter).map_err(|e| {
             cloudmount_core::Error::Filesystem(format!("CfApi connect failed: {e:?}"))
         })?;
+
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let watcher_handle = Some(spawn_local_watcher(
+            mount_path.to_path_buf(),
+            filter_for_threads.clone(),
+            stop_flag.clone(),
+        ));
+        let timer_handle = Some(spawn_periodic_timer(filter_for_threads, stop_flag.clone()));
 
         on_mount_added();
 
@@ -1298,6 +1592,9 @@ impl CfMountHandle {
             drive_id,
             rt,
             mount_path: mount_path.to_path_buf(),
+            stop_flag,
+            watcher_handle,
+            timer_handle,
         })
     }
 
@@ -1309,7 +1606,7 @@ impl CfMountHandle {
         &self.drive_id
     }
 
-    pub fn unmount(self) -> cloudmount_core::Result<()> {
+    pub fn unmount(mut self) -> cloudmount_core::Result<()> {
         tracing::info!(
             "unmounting Cloud Files API at {}",
             self.mount_path.display()
@@ -1318,6 +1615,21 @@ impl CfMountHandle {
             &self.rt,
             crate::pending::flush_pending(&self.cache, &self.graph, &self.drive_id),
         );
+
+        // Signal watcher and timer threads to stop, then join them before
+        // disconnecting from the CfApi (which happens when Connection drops).
+        self.stop_flag.store(true, Ordering::Relaxed);
+        if let Some(h) = self.watcher_handle.take() {
+            if let Err(e) = h.join() {
+                tracing::warn!("cfapi watcher thread panicked: {e:?}");
+            }
+        }
+        if let Some(h) = self.timer_handle.take() {
+            if let Err(e) = h.join() {
+                tracing::warn!("cfapi timer thread panicked: {e:?}");
+            }
+        }
+
         drop(self.connection);
         let unregister_result = self.sync_root_id.unregister();
         on_mount_removed();

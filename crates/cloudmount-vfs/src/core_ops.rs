@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -439,6 +440,9 @@ pub struct CoreOps {
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
     quota_cache: std::sync::Mutex<Option<(Instant, DriveQuota)>>,
     inode_invalidator: Option<InodeInvalidator>,
+    /// Absolute path to the mount/sync root on disk. Set by CfApi backend on
+    /// Windows for post-upload placeholder conversion; `None` on FUSE.
+    mount_path: Option<PathBuf>,
 }
 
 impl CoreOps {
@@ -459,6 +463,7 @@ impl CoreOps {
             event_tx: None,
             quota_cache: std::sync::Mutex::new(None),
             inode_invalidator: None,
+            mount_path: None,
         }
     }
 
@@ -469,6 +474,11 @@ impl CoreOps {
 
     pub fn with_inode_invalidator(mut self, f: InodeInvalidator) -> Self {
         self.inode_invalidator = Some(f);
+        self
+    }
+
+    pub fn with_mount_path(mut self, path: PathBuf) -> Self {
+        self.mount_path = Some(path);
         self
     }
 
@@ -570,6 +580,33 @@ impl CoreOps {
 
         let item = self.lookup_item(current_ino)?;
         Some((current_ino, item))
+    }
+
+    /// Build the absolute filesystem path for a given inode by walking up the
+    /// parent chain to the root and prepending `mount_path`. Returns `None` if
+    /// `mount_path` is not set or the parent chain cannot be fully resolved.
+    #[cfg(target_os = "windows")]
+    fn build_absolute_path(&self, ino: u64) -> Option<PathBuf> {
+        let mount = self.mount_path.as_ref()?;
+        let mut segments: Vec<String> = Vec::new();
+        let mut current = ino;
+
+        while current != crate::inode::ROOT_INODE {
+            let item = self.lookup_item(current)?;
+            segments.push(item.name.clone());
+            let parent_item_id = item
+                .parent_reference
+                .as_ref()
+                .and_then(|p| p.id.as_deref())?;
+            current = self.inodes.get_inode(parent_item_id)?;
+        }
+
+        segments.reverse();
+        let mut path = mount.clone();
+        for seg in &segments {
+            path.push(seg);
+        }
+        Some(path)
     }
 
     /// Look up a [`DriveItem`] by inode from cache (memory → SQLite).
@@ -1011,6 +1048,40 @@ impl CoreOps {
                 let _ = self
                     .rt
                     .block_on(self.cache.writeback.remove(&self.drive_id, &item_id));
+
+                // Convert newly uploaded local files to CfApi placeholders so
+                // future operations use the CfApi callback pipeline instead of
+                // the slower filesystem watcher path.
+                #[cfg(target_os = "windows")]
+                if is_new_file {
+                    if let Some(abs_path) = self.build_absolute_path(ino) {
+                        match cloud_filter::placeholder::Placeholder::open(&abs_path) {
+                            Ok(mut ph) => {
+                                let opts = cloud_filter::placeholder::ConvertOptions::default()
+                                    .blob(updated_item.id.as_bytes().to_vec())
+                                    .mark_in_sync();
+                                if let Err(e) = ph.convert_to_placeholder(opts, None) {
+                                    tracing::warn!(
+                                        path = %abs_path.display(),
+                                        "post-upload placeholder conversion failed: {e:?}"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    path = %abs_path.display(),
+                                    "failed to open file for placeholder conversion: {e:?}"
+                                );
+                            }
+                        }
+                    } else {
+                        tracing::warn!(
+                            ino,
+                            "cannot resolve absolute path for placeholder conversion"
+                        );
+                    }
+                }
+
                 Ok(())
             }
             Err(cloudmount_core::Error::PreconditionFailed) => {

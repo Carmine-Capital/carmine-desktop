@@ -299,6 +299,13 @@ async fn cfapi_edit_and_sync_file() {
     fixture.teardown();
 }
 
+/// Copy-in scenario (Phase 7 task 7.1): a file written from outside the sync
+/// root is detected by the watcher, `ingest_local_change()` calls
+/// `register_local_file()` to create a `local:*` item, and
+/// `stage_writeback_from_disk()` uploads it — NOT skipped by the unmodified
+/// guard.  The `.expect(1)` on the upload mock verifies exactly one upload.
+/// See also `cfapi_local_item_not_skipped_by_unmodified_guard` which isolates
+/// the guard bypass for `local:*` item IDs.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires Windows CfApi"]
 async fn cfapi_external_copy_in_uploads_without_restart() {
@@ -329,6 +336,14 @@ async fn cfapi_external_copy_in_uploads_without_restart() {
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
+    // Verify the file exists locally after being ingested.
+    assert!(
+        std::fs::metadata(fixture.path("copied-in.txt")).is_ok(),
+        "copied-in file should exist in sync root"
+    );
+
+    // The `.expect(1)` mock assertion fires during teardown, confirming the
+    // upload was NOT skipped by the unmodified guard.
     fixture.teardown();
 }
 
@@ -517,4 +532,236 @@ async fn cfapi_multi_mount_lifecycle() {
         initial_count,
         "final unmount should clear count"
     );
+}
+
+/// Verify that a `local:*` item is NOT skipped by the unmodified guard in
+/// `stage_writeback_from_disk()` even when the file's mtime and size match the
+/// cached DriveItem.
+///
+/// Before the fix (adding `!item_id.starts_with("local:")` to the guard),
+/// `register_local_file()` created a DriveItem with the SAME mtime/size as the
+/// local file, so the comparison always concluded "unmodified" and silently
+/// dropped the upload.  This test writes a file into the sync root (triggering
+/// `register_local_file` followed by `stage_writeback_from_disk`) and asserts
+/// that the upload endpoint IS called exactly once.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires Windows CfApi"]
+async fn cfapi_local_item_not_skipped_by_unmodified_guard() {
+    let server = MockServer::start().await;
+    mock_root_listing(&server).await;
+
+    // The upload mock expects exactly 1 request — if the unmodified guard
+    // incorrectly skips the local:* item, this expectation will fail.
+    Mock::given(method("PUT"))
+        .and(path(format!(
+            "/drives/{DRIVE_ID}/items/{ROOT_ITEM_ID}:/local-new.txt:/content"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(drive_item_json(
+            "server-assigned-id",
+            "local-new.txt",
+            17,
+            false,
+        )))
+        .expect(1)
+        .named("local item upload")
+        .mount(&server)
+        .await;
+
+    let fixture = CfTestFixture::setup(&server).await;
+
+    // Write a new file into the sync root.  The CfApi closed callback fires
+    // `register_local_file()` (creating a DriveItem with matching mtime/size)
+    // and then calls `stage_writeback_from_disk()`.  With the fix, the
+    // unmodified guard is bypassed for `local:*` IDs, so the file is staged
+    // and uploaded.
+    let p = fixture.path("local-new.txt");
+    tokio::task::spawn_blocking(move || std::fs::write(p, b"local file content"))
+        .await
+        .unwrap()
+        .expect("local file write failed");
+
+    // Allow time for the sync pipeline to detect and upload the file.
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    // Teardown verifies the mock expectation (exactly 1 upload call).
+    fixture.teardown();
+}
+
+/// Internal copy scenario (Phase 7 task 7.2): a placeholder file inside one
+/// subfolder is copied to another subfolder within the same sync root.  The
+/// copy creates a new file in the destination, which the watcher detects and
+/// ingests via `register_local_file()` + `stage_writeback_from_disk()`.
+/// The upload mock on the destination folder expects exactly one PUT.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires Windows CfApi"]
+async fn cfapi_internal_copy_between_subfolders_triggers_upload() {
+    let server = MockServer::start().await;
+
+    // Root listing includes two subfolders.
+    mock_root_item(&server).await;
+    let children_path = format!("/drives/{DRIVE_ID}/items/{ROOT_ITEM_ID}/children");
+    Mock::given(method("GET"))
+        .and(path(&children_path))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                drive_item_json("folder-src", "src-folder", 0, true),
+                drive_item_json("folder-dst", "dst-folder", 0, true),
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    // Children listing for src-folder contains one file.
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/drives/{DRIVE_ID}/items/folder-src/children"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                drive_item_json("src-file-1", "data.txt", 18, false),
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    // Children listing for dst-folder is initially empty.
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/drives/{DRIVE_ID}/items/folder-dst/children"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": []
+        })))
+        .mount(&server)
+        .await;
+
+    // Download mock for hydrating the source file before copy.
+    mock_file_download(&server, "src-file-1", b"internal copy data").await;
+
+    // The upload endpoint for the destination folder expects exactly 1 PUT.
+    Mock::given(method("PUT"))
+        .and(path(format!(
+            "/drives/{DRIVE_ID}/items/folder-dst:/data.txt:/content"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(drive_item_json(
+            "dst-file-new",
+            "data.txt",
+            18,
+            false,
+        )))
+        .expect(1)
+        .named("internal copy upload to dst-folder")
+        .mount(&server)
+        .await;
+
+    let fixture = CfTestFixture::setup(&server).await;
+
+    // Create subfolder placeholders in the sync root.
+    PlaceholderFile::new("src-folder")
+        .metadata(Metadata::directory())
+        .blob(b"folder-src".to_vec())
+        .mark_in_sync()
+        .create::<&std::path::Path>(fixture.mount_path.as_path())
+        .expect("create src-folder placeholder");
+
+    PlaceholderFile::new("dst-folder")
+        .metadata(Metadata::directory())
+        .blob(b"folder-dst".to_vec())
+        .mark_in_sync()
+        .create::<&std::path::Path>(fixture.mount_path.as_path())
+        .expect("create dst-folder placeholder");
+
+    // Create the source file placeholder inside src-folder.
+    let src_dir = fixture.path("src-folder");
+    PlaceholderFile::new("data.txt")
+        .metadata(Metadata::file().size(18))
+        .blob(b"src-file-1".to_vec())
+        .create::<&std::path::Path>(src_dir.as_path())
+        .expect("create data.txt placeholder in src-folder");
+
+    // Hydrate the source file so we have content to copy.
+    let src_path = fixture.path("src-folder").join("data.txt");
+    let _ = tokio::task::spawn_blocking(move || std::fs::read(src_path))
+        .await
+        .unwrap()
+        .expect("hydrate source file");
+
+    // Copy the file to dst-folder.  This is the "internal copy" — the new
+    // file at dst-folder/data.txt should be detected and uploaded.
+    let src = fixture.path("src-folder").join("data.txt");
+    let dst = fixture.path("dst-folder").join("data.txt");
+    tokio::task::spawn_blocking(move || std::fs::copy(src, dst))
+        .await
+        .unwrap()
+        .expect("internal copy failed");
+
+    // Allow time for the watcher to detect and the pipeline to upload.
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    assert!(
+        std::fs::metadata(fixture.path("dst-folder").join("data.txt")).is_ok(),
+        "copied file should exist in dst-folder"
+    );
+
+    // The `.expect(1)` mock assertion fires during teardown.
+    fixture.teardown();
+}
+
+/// Rename with Graph API failure (Phase 7 task 7.3): renaming a placeholder
+/// file triggers `core.rename()` which calls the Graph PATCH endpoint.  When
+/// the server returns 500, the rename callback still calls `ticket.pass()` so
+/// the OS sees a successful local rename.  The file should exist at the new
+/// name after the operation.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires Windows CfApi"]
+async fn cfapi_rename_calls_ticket_pass_on_graph_failure() {
+    let server = MockServer::start().await;
+    mock_root_listing(&server).await;
+
+    // Mock the PATCH endpoint to return 500 — simulating Graph API failure.
+    Mock::given(method("PATCH"))
+        .and(path(format!("/drives/{DRIVE_ID}/items/file-1")))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({
+            "error": {
+                "code": "generalException",
+                "message": "Internal Server Error"
+            }
+        })))
+        .expect(1)
+        .named("rename PATCH (should fail with 500)")
+        .mount(&server)
+        .await;
+
+    let fixture = CfTestFixture::setup(&server).await;
+    fixture.create_root_placeholders();
+
+    // Rename the placeholder file.  CfApi fires the rename callback, which
+    // calls core.rename() → Graph PATCH → 500 error.  The fix ensures
+    // ticket.pass() is called in the Err branch, so the OS considers the
+    // rename successful.
+    let old_path = fixture.path("hello.txt");
+    let new_path = fixture.path("hello-renamed.txt");
+    let np = new_path.clone();
+    tokio::task::spawn_blocking(move || std::fs::rename(old_path, np))
+        .await
+        .unwrap()
+        .expect("local rename should succeed even when Graph API fails");
+
+    // Give sync time to propagate the callback.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    // The file should exist at the new name — ticket.pass() was called.
+    assert!(
+        std::fs::metadata(&new_path).is_ok(),
+        "renamed file should exist at the new path"
+    );
+
+    // The original should no longer exist.
+    assert!(
+        std::fs::metadata(fixture.path("hello.txt")).is_err(),
+        "original file should not exist after rename"
+    );
+
+    // The `.expect(1)` mock verifies the PATCH was attempted during teardown.
+    fixture.teardown();
 }
