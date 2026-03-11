@@ -529,19 +529,21 @@ The InodeTable SHALL guarantee a 1:1 mapping between `item_id` and `inode` under
 - **THEN** the `inode_to_item` and `item_to_inode` maps SHALL contain exactly one entry each for that `item_id`, with no orphaned inode numbers
 
 ### Requirement: CfApi closed callback skips unmodified files
-On Windows, the CfApi `closed()` callback SHALL skip the writeback and upload cycle when the file was not modified since last sync. The system SHALL compare the file's Last Write Time (from filesystem metadata) against the cached `DriveItem.last_modified` timestamp. If the timestamps match within a 1-second tolerance, the system SHALL return immediately without reading file content, writing to the writeback buffer, or calling `flush_inode`.
+On Windows, the CfApi `closed()` callback SHALL skip the writeback and upload cycle only when the file can be resolved to a known VFS item and is confirmed unmodified since last sync. Unmodified detection SHALL require a stable metadata match against cached server state (including Last Write Time tolerance and file size consistency for the resolved item). The callback SHALL NOT treat unresolved or non-placeholder local files as unmodified by default.
+
+When the callback cannot safely determine that a file is unmodified (for example unresolved path, missing item mapping, or non-placeholder local file), the system SHALL log the reason and hand off to the Windows local-change ingest path instead of returning silently.
 
 #### Scenario: Read-only file open on Windows
-- **WHEN** a user opens a hydrated file in a read-only application (e.g., preview, viewer) and closes it without modification
-- **THEN** the `closed()` callback SHALL detect that the file's Last Write Time matches the cached server timestamp and SHALL NOT trigger any Graph API calls
+- **WHEN** a user opens a hydrated file in a read-only application and closes it without modification
+- **THEN** the `closed()` callback detects a confirmed unmodified state and skips writeback/upload Graph calls
 
 #### Scenario: Modified file close on Windows
-- **WHEN** a user edits a file and saves changes, causing Windows to update the file's Last Write Time
-- **THEN** the `closed()` callback SHALL detect the mtime mismatch and proceed with the full writeback and upload cycle including conflict detection
+- **WHEN** a user edits a placeholder-backed file and saves changes
+- **THEN** the `closed()` callback detects modified state and proceeds with writeback and upload
 
-#### Scenario: Newly hydrated file close
-- **WHEN** `fetch_data` hydrates a placeholder file and the user closes it without editing
-- **THEN** the `closed()` callback SHALL detect that the file's Last Write Time (set by `mark_placeholder_synced`) matches the cached server timestamp and SHALL skip the upload
+#### Scenario: Closed callback receives unresolved or non-placeholder file
+- **WHEN** `closed()` fires for a path that cannot be resolved to a known item or is not placeholder-backed
+- **THEN** the callback logs the guard reason and routes the path to local-change ingest handling rather than silently skipping upload
 
 ### Requirement: TOCTOU-safe placeholder population on Windows
 The system SHALL handle `ERROR_CLOUD_FILE_INVALID_REQUEST` returned by `CfCreatePlaceholders` as a per-item recoverable condition during the `FetchPlaceholders` callback. When a TOCTOU collision is detected, the system SHALL log a `warn!`-level message identifying the item and continue processing remaining items. The system SHALL NOT propagate `ERROR_CLOUD_FILE_INVALID_REQUEST` as a callback error, and SHALL NOT allow such a collision to crash the process. The `FetchPlaceholders` callback SHALL iterate over candidate placeholder items individually so that each item's result can be inspected independently.
@@ -676,21 +678,28 @@ The system SHALL emit a `VfsEvent::WritebackFailed` event when a CfApi `closed` 
 - **THEN** the system displays a desktop notification: "Failed to save changes to {file_name}. Your edits may be lost."
 
 ### Requirement: CfApi state_changed invalidates parent directory cache
-On Windows, when the `state_changed()` Cloud Files API callback fires for a placeholder, the system SHALL invalidate both the changed item's cache entry and its parent directory's cache entry. This ensures that subsequent `list_children` calls on the parent directory return fresh results reflecting the state change.
+On Windows, when the `state_changed()` Cloud Files API callback fires for a path under the sync root, the system SHALL invalidate the changed item's cache entry when resolvable and SHALL invalidate its parent directory cache entry when a parent exists. In addition, for file paths that indicate local mutable content changes, the callback SHALL enqueue local-change ingest evaluation so cache invalidation and upload triggering remain consistent.
 
 #### Scenario: state_changed for a file in a directory
-- **WHEN** the OS fires `state_changed` for a file placeholder inside a directory
-- **THEN** the system invalidates the file's inode cache entry AND the parent directory's inode cache entry
-- **AND** the next `list_children` call on the parent directory fetches fresh data
+- **WHEN** the OS fires `state_changed` for a file path inside a directory
+- **THEN** the system invalidates the file cache entry and parent directory cache entry when resolvable
+- **AND** enqueues local-change ingest evaluation for that file path
 
 #### Scenario: state_changed for the sync root itself
-- **WHEN** the OS fires `state_changed` for the sync root path (empty relative components)
-- **THEN** the system invalidates only the sync root's own cache entry
-- **AND** no parent invalidation is attempted (the sync root has no parent within the mount)
+- **WHEN** the OS fires `state_changed` for the sync root path
+- **THEN** the system invalidates only the sync root cache entry
+- **AND** no parent invalidation or file ingest enqueue is performed
 
 #### Scenario: state_changed for an unresolvable path
 - **WHEN** the OS fires `state_changed` for a path that cannot be resolved to an inode
-- **THEN** the system skips invalidation for that path and continues processing remaining paths
+- **THEN** the system logs the unresolved-path reason and still performs best-effort local-change ingest evaluation for that path
+
+### Requirement: Windows sync root declares supported in-sync attributes
+On Windows, sync root registration SHALL explicitly configure supported in-sync attributes for Cloud Files state evaluation, including last-write-time attributes for files and directories.
+
+#### Scenario: Sync root registration on Windows
+- **WHEN** a CfApi mount is registered
+- **THEN** the sync root registration includes explicit supported in-sync attributes used by Explorer to determine sync-state transitions
 
 ### Requirement: VfsEvent for upload failures
 The system SHALL define a `VfsEvent::UploadFailed { file_name: String, reason: String }` variant for generic upload failures. The FUSE backend SHALL emit this event from the `flush` callback when `flush_handle` returns an error, providing parity with the CfApi backend's existing `WritebackFailed` emission on `closed()` errors.
