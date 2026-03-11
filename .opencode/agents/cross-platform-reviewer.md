@@ -22,6 +22,7 @@ When reviewing changes to platform-gated code (`cfapi.rs`, Windows-only modules,
 
 - **too_many_arguments** — functions with >7 parameters (add `#[allow(clippy::too_many_arguments)]` with justification, or refactor into a config struct)
 - **unused_variables / unused_imports** — especially after refactors that remove usage of a parameter or import
+- **unused_mut** — `let mut x = ...;` where the only mutation is inside a `#[cfg(...)]` block; on platforms where that block is excluded `mut` is unused. Fix by splitting into platform-gated `let` bindings rather than a single `mut` binding with a conditional reassignment.
 - **needless_pass_by_value** — `Arc<T>`, `String`, etc. passed by value when a reference suffices
 - **redundant_clone** — `.clone()` on values that are already owned or about to be moved
 - **collapsible_if / collapsible_else_if** — nested if statements that can be collapsed

@@ -20,11 +20,12 @@ pub fn setup(app: &AppHandle, app_name: &str) -> tauri::Result<()> {
     let signout_item = MenuItemBuilder::with_id("sign_out", "Sign Out").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", format!("Quit {app_name}")).build(app)?;
 
-    let mut menu = MenuBuilder::new(app).item(&settings_item);
     #[cfg(target_os = "linux")]
-    {
-        menu = menu.item(&linux_integrations_item);
-    }
+    let menu = MenuBuilder::new(app)
+        .item(&settings_item)
+        .item(&linux_integrations_item);
+    #[cfg(not(target_os = "linux"))]
+    let menu = MenuBuilder::new(app).item(&settings_item);
     let menu = menu
         .item(&update_item)
         .item(&sep)

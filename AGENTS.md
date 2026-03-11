@@ -34,7 +34,7 @@ crates/
 
 ## CONSTRAINTS
 
-- **IMPORTANT: CI enforces zero warnings** — `RUSTFLAGS=-Dwarnings`, clippy runs `--all-targets --all-features`. No suppressed lints without justification.
+- **IMPORTANT: CI enforces zero warnings** — `RUSTFLAGS=-Dwarnings`, clippy runs `--all-targets --all-features`. No suppressed lints without justification. Collapse nested `if` blocks: `if cond { if let Err(e) = f() { ... } }` → `if cond && let Err(e) = f() { ... }`.
 - **IMPORTANT: No inline event handlers in HTML** — CSP `script-src 'self'` blocks `onclick="..."` etc. Use `addEventListener` in `.js` files only.
 - **IMPORTANT: OpenSpec specs are read-only** — never modify files in `openspec/specs/` directly unless explicitly asked. Use the OpenSpec workflow.
 - All user-facing actions must provide feedback via `showStatus()` in `ui.js`. Never let a mutating operation complete silently.
