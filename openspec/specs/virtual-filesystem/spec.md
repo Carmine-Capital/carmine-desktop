@@ -1,11 +1,7 @@
 ### Requirement: Mount drive as native filesystem
 The system SHALL mount a OneDrive or SharePoint drive as a native filesystem accessible by all applications on the operating system. Before the filesystem session is exposed to the OS, the system SHALL resolve the drive root item from the Graph API, register it in the inode table as ROOT_INODE (1), and seed it into the memory and SQLite caches. If the root item cannot be resolved, the mount SHALL fail with an error.
 
-On Windows, each CfApi mount SHALL use a unique sync root ID by including an `account_name` discriminator in the sync root ID construction. The sync root ID format SHALL be `<provider>!<security-id>!<account_name>`. The `account_name` parameter SHALL be required when calling `CfMountHandle::mount()`. The `account_name` value MUST NOT contain `!` (exclamation mark) characters, as `!` is the sync root ID component separator. When constructing the account_name from a Microsoft Graph drive ID, the caller SHALL replace all `!` characters with `_` before passing it to the mount function.
-
-On Windows, `CfMountHandle::mount()` SHALL accept a `display_name` parameter separate from `account_name`. The sync root SHALL be registered with `display_name` as the user-visible label shown in File Explorer's navigation pane. The `display_name` SHALL be the user-visible mount name (e.g., the value of `mount_config.name`) without `!`-sanitization. The sync root SHALL be registered unconditionally on every mount call (not only when previously unregistered) so that stale display names from prior launches are corrected.
-
-On Windows, the sync root icon SHALL reference the running application executable at index 0 (e.g., `<path-to-cloudmount.exe>,0`), resolved via `std::env::current_exe()` at mount time. If the executable path cannot be determined, the system SHALL fall back to a shell-provided cloud folder icon (`%SystemRoot%\system32\shell32.dll,43`). The icon MUST NOT reference `imageres.dll,0`.
+On Windows, the system SHALL mount the drive using WinFsp via `WinFspMountHandle::mount()`. The mount SHALL accept a directory path (e.g., `C:\Users\<user>\Cloud\OneDrive`) or a drive letter (e.g., `Z:`) as the mount point. No sync root registration, display name, account name, or icon configuration is required — WinFsp mounts appear as regular filesystem volumes.
 
 #### Scenario: Mount on Linux
 - **WHEN** the user enables a mount on Linux
@@ -16,32 +12,12 @@ On Windows, the sync root icon SHALL reference the running application executabl
 - **THEN** the system fetches the drive root item from the Graph API, seeds it into caches as inode 1, mounts the drive using macFUSE or FUSE-T at the configured path, and the volume appears in Finder
 
 #### Scenario: Mount on Windows
-- **WHEN** the user enables a mount on Windows with an `account_name` identifier and a `display_name`
-- **THEN** the system fetches the drive root item from the Graph API, seeds it into caches as inode 1, registers a Cloud Files API sync root unconditionally (overwriting any prior registration) with a unique sync root ID derived from the provider name, user security ID, and account name; the registration uses `display_name` as the File Explorer label and the application executable as the icon source; the sync root appears in File Explorer's navigation pane with the correct mount name and the CloudMount app icon
-
-#### Scenario: Windows sync root display name matches mount name
-- **WHEN** two or more drives are mounted on Windows with distinct names (e.g., "Adelya" and "Alpha Nova")
-- **THEN** each mount appears in File Explorer's navigation pane with its own user-visible name, not the generic provider name "CloudMount"
-
-#### Scenario: Windows sync root icon shows application icon
-- **WHEN** a mount is registered on Windows and `std::env::current_exe()` succeeds
-- **THEN** the sync root icon path is set to `<exe_path>,0` so File Explorer displays the CloudMount application icon next to each mount entry
-
-#### Scenario: Windows sync root icon fallback
-- **WHEN** a mount is registered on Windows and `std::env::current_exe()` fails
-- **THEN** the sync root icon falls back to `%SystemRoot%\system32\shell32.dll,43` and the mount is registered successfully without failing
-
-#### Scenario: Stale sync root registration corrected on remount
-- **WHEN** a sync root was previously registered with an incorrect display name (e.g., "CloudMount") and the user relaunches the application
-- **THEN** the sync root is re-registered unconditionally with the correct display name and icon, and File Explorer reflects the updated label without requiring a manual unmount/remount
-
-#### Scenario: Mount on Windows with drive ID containing exclamation marks
-- **WHEN** the user enables a mount on Windows and the drive ID contains `!` characters (e.g., SharePoint/OneDrive Business `b!...` format)
-- **THEN** the system sanitizes the account_name by replacing all `!` with `_` before constructing the sync root ID, producing a valid 3-component ID (`provider!SID!account_name_without_bangs`); the `display_name` is NOT sanitized and retains the original mount name as-is
+- **WHEN** the user enables a mount on Windows with a configured mount point
+- **THEN** the system fetches the drive root item from the Graph API, seeds it into caches as inode 1, creates a WinFsp filesystem host, mounts it at the configured directory path or drive letter, starts the host, and the mount becomes accessible to all applications via standard Windows file operations
 
 #### Scenario: Multiple concurrent Windows mounts
-- **WHEN** two or more drives are mounted simultaneously on Windows, each with a distinct `account_name`
-- **THEN** each mount SHALL have its own independent sync root registration, and CfApi callbacks SHALL be dispatched to the correct filter for each mount path
+- **WHEN** two or more drives are mounted simultaneously on Windows
+- **THEN** each mount SHALL have its own independent WinFsp filesystem host, and I/O operations SHALL be dispatched to the correct filesystem context for each mount path
 
 #### Scenario: Root resolution failure
 - **WHEN** the drive root item cannot be fetched from the Graph API at mount time (network error, invalid drive_id, auth error)
@@ -199,7 +175,7 @@ The system SHALL serve file read requests from the content buffer associated wit
 - **THEN** on `open()`, the system initiates a download (eager for small files, streaming for large files), and subsequent `read()` calls return data from the buffer as it becomes available
 
 ### Requirement: File write operations
-The system SHALL buffer writes in the `OpenFile` content buffer associated with the file handle and flush to the writeback buffer on `flush`/`release`. Writing to a file with an in-progress streaming download SHALL block until the download completes. On Windows, the CfApi `closed` callback SHALL propagate writeback errors instead of silently discarding them. If writeback fails, the callback SHALL log at `error` level, emit a `VfsEvent::WritebackFailed` event, and skip `flush_inode` and `mark_placeholder_synced`.
+The system SHALL buffer writes in the `OpenFile` content buffer associated with the file handle and flush to the writeback buffer on `flush`/`release`. Writing to a file with an in-progress streaming download SHALL block until the download completes.
 
 #### Scenario: Write to a file
 - **WHEN** a write operation is issued with a valid file handle whose content is fully available
@@ -216,16 +192,6 @@ The system SHALL buffer writes in the `OpenFile` content buffer associated with 
 #### Scenario: Write conflict detected
 - **WHEN** uploading a modified file and the remote eTag differs from the local eTag (another user modified the file)
 - **THEN** the system saves the local version as `<filename>.conflict.<timestamp>` in the same directory, downloads the remote version as the primary file, and emits a notification about the conflict
-
-#### Scenario: CfApi closed writeback error
-- **WHEN** the CfApi `closed` callback attempts to write file content to the writeback buffer and the write fails (e.g., disk full)
-- **THEN** the system logs the error at `error` level with the file path, emits a `VfsEvent::WritebackFailed` event, does NOT call `flush_inode`, and does NOT call `mark_placeholder_synced`
-- **AND** the file remains marked as pending so the user is aware the change was not persisted
-
-#### Scenario: CfApi closed streams large files to writeback
-- **WHEN** the CfApi `closed` callback processes a file larger than 4 MB
-- **THEN** the system reads the file in chunks (64 KiB) and writes each chunk directly to the writeback layer without accumulating the entire file in memory
-- **AND** if any chunk write fails, the system logs the error, emits a `VfsEvent::WritebackFailed` event, and aborts the writeback
 
 ### Requirement: Conditional upload with If-Match
 The system SHALL use the `If-Match` HTTP header when uploading modified files to close the TOCTOU window between conflict detection and upload. When `flush_inode` detects no local conflict (cached eTag matches server eTag), it SHALL pass the server eTag as an `If-Match` header to the upload request. If the server returns 412 Precondition Failed, the system SHALL treat it as a conflict and follow the standard conflict resolution path.
@@ -307,7 +273,7 @@ The system SHALL support creating new files and folders in mounted drives. `crea
 - **AND** the parent's existing children and metadata remain unchanged
 
 ### Requirement: Delete operations
-The system SHALL support deleting files and folders from mounted drives. After deleting a child, the system SHALL surgically remove the child from the parent's in-memory children cache rather than invalidating the entire parent entry. On Windows, the CfApi `delete` callback SHALL delegate to `CoreOps::unlink()` for files and `CoreOps::rmdir()` for folders, using the same shared logic as the FUSE backend. The CfApi callback SHALL resolve the parent inode from the relative path, determine whether the item is a file or folder, and call the appropriate `CoreOps` method. If the `CoreOps` method returns an error, the callback SHALL log at `warn` level and return `Ok(())` without calling `ticket.pass()`, so the OS sees the operation as incomplete and may retry.
+The system SHALL support deleting files and folders from mounted drives. After deleting a child, the system SHALL surgically remove the child from the parent's in-memory children cache rather than invalidating the entire parent entry.
 
 #### Scenario: Delete a file
 - **WHEN** an application deletes a file (e.g., `rm`, Delete key in Explorer)
@@ -328,18 +294,8 @@ The system SHALL support deleting files and folders from mounted drives. After d
 - **THEN** the system removes the deleted folder's name from the parent's children `HashMap`
 - **AND** the parent's remaining children and metadata remain unchanged
 
-#### Scenario: CfApi delete delegates to CoreOps
-- **WHEN** the CfApi `delete` callback is invoked for a file on Windows
-- **THEN** the system resolves the parent inode and child name from the relative path, calls `CoreOps::unlink(parent_ino, name)`, and on success calls `ticket.pass()`
-- **AND** if the item is a folder, the system calls `CoreOps::rmdir(parent_ino, name)` instead
-
-#### Scenario: CfApi delete error handling
-- **WHEN** the CfApi `delete` callback invokes `CoreOps::unlink()` or `CoreOps::rmdir()` and it returns an error (e.g., network failure, 403 Forbidden, directory not empty)
-- **THEN** the system logs the error at `warn` level with the file path and error details, does NOT call `ticket.pass()`, and returns `Ok(())` to the proxy
-- **AND** local caches are NOT purged (the `CoreOps` method handles cache cleanup only on success)
-
 ### Requirement: Rename and move operations
-The system SHALL support renaming and moving files and folders within a mounted drive. After renaming or moving a child, the system SHALL surgically update the affected parent directories' in-memory children caches rather than invalidating them. On Windows, the CfApi `rename` callback SHALL delegate to `CoreOps::rename()`, gaining eTag-based conflict detection on destination overwrite, error propagation, and parent cache invalidation. If the `CoreOps` method returns an error, the callback SHALL log at `warn` level and return `Ok(())` without calling `ticket.pass()`.
+The system SHALL support renaming and moving files and folders within a mounted drive. After renaming or moving a child, the system SHALL surgically update the affected parent directories' in-memory children caches rather than invalidating them.
 
 #### Scenario: Rename a file in the same directory
 - **WHEN** an application renames a file
@@ -358,35 +314,6 @@ The system SHALL support renaming and moving files and folders within a mounted 
 - **WHEN** a file or folder is moved from one directory to another
 - **THEN** the system removes the old name from the source parent's children `HashMap` and inserts the new name into the destination parent's children `HashMap`
 - **AND** no Graph API `list_children` call is triggered for either parent directory
-
-#### Scenario: CfApi rename delegates to CoreOps
-- **WHEN** the CfApi `rename` callback is invoked on Windows
-- **THEN** the system resolves source parent inode and child name from the source relative path, resolves destination parent inode and child name from the target relative path, calls `CoreOps::rename(src_parent_ino, src_name, dst_parent_ino, dst_name)`, and on success calls `ticket.pass()`
-
-#### Scenario: CfApi rename conflict detection
-- **WHEN** the CfApi `rename` callback invokes `CoreOps::rename()` and the destination file exists with a different eTag on the server
-- **THEN** the system creates a `.conflict.{timestamp}` copy of the server version (same as FUSE behavior), completes the rename, and emits a conflict VfsEvent
-
-#### Scenario: CfApi rename error handling
-- **WHEN** the CfApi `rename` callback invokes `CoreOps::rename()` and it returns an error
-- **THEN** the system logs the error at `warn` level with source and target paths, does NOT call `ticket.pass()`, and returns `Ok(())` to the proxy
-
-### Requirement: Lossless path handling on Windows
-The CfApi backend SHALL handle file paths without lossy Unicode conversion. The `relative_path` helper SHALL return pre-split path components as `OsString` values, preserving any NTFS-legal filenames that contain unpaired UTF-16 surrogates. `CoreOps::resolve_path()` SHALL accept `OsStr` path components and compare them against cache entries using lossless conversion. If an `OsStr` component cannot be converted to a valid `&str`, the lookup SHALL fail gracefully (return `None`) rather than silently corrupting the name.
-
-#### Scenario: Filename with unpaired UTF-16 surrogate
-- **WHEN** the CfApi backend receives a callback for a file whose NTFS name contains an unpaired UTF-16 surrogate (valid WTF-16, invalid UTF-8)
-- **THEN** the system preserves the `OsString` representation through path resolution
-- **AND** the cache lookup fails gracefully (the Graph API cannot store such names, so no match exists)
-- **AND** no U+FFFD replacement character is silently substituted into the path
-
-#### Scenario: Normal Unicode filename
-- **WHEN** the CfApi backend receives a callback for a file with a standard Unicode name
-- **THEN** the `OsStr` component converts losslessly to `&str` and the cache lookup proceeds normally
-
-#### Scenario: FUSE path handling unchanged
-- **WHEN** the FUSE backend passes an `OsStr` filename from the kernel to `CoreOps`
-- **THEN** the behavior is identical to the current implementation (FUSE filenames are already `OsStr`)
 
 ### Requirement: O(1) child lookup by name
 The system SHALL look up a child item by name under a parent directory in O(1) time using the parent's children `HashMap`, instead of iterating all children.
@@ -528,129 +455,10 @@ The InodeTable SHALL guarantee a 1:1 mapping between `item_id` and `inode` under
 - **WHEN** `allocate()` is called concurrently for the same `item_id`
 - **THEN** the `inode_to_item` and `item_to_inode` maps SHALL contain exactly one entry each for that `item_id`, with no orphaned inode numbers
 
-### Requirement: CfApi closed callback skips unmodified files
-On Windows, the CfApi `closed()` callback SHALL skip the writeback and upload cycle only when the file can be resolved to a known VFS item and is confirmed unmodified since last sync. Unmodified detection SHALL require a stable metadata match against cached server state (including Last Write Time tolerance and file size consistency for the resolved item). The callback SHALL NOT treat unresolved or non-placeholder local files as unmodified by default.
-
-When the callback cannot safely determine that a file is unmodified (for example unresolved path, missing item mapping, or non-placeholder local file), the system SHALL log the reason and hand off to the Windows local-change ingest path instead of returning silently.
-
-#### Scenario: Read-only file open on Windows
-- **WHEN** a user opens a hydrated file in a read-only application and closes it without modification
-- **THEN** the `closed()` callback detects a confirmed unmodified state and skips writeback/upload Graph calls
-
-#### Scenario: Modified file close on Windows
-- **WHEN** a user edits a placeholder-backed file and saves changes
-- **THEN** the `closed()` callback detects modified state and proceeds with writeback and upload
-
-#### Scenario: Closed callback receives unresolved or non-placeholder file
-- **WHEN** `closed()` fires for a path that cannot be resolved to a known item or is not placeholder-backed
-- **THEN** the callback logs the guard reason and routes the path to local-change ingest handling rather than silently skipping upload
-
 ### Requirement: TOCTOU-safe placeholder population on Windows
-The system SHALL handle `ERROR_CLOUD_FILE_INVALID_REQUEST` returned by `CfCreatePlaceholders` as a per-item recoverable condition during the `FetchPlaceholders` callback. When a TOCTOU collision is detected, the system SHALL log a `warn!`-level message identifying the item and continue processing remaining items. The system SHALL NOT propagate `ERROR_CLOUD_FILE_INVALID_REQUEST` as a callback error, and SHALL NOT allow such a collision to crash the process. The `FetchPlaceholders` callback SHALL iterate over candidate placeholder items individually so that each item's result can be inspected independently.
-
-#### Scenario: TOCTOU race during placeholder creation
-- **WHEN** `CfCreatePlaceholders` returns `ERROR_CLOUD_FILE_INVALID_REQUEST` for an item during the `FetchPlaceholders` callback (because the placeholder was created by another process or thread between the existence check and the API call)
-- **THEN** the system logs a `warn!` message identifying the item name and the collision, skips that item, and continues creating placeholders for remaining items without returning an error from the callback
-
-#### Scenario: No TOCTOU race — normal placeholder creation
-- **WHEN** `CfCreatePlaceholders` succeeds for an item during the `FetchPlaceholders` callback
-- **THEN** the system registers the placeholder and continues to the next item
-
-#### Scenario: Genuine API failure during placeholder creation
-- **WHEN** `CfCreatePlaceholders` returns an error other than `ERROR_CLOUD_FILE_INVALID_REQUEST` during the `FetchPlaceholders` callback
-- **THEN** the system returns that error from `fetch_placeholders` so the Cloud Files API infrastructure can signal failure to the OS
-
-#### Scenario: Pre-filter removes already-existing items before API call
-- **WHEN** the `FetchPlaceholders` callback is invoked for a directory that already has some placeholder files on disk
-- **THEN** the system filters out those items before calling `CfCreatePlaceholders`, reducing unnecessary API calls; the per-item error handling acts as a safety net for items that appear between the filter check and the API call
-
-### Requirement: Resilient CfApi callback error handling
-Each CfApi callback (`fetch_data`, `fetch_placeholders`, `delete`, `rename`, `closed`, `validate_data`, `state_changed`) SHALL handle errors gracefully without panicking or propagating unhandled exceptions across the FFI boundary. On error, each callback SHALL log sufficient context (callback name, file path, error details) and return `Ok(())` or skip the failing operation rather than returning an error that could trigger Windows error dialogs or cloud-filter panics.
-
-Writeback failures in `closed()` (file read, writeback write, chunk write, finalize, and flush_inode) SHALL emit a `VfsEvent::WritebackFailed { file_name }` event so the UI can notify the user that their changes may not have been saved. This ensures every error path in `closed()` surfaces user feedback.
-
-The CfApi `closed()` callback SHALL only proceed with the writeback cycle when the file has been modified since last sync (see: CfApi closed callback skips unmodified files).
-
-The `CfMountHandle` struct SHALL name the `Connection` field without a leading underscore (i.e., `connection`, not `_connection`) because its drop order relative to `sync_root_id` is safety-critical. The field SHALL be documented to explain that it must be dropped before `sync_root_id` is unregistered.
-
-#### Scenario: fetch_data cannot resolve the file path
-- **WHEN** the `fetch_data` callback is invoked for a file whose path cannot be resolved in the cache or via the Graph API
-- **THEN** the system logs a warning including the relative path and returns success to the proxy without writing any data to the transfer ticket
-- **AND** the OS surfaces an I/O error to the application that requested the file read
-
-#### Scenario: fetch_data download fails
-- **WHEN** the `fetch_data` callback resolves the file successfully but the content download (`read_range_direct`) fails due to a network error or API error
-- **THEN** the system logs a warning including the file path and error details and returns success to the proxy without writing any data to the transfer ticket
-- **AND** the OS surfaces an I/O error to the application that requested the file read
-
-#### Scenario: fetch_data write_at fails mid-transfer
-- **WHEN** the `fetch_data` callback begins writing hydration data via `ticket.write_at` but a write chunk fails
-- **THEN** the system logs a warning including the file path and error details, stops writing further chunks, and returns success to the proxy
-- **AND** the OS surfaces an I/O error to the application that requested the file read
-
-#### Scenario: delete ticket acknowledgement fails
-- **WHEN** the `delete` callback has completed its Graph API and cache cleanup but `ticket.pass()` fails
-- **THEN** the system logs a warning and returns success to the proxy
-- **AND** the OS may retry the delete callback; the cache and Graph API side effects are idempotent
-
-#### Scenario: rename ticket acknowledgement fails
-- **WHEN** the `rename` callback has completed its Graph API and cache update but `ticket.pass()` fails
-- **THEN** the system logs a warning and returns success to the proxy
-- **AND** the OS may retry the rename callback; the cache and Graph API side effects are idempotent
-
-#### Scenario: dehydrate ticket acknowledgement fails
-- **WHEN** the `dehydrate` callback has completed its disk cache removal but `ticket.pass()` fails
-- **THEN** the system logs a warning and returns success to the proxy
-- **AND** the OS may retry the dehydrate callback; the disk cache removal is idempotent
-
-#### Scenario: fetch_data logs path on write_at failure
-- **WHEN** `ticket.write_at()` fails during chunked data transfer in `fetch_data`
-- **THEN** the callback logs a warning with the file's absolute path (not an undefined variable) and breaks the write loop without panicking
-
-#### Scenario: closed skips unmodified files
-- **WHEN** `closed()` fires for a file whose Last Write Time matches the cached server timestamp
-- **THEN** the callback returns immediately without reading file content or calling flush_inode
-
-#### Scenario: closed flush_inode failure emits event
-- **WHEN** `flush_inode()` returns an error after a successful writeback write in `closed()`
-- **THEN** a `VfsEvent::WritebackFailed { file_name }` event is emitted and the error is logged
-
-#### Scenario: CfMountHandle drop order correctness
-- **WHEN** a `CfMountHandle` is dropped (either via `unmount()` or implicit drop)
-- **THEN** the `connection` field is dropped before `sync_root_id` is unregistered, preventing Windows from rejecting the unregistration due to an active connection
 
 ### Requirement: CfApi fetch_data immediate failure signaling
-On Windows, the `fetch_data` Cloud Files API callback SHALL signal failure to the operating system immediately on any error, rather than returning without issuing any CfExecute operation. Returning without a CfExecute call leaves Windows waiting until its 60-second internal timeout expires, resulting in error 426 for the requesting process. The callback SHALL resolve the item ID from the placeholder blob set at creation time (`request.file_blob()`), without making any Graph API network call for item resolution.
 
-All `tracing` log calls in `fetch_data` SHALL reference the absolute path variable (`abs_path`) for the file being processed. No undefined variables SHALL appear in log format strings.
-
-#### Scenario: fetch_data — item ID decoded from placeholder blob
-- **WHEN** the OS dispatches a `fetch_data` callback for a dehydrated file
-- **THEN** the system decodes the item ID from `request.file_blob()` (UTF-8 bytes written at placeholder creation), looks up the corresponding inode in the inode table, and proceeds to hydrate using that inode
-- **AND** no Graph API `list_children` or `get_item` call is made to resolve the file path
-
-#### Scenario: fetch_data — blob decode or inode lookup failure
-- **WHEN** the placeholder blob is missing, invalid UTF-8, or the decoded item ID has no matching inode in the inode table
-- **THEN** the system returns a failure status to the OS immediately (equivalent to `CfExecute` with a non-success `CompletionStatus`)
-- **AND** the OS surfaces an error to the requesting process without waiting for any timeout
-
-#### Scenario: fetch_data — download failure
-- **WHEN** the Graph API download for the required byte range fails (network error, auth error, HTTP error)
-- **THEN** the system returns a failure status to the OS immediately
-- **AND** the OS surfaces an error to the requesting process without waiting 60 seconds
-
-#### Scenario: fetch_data — empty content returned
-- **WHEN** the Graph API returns an empty response body for a non-zero-length file
-- **THEN** the system returns a failure status to the OS immediately
-- **AND** the OS surfaces an error to the requesting process without waiting 60 seconds
-
-#### Scenario: fetch_data — path outside sync root
-- **WHEN** the OS dispatches a `fetch_data` callback for a path that is not under the registered sync root
-- **THEN** the system returns a failure status to the OS immediately
-- **AND** the OS surfaces an error to the requesting process without waiting 60 seconds
-
-#### Scenario: fetch_data — write_at failure mid-transfer
-- **WHEN** a `write_at` call fails during the chunk transfer loop (e.g., connection closed)
 - **THEN** the system aborts the transfer, logs a warning with the absolute file path and error details, and returns a failure status to the OS immediately
 - **AND** Windows discards the partial transfer and leaves the file in dehydrated state
 
@@ -676,23 +484,6 @@ The system SHALL emit a `VfsEvent::WritebackFailed` event when a CfApi `closed` 
 #### Scenario: App surfaces writeback failure notification
 - **WHEN** the app layer receives a `VfsEvent::WritebackFailed` event
 - **THEN** the system displays a desktop notification: "Failed to save changes to {file_name}. Your edits may be lost."
-
-### Requirement: CfApi state_changed invalidates parent directory cache
-On Windows, when the `state_changed()` Cloud Files API callback fires for a path under the sync root, the system SHALL invalidate the changed item's cache entry when resolvable and SHALL invalidate its parent directory cache entry when a parent exists. In addition, for file paths that indicate local mutable content changes, the callback SHALL enqueue local-change ingest evaluation so cache invalidation and upload triggering remain consistent.
-
-#### Scenario: state_changed for a file in a directory
-- **WHEN** the OS fires `state_changed` for a file path inside a directory
-- **THEN** the system invalidates the file cache entry and parent directory cache entry when resolvable
-- **AND** enqueues local-change ingest evaluation for that file path
-
-#### Scenario: state_changed for the sync root itself
-- **WHEN** the OS fires `state_changed` for the sync root path
-- **THEN** the system invalidates only the sync root cache entry
-- **AND** no parent invalidation or file ingest enqueue is performed
-
-#### Scenario: state_changed for an unresolvable path
-- **WHEN** the OS fires `state_changed` for a path that cannot be resolved to an inode
-- **THEN** the system logs the unresolved-path reason and still performs best-effort local-change ingest evaluation for that path
 
 ### Requirement: Windows sync root declares supported in-sync attributes
 On Windows, sync root registration SHALL explicitly configure supported in-sync attributes for Cloud Files state evaluation, including last-write-time attributes for files and directories.
