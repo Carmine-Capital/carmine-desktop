@@ -836,11 +836,26 @@ fn unregister_context_menu() -> cloudmount_core::Result<()> {
     Ok(())
 }
 
-fn register_sync_root(sync_root_id: &SyncRootId, mount_path: &Path) -> cloudmount_core::Result<()> {
+fn resolve_icon_path() -> String {
+    match std::env::current_exe() {
+        Ok(path) => format!("{},0", path.display()),
+        Err(e) => {
+            tracing::warn!("failed to resolve current executable path for icon: {e}");
+            "%SystemRoot%\\system32\\shell32.dll,43".to_string()
+        }
+    }
+}
+
+fn register_sync_root(
+    sync_root_id: &SyncRootId,
+    mount_path: &Path,
+    display_name: &str,
+    icon_path: &str,
+) -> cloudmount_core::Result<()> {
     let info = SyncRootInfo::default()
-        .with_display_name(PROVIDER_NAME)
+        .with_display_name(display_name)
         .with_version(PROVIDER_VERSION)
-        .with_icon("%SystemRoot%\\system32\\imageres.dll,0")
+        .with_icon(icon_path)
         .with_hydration_type(HydrationType::Progressive)
         .with_population_type(PopulationType::Full)
         .with_allow_pinning(true)
@@ -858,7 +873,12 @@ fn register_sync_root(sync_root_id: &SyncRootId, mount_path: &Path) -> cloudmoun
         cloudmount_core::Error::Filesystem(format!("sync root registration failed: {e:?}"))
     })?;
 
-    tracing::info!("registered sync root at {}", mount_path.display());
+    tracing::info!(
+        display_name = %display_name,
+        icon_path = %icon_path,
+        "registered sync root at {}",
+        mount_path.display()
+    );
     Ok(())
 }
 
@@ -883,6 +903,7 @@ impl CfMountHandle {
         mount_path: &Path,
         rt: Handle,
         account_name: String,
+        display_name: String,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
     ) -> cloudmount_core::Result<Self> {
         let sync_root_id = build_sync_root_id(&account_name)?;
@@ -910,15 +931,8 @@ impl CfMountHandle {
             "canonicalized mount path"
         );
 
-        let is_registered = sync_root_id.is_registered().map_err(|e| {
-            cloudmount_core::Error::Filesystem(format!(
-                "sync root registration check failed: {e:?}"
-            ))
-        })?;
-
-        if !is_registered {
-            register_sync_root(&sync_root_id, mount_path)?;
-        }
+        let icon_path = resolve_icon_path();
+        register_sync_root(&sync_root_id, mount_path, &display_name, &icon_path)?;
 
         let root_item = block_on_compat(&rt, graph.get_item(&drive_id, "root")).map_err(|e| {
             cloudmount_core::Error::Filesystem(format!(

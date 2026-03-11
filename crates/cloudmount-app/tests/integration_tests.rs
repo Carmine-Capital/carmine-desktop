@@ -1228,6 +1228,7 @@ async fn test_smoke_windows_cfapi_mount_list_read_write_unmount() -> cloudmount_
         &sync_root,
         rt,
         drive_id.to_string(),
+        "Smoke Mount".to_string(),
         None,
     )?;
 

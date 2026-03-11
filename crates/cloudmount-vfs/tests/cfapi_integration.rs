@@ -79,6 +79,7 @@ impl CfTestFixture {
             &mount_path,
             rt,
             test_id.to_string(),
+            "Test Mount".to_string(),
             None,
         )
         .expect("CfApi mount failed — is this Windows 10 1709+?");

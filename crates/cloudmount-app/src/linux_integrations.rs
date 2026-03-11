@@ -44,6 +44,14 @@ pub fn toggle() -> Result<IntegrationAction, String> {
     }
 }
 
+pub fn reconcile_existing_installation() -> Result<(), String> {
+    let paths = integration_paths()?;
+    if paths.any_asset_exists() {
+        install_integrations()?;
+    }
+    Ok(())
+}
+
 struct IntegrationPaths {
     nautilus_script: PathBuf,
     kde_helper: PathBuf,
@@ -74,6 +82,12 @@ impl IntegrationPaths {
             && self.kde_helper.exists()
             && self.kde_menus.iter().any(|path| path.exists())
     }
+
+    fn any_asset_exists(&self) -> bool {
+        self.nautilus_script.exists()
+            || self.kde_helper.exists()
+            || self.kde_menus.iter().any(|path| path.exists())
+    }
 }
 
 fn integration_paths() -> Result<IntegrationPaths, String> {
@@ -83,11 +97,12 @@ fn integration_paths() -> Result<IntegrationPaths, String> {
 
 fn install_integrations() -> Result<(), String> {
     let paths = integration_paths()?;
+    let kde_menu_content = render_kde_menu_content(&paths.kde_helper);
 
     write_executable_file(&paths.nautilus_script, NAUTILUS_SCRIPT_CONTENT)?;
     write_executable_file(&paths.kde_helper, KDE_HELPER_CONTENT)?;
     for menu in &paths.kde_menus {
-        write_file(menu, KDE_MENU_CONTENT, 0o755)?;
+        write_file(menu, &kde_menu_content, 0o755)?;
     }
 
     rebuild_kde_service_cache();
@@ -130,6 +145,15 @@ fn remove_if_exists(path: &Path) -> Result<(), String> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(format!("failed to remove {}: {e}", path.display())),
     }
+}
+
+fn render_kde_menu_content(helper_path: &Path) -> String {
+    let helper = helper_path.to_string_lossy();
+    let escaped_helper = helper.replace('"', "\\\"");
+    KDE_MENU_CONTENT.replace(
+        "Exec=cloudmount-kde-helper %F",
+        &format!("Exec=\"{escaped_helper}\" %F"),
+    )
 }
 
 fn rebuild_kde_service_cache() {

@@ -192,6 +192,10 @@ struct CliArgs {
     /// Print annotated default configuration and exit
     #[arg(long)]
     print_default_config: bool,
+
+    /// Positional passthrough values (e.g. `cloudmount://...` deep-link URL on Linux/Windows)
+    #[arg(hide = true)]
+    _passthrough: Vec<String>,
 }
 
 #[allow(dead_code)] // Fields read conditionally across platform×feature combos; referenced by tests
@@ -491,6 +495,7 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -581,6 +586,11 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
         .set(tokio::runtime::Handle::current())
         .ok();
 
+    #[cfg(target_os = "linux")]
+    if let Err(e) = crate::linux_integrations::reconcile_existing_installation() {
+        tracing::warn!("failed to reconcile Linux file manager integrations: {e}");
+    }
+
     let account = {
         let config = state.effective_config.lock().unwrap();
         config.accounts.first().cloned()
@@ -604,6 +614,16 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
     } else {
         false
     };
+
+    // Register cloudmount:// protocol handler (Linux/Windows runtime registration).
+    // macOS uses Info.plist-based registration handled by the deep-link plugin.
+    #[cfg(not(target_os = "macos"))]
+    {
+        use tauri_plugin_deep_link::DeepLinkExt;
+        if let Err(e) = app.deep_link().register("cloudmount") {
+            tracing::warn!("failed to register cloudmount:// deep link: {e}");
+        }
+    }
 
     if restored {
         *state.account_id.lock().unwrap() = Some(account.as_ref().unwrap().id.clone());
@@ -640,34 +660,6 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
             update::spawn_update_checker(app.clone());
         }
         tray::update_tray_menu(app);
-
-        // Register cloudmount:// protocol handler (Linux/Windows runtime registration).
-        // macOS uses Info.plist-based registration handled by the deep-link plugin.
-        #[cfg(not(target_os = "macos"))]
-        {
-            use tauri_plugin_deep_link::DeepLinkExt;
-            if let Err(e) = app.deep_link().register("cloudmount") {
-                tracing::warn!("failed to register cloudmount:// deep link: {e}");
-            }
-        }
-
-        // Check if the app was launched via a deep link (Windows/Linux pass the URL
-        // as a CLI argument; the plugin reads it via get_current()).
-        {
-            use tauri_plugin_deep_link::DeepLinkExt;
-            match app.deep_link().get_current() {
-                Ok(Some(urls)) => {
-                    let handle = app.clone();
-                    tokio::spawn(async move {
-                        handle_deep_link_urls(&handle, urls).await;
-                    });
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::warn!("failed to read startup deep link: {e}");
-                }
-            }
-        }
     } else if first_run {
         tray::open_or_focus_window(app, "wizard", "Setup", "wizard.html");
     } else {
@@ -675,6 +667,24 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
         // Reopen the wizard so the user can re-authenticate.
         tracing::info!("no valid tokens and not first run — opening wizard for re-authentication");
         tray::open_or_focus_window(app, "wizard", "Setup", "wizard.html");
+    }
+
+    // Check if the app was launched via a deep link (Windows/Linux pass the URL
+    // as a CLI argument; the plugin reads it via get_current()).
+    {
+        use tauri_plugin_deep_link::DeepLinkExt;
+        match app.deep_link().get_current() {
+            Ok(Some(urls)) => {
+                let handle = app.clone();
+                tokio::spawn(async move {
+                    handle_deep_link_urls(&handle, urls).await;
+                });
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!("failed to read startup deep link: {e}");
+            }
+        }
     }
 
     // Signal handler — graceful shutdown on Ctrl+C / SIGTERM
@@ -1015,7 +1025,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
 
     let state = app.state::<AppState>();
 
-    // Use the user-visible mount name as account_name (not drive_id).
+    // account_name is part of sync root ID and must not contain '!'.
     let account_name = mount_config.name.replace('!', "_");
 
     let handle = cloudmount_vfs::CfMountHandle::mount(
@@ -1026,6 +1036,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         &std::path::PathBuf::from(&ctx.mountpoint),
         ctx.rt.clone(),
         account_name,
+        mount_config.name.clone(),
         Some(ctx.event_tx),
     )
     .map_err(|e| e.to_string())?;
@@ -1710,6 +1721,17 @@ mod tests {
         assert!(args.config.is_none());
         assert!(args.log_level.is_none());
         assert!(!args.headless);
+    }
+
+    #[test]
+    fn test_cli_args_accepts_deep_link_passthrough() {
+        let args = CliArgs::try_parse_from([
+            "cloudmount-app",
+            "cloudmount://open-online?path=%2Fhome%2Fnyxa%2FCloud%2FOneDrive%2Ftest.docx",
+        ])
+        .unwrap();
+
+        assert_eq!(args._passthrough.len(), 1);
     }
 
     #[test]
