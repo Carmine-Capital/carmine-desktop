@@ -3,7 +3,7 @@
 //! Implements the WinFsp `FileSystemContext` trait by delegating all filesystem
 //! operations to [`CoreOps`], mirroring the FUSE backend pattern in `fuse_fs.rs`.
 
-use std::ffi::{OsString, c_void};
+use std::ffi::{c_void, OsString};
 use std::os::windows::ffi::OsStringExt;
 use std::sync::Arc;
 
@@ -14,19 +14,19 @@ use windows_sys::Win32::Foundation::{
     STATUS_IO_TIMEOUT, STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_COLLISION,
     STATUS_OBJECT_NAME_NOT_FOUND,
 };
-use windows_sys::Win32::Storage::FileSystem::{FILE_ACCESS_RIGHTS, FILE_DIRECTORY_FILE};
-use winfsp::U16CStr;
+use windows_sys::Win32::Storage::FileSystem::FILE_ACCESS_RIGHTS;
 use winfsp::filesystem::{
     DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo, VolumeInfo,
     WideNameInfo,
 };
 use winfsp::host::{FileSystemHost, VolumeParams};
+use winfsp::U16CStr;
 
 use crate::core_ops::{CoreOps, OpenFileTable, VfsError, VfsEvent};
 use crate::inode::{InodeTable, ROOT_INODE};
 use cloudmount_cache::CacheManager;
-use cloudmount_core::DeltaSyncObserver;
 use cloudmount_core::types::DriveItem;
+use cloudmount_core::DeltaSyncObserver;
 use cloudmount_graph::GraphClient;
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -36,6 +36,9 @@ use cloudmount_graph::GraphClient;
 /// File attributes for directories and normal files.
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
+
+/// CreateOptions flag indicating a directory is being created/opened.
+const FILE_DIRECTORY_FILE: u32 = 0x00000001;
 
 /// Allocation granularity (4 KiB).
 const ALLOC_GRANULARITY: u64 = 4096;
@@ -412,15 +415,11 @@ impl FileSystemContext for CloudMountWinFsp {
         let dir_item = self.ops.lookup_item(ino);
 
         // Decode the marker name (last-returned entry) if continuation.
-        let marker_name: Option<String> = if marker.is_set() {
-            marker.get().map(|m| {
-                OsString::from_wide(m.as_slice())
-                    .to_string_lossy()
-                    .to_string()
-            })
-        } else {
-            None
-        };
+        // DirMarker::inner() returns Option<&[u16]> — the UTF-16 name of the
+        // last entry returned on the previous call, or None on the first call.
+        let marker_name: Option<String> = marker
+            .inner()
+            .map(|m| OsString::from_wide(m).to_string_lossy().to_string());
 
         // Helper closure: emit a single DirInfo entry into the buffer.
         // Returns false if the buffer is full.
@@ -544,6 +543,8 @@ impl FileSystemContext for CloudMountWinFsp {
         _file_attributes: u32,
         _security_descriptor: Option<&[c_void]>,
         _allocation_size: u64,
+        _extra_buffer: Option<&[u8]>,
+        _extra_buffer_is_reparse_point: bool,
         file_info: &mut OpenFileInfo,
     ) -> winfsp::Result<Self::FileContext> {
         let components = split_path(file_name);
@@ -653,6 +654,7 @@ impl FileSystemContext for CloudMountWinFsp {
         _file_attributes: u32,
         _replace_file_attributes: bool,
         _allocation_size: u64,
+        _extra_buffer: Option<&[u8]>,
         file_info: &mut FileInfo,
     ) -> winfsp::Result<()> {
         self.ops
@@ -672,7 +674,7 @@ impl FileSystemContext for CloudMountWinFsp {
     // 5.4  cleanup
     // ──────────────────────────────────────────────────────────────────────
 
-    fn cleanup(&self, context: &mut Self::FileContext, file_name: Option<&U16CStr>, flags: u32) {
+    fn cleanup(&self, context: &Self::FileContext, file_name: Option<&U16CStr>, flags: u32) {
         // FspCleanupDelete = 0x01: file should be deleted on close.
         const FSP_CLEANUP_DELETE: u32 = 0x01;
 
