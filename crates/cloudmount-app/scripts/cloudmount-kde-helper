@@ -1,0 +1,41 @@
+#!/bin/bash
+# CloudMount KDE Dolphin Service Menu Helper: Open in SharePoint
+#
+# This script is invoked by the Dolphin Service Menu when a user right-clicks
+# on files and selects "Open in SharePoint". It dispatches deep-link requests
+# to open the selected files in SharePoint/Office Online.
+#
+# INSTALLATION:
+# 1. Copy the .desktop file to:
+#    - Plasma 5: ~/.local/share/kservices5/ServiceMenus/
+#    - Plasma 6: ~/.local/share/kio/servicemenus/
+# 2. Copy this script to a directory in your PATH (e.g., ~/.local/bin/)
+#    or update the Exec line in the .desktop file to use the full path
+# 3. Make both files executable: chmod +x <files>
+# 4. Restart Dolphin or run: kbuildsycoca5 (Plasma 5) or kbuildsycoca6 (Plasma 6)
+#
+# REQUIREMENTS:
+# - CloudMount must be running (the deep-link protocol handler receives the request)
+# - xdg-utils (for xdg-open) - typically pre-installed on Linux
+# - python3 (for URL percent-encoding)
+#
+# MULTI-SELECTION BEHAVIOR:
+# Each selected file triggers a separate deep-link dispatch. This provides
+# per-file failure isolation but may open multiple browser tabs/windows.
+#
+# COEXISTENCE WITH NAUTILUS:
+# This KDE integration can coexist with the Nautilus script (open-in-sharepoint.sh).
+# Both use the same deep-link protocol, so behavior is consistent across file managers.
+
+# Dolphin passes selected file paths as command-line arguments
+for path in "$@"; do
+    # Skip empty entries (defensive)
+    if [ -n "$path" ]; then
+        # Percent-encode the path for use in the deep-link URL
+        encoded_path=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read().strip(), safe=''))" <<< "$path")
+        
+        # Invoke the deep-link protocol handler
+        # Each dispatch is independent - failures do not block subsequent files
+        xdg-open "cloudmount://open-online?path=${encoded_path}"
+    fi
+done
