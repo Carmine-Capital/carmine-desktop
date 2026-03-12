@@ -870,14 +870,10 @@ impl CoreOps {
         // If the file is open, operate on the open file buffer directly
         if let Some(mut entry) = self.open_files.find_by_ino(ino) {
             ensure_complete(&mut entry, &self.rt)?;
-            let buf_before = entry.content.as_complete().unwrap().len();
             let buf = entry.content.as_complete_mut().unwrap();
             buf.resize(new_size, 0);
             entry.dirty = true;
             entry.logical_size = Some(new_size);
-            tracing::debug!(
-                "[DIAG:truncate] ino={ino} buf {buf_before}->{new_size} logical_size=Some({new_size})"
-            );
             drop(entry);
         } else {
             // Fallback: truncate via writeback buffer
@@ -1253,7 +1249,6 @@ impl CoreOps {
         let mut entry = self.open_files.get_mut(fh).ok_or(VfsError::NotFound)?;
         ensure_complete(&mut entry, &self.rt)?;
         let write_end = offset + data.len();
-        let buf_before = entry.content.as_complete().unwrap().len();
         {
             let buf = entry.content.as_complete_mut().unwrap();
             if buf.len() < write_end {
@@ -1274,13 +1269,7 @@ impl CoreOps {
         };
 
         let ino = entry.ino;
-        let buf_after = entry.content.as_complete().unwrap().len();
-        let ls = entry.logical_size;
         drop(entry);
-        tracing::debug!(
-            "[DIAG:write_handle] ino={ino} fh={fh} offset={offset} data_len={} buf {buf_before}->{buf_after} logical_size={ls:?} reported={reported_size}",
-            data.len()
-        );
 
         if let Some(mut item) = self.lookup_item(ino) {
             item.size = reported_size;
@@ -1302,7 +1291,6 @@ impl CoreOps {
         {
             let mut entry = self.open_files.get_mut(fh).ok_or(VfsError::NotFound)?;
             if !entry.dirty {
-                tracing::debug!("[DIAG:flush_handle] fh={fh} not dirty, skip");
                 return Ok(());
             }
             ensure_complete(&mut entry, &self.rt)?;
@@ -1313,16 +1301,11 @@ impl CoreOps {
         let logical_size = entry.logical_size;
         let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
         let mut content = entry.content.as_complete().unwrap().clone();
-        let buf_len = content.len();
         drop(entry);
 
         if let Some(size) = logical_size {
             content.truncate(size);
         }
-        tracing::debug!(
-            "[DIAG:flush_handle] fh={fh} ino={ino} item_id={item_id} buf_len={buf_len} logical_size={logical_size:?} upload_len={}",
-            content.len()
-        );
 
         self.rt
             .block_on(

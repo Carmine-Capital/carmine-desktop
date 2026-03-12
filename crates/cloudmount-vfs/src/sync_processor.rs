@@ -522,11 +522,6 @@ pub(crate) async fn flush_inode_async(
         .to_string();
 
     let is_new_file = item_id.starts_with("local:");
-    tracing::debug!(
-        "[DIAG:flush_inode_async] ino={ino} item_id={item_id} name={:?} is_new={is_new_file} content_len={}",
-        item.name,
-        content.len()
-    );
     let content_bytes = bytes::Bytes::from(content);
 
     // Conflict check for existing files
