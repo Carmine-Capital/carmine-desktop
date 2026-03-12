@@ -175,7 +175,7 @@ The system SHALL serve file read requests from the content buffer associated wit
 - **THEN** on `open()`, the system initiates a download (eager for small files, streaming for large files), and subsequent `read()` calls return data from the buffer as it becomes available
 
 ### Requirement: File write operations
-The system SHALL buffer writes in the `OpenFile` content buffer associated with the file handle and flush to the writeback buffer on `flush`/`release`. Writing to a file with an in-progress streaming download SHALL block until the download completes.
+The system SHALL buffer writes in the `OpenFile` content buffer associated with the file handle and flush to the writeback buffer on `flush`/`release`. Writing to a file with an in-progress streaming download SHALL block until the download completes. On flush, the system SHALL persist content to the writeback cache and delegate upload to the `SyncProcessor` instead of uploading inline.
 
 #### Scenario: Write to a file
 - **WHEN** a write operation is issued with a valid file handle whose content is fully available
@@ -186,8 +186,12 @@ The system SHALL buffer writes in the `OpenFile` content buffer associated with 
 - **THEN** the system blocks until the background download completes, transitions the download state to complete, then performs the write as normal
 
 #### Scenario: Flush on file close
-- **WHEN** a file with pending writes is closed (release/flush)
-- **THEN** the system pushes the `OpenFile` buffer content to the writeback buffer, then uploads the complete modified file to the Graph API using the appropriate upload method (small or chunked), and updates the local metadata with the new eTag
+- **WHEN** a file with pending writes is closed (release/flush) and a `SyncHandle` is available
+- **THEN** the system pushes the `OpenFile` buffer content to the writeback buffer, persists it to disk for crash safety, sends a `SyncRequest::Flush { ino }` to the sync processor, and returns success immediately without waiting for the upload to complete
+
+#### Scenario: Flush on file close without sync processor
+- **WHEN** a file with pending writes is closed (release/flush) and no `SyncHandle` is available (tests or processor disabled)
+- **THEN** the system pushes the `OpenFile` buffer content to the writeback buffer, then uploads the complete modified file to the Graph API synchronously using the appropriate upload method (small or chunked), and updates the local metadata with the new eTag
 
 #### Scenario: Write conflict detected
 - **WHEN** uploading a modified file and the remote eTag differs from the local eTag (another user modified the file)
@@ -328,15 +332,15 @@ The system SHALL look up a child item by name under a parent directory in O(1) t
 - **AND** the populated `HashMap` is keyed by child name for subsequent O(1) lookups
 
 ### Requirement: Graceful unmount
-The system SHALL cleanly unmount drives without data loss. The `shutdown_on_signal` function SHALL release the mounts mutex before performing blocking unmount operations to prevent deadlock under concurrent access.
+The system SHALL cleanly unmount drives without data loss. On unmount, the system SHALL send `SyncRequest::Shutdown` to the sync processor and await its completion (with the configured shutdown timeout) before unmounting. The `shutdown_on_signal` function SHALL release the mounts mutex before performing blocking unmount operations to prevent deadlock under concurrent access. After the sync processor exits, the shared `flush_pending()` function SHALL run as a last-resort safety net.
 
 #### Scenario: User-initiated unmount
 - **WHEN** the user clicks "Unmount" in the tray app
-- **THEN** the system flushes all pending writes, waits for in-flight uploads to complete (with a 30-second timeout), unmounts the FUSE filesystem, and confirms unmount to the user
+- **THEN** the system sends `SyncRequest::Shutdown` to the sync processor, waits for it to drain pending and in-flight uploads (up to the configured timeout), then runs `flush_pending()` as a safety net, unmounts the FUSE/WinFsp filesystem, and confirms unmount to the user
 
 #### Scenario: Forced unmount on shutdown
 - **WHEN** the system receives a shutdown signal (SIGTERM, system reboot)
-- **THEN** the system flushes pending writes with a 10-second timeout, forcefully unmounts the FUSE filesystem, and saves any unflushed changes to a pending-uploads queue for retry on next start
+- **THEN** the system sends `SyncRequest::Shutdown`, waits for the processor with a 10-second timeout, runs `flush_pending()`, forcefully unmounts the filesystem, and saves any unflushed changes to the write-back buffer for crash recovery on next start
 
 #### Scenario: shutdown_on_signal releases mutex before unmount
 - **WHEN** `shutdown_on_signal` is triggered by a signal

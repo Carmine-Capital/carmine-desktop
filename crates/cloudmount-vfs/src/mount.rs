@@ -85,9 +85,12 @@ pub struct MountHandle {
     rt: Handle,
     mountpoint: String,
     delta_observer: Arc<FuseDeltaObserver>,
+    sync_handle: Option<crate::sync_processor::SyncHandle>,
+    sync_join: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl MountHandle {
+    #[allow(clippy::too_many_arguments)]
     pub fn mount(
         graph: Arc<GraphClient>,
         cache: Arc<CacheManager>,
@@ -96,6 +99,7 @@ impl MountHandle {
         mountpoint: &str,
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
+        sync_handle: Option<crate::sync_processor::SyncHandle>,
     ) -> cloudmount_core::Result<Self> {
         let root_item =
             tokio::task::block_in_place(|| rt.block_on(graph.get_item(&drive_id, "root")))
@@ -114,7 +118,9 @@ impl MountHandle {
         // Helper: create filesystem, extract observer, and mount.
         // Returns (session, observer) on success.
         let try_mount =
-            |auto_unmount: bool, event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>| {
+            |auto_unmount: bool,
+             event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
+             sync_handle: Option<crate::sync_processor::SyncHandle>| {
                 let fs = CloudMountFs::new(
                     graph.clone(),
                     cache.clone(),
@@ -122,6 +128,7 @@ impl MountHandle {
                     drive_id.clone(),
                     rt.clone(),
                     event_tx,
+                    sync_handle,
                 );
                 let observer = fs.create_delta_observer();
                 let session = fs.mount(mountpoint, auto_unmount)?;
@@ -131,13 +138,15 @@ impl MountHandle {
 
         // Try with auto_unmount first (crash safety net), fall back without it
         // since it requires fusermount3 + non-Owner ACL which isn't always available.
-        let (session, delta_observer) = match try_mount(true, event_tx.clone()) {
-            Ok(result) => result,
-            Err(_) => {
-                tracing::warn!("auto_unmount not supported, mounting without it");
-                try_mount(false, event_tx)?
-            }
-        };
+        let stored_handle = sync_handle.clone();
+        let (session, delta_observer) =
+            match try_mount(true, event_tx.clone(), sync_handle.clone()) {
+                Ok(result) => result,
+                Err(_) => {
+                    tracing::warn!("auto_unmount not supported, mounting without it");
+                    try_mount(false, event_tx, sync_handle)?
+                }
+            };
 
         tracing::info!("mounted drive {drive_id} at {mountpoint}");
 
@@ -149,7 +158,13 @@ impl MountHandle {
             rt,
             mountpoint: mountpoint.to_string(),
             delta_observer,
+            sync_handle: stored_handle,
+            sync_join: None,
         })
+    }
+
+    pub fn set_sync_join(&mut self, join: tokio::task::JoinHandle<()>) {
+        self.sync_join = Some(join);
     }
 
     pub fn mountpoint(&self) -> &str {
@@ -166,6 +181,17 @@ impl MountHandle {
     }
 
     pub fn unmount(self) -> cloudmount_core::Result<()> {
+        // Send shutdown to sync processor and await drain
+        if let Some(ref sh) = self.sync_handle {
+            sh.send(crate::sync_processor::SyncRequest::Shutdown);
+        }
+        if let Some(join) = self.sync_join {
+            tokio::task::block_in_place(|| {
+                let _ = self.rt.block_on(join);
+            });
+        }
+
+        // Safety net: flush any remaining pending writes
         tokio::task::block_in_place(|| {
             self.rt.block_on(crate::pending::flush_pending(
                 &self.cache,

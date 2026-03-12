@@ -478,6 +478,7 @@ async fn test_smoke_macos_fuse_mount_list_read_write_unmount() -> cloudmount_cor
         mountpoint.to_str().unwrap(),
         rt,
         None,
+        None,
     )?;
 
     sleep(Duration::from_millis(300)).await;

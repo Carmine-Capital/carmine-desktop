@@ -10,7 +10,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use bytes::Bytes;
 use chrono::Utc;
 use dashmap::DashMap;
 use futures_util::StreamExt;
@@ -456,6 +455,7 @@ pub struct CoreOps {
     rt: Handle,
     open_files: Arc<OpenFileTable>,
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
+    sync_handle: Option<crate::sync_processor::SyncHandle>,
     quota_cache: std::sync::Mutex<Option<(Instant, DriveQuota)>>,
     inode_invalidator: Option<InodeInvalidator>,
 }
@@ -476,6 +476,7 @@ impl CoreOps {
             rt,
             open_files: Arc::new(OpenFileTable::new()),
             event_tx: None,
+            sync_handle: None,
             quota_cache: std::sync::Mutex::new(None),
             inode_invalidator: None,
         }
@@ -483,6 +484,11 @@ impl CoreOps {
 
     pub fn with_event_sender(mut self, tx: tokio::sync::mpsc::UnboundedSender<VfsEvent>) -> Self {
         self.event_tx = Some(tx);
+        self
+    }
+
+    pub fn with_sync_handle(mut self, handle: crate::sync_processor::SyncHandle) -> Self {
+        self.sync_handle = Some(handle);
         self
     }
 
@@ -908,198 +914,22 @@ impl CoreOps {
 
     /// Upload pending writes for an inode with conflict detection.
     ///
-    /// Before uploading an existing file, compares the cached eTag with the server eTag.
-    /// On mismatch, saves the local content as `.conflict.{timestamp}` before proceeding.
+    /// Delegates to the shared `flush_inode_async` free function via `block_on`.
+    /// Both this method (sync fallback path) and the `SyncProcessor` use the same
+    /// underlying upload logic.
     pub fn flush_inode(&self, ino: u64) -> VfsResult<()> {
-        let item_id = match self.inodes.get_item_id(ino) {
-            Some(id) => id,
-            None => return Ok(()),
-        };
-
-        let content = match self
-            .rt
-            .block_on(self.cache.writeback.read(&self.drive_id, &item_id))
-        {
-            Some(data) => data,
-            None => return Ok(()),
-        };
-
-        let item = match self.lookup_item(ino) {
-            Some(item) => item,
-            None => return Err(VfsError::IoError("item metadata not found".to_string())),
-        };
-
-        // Skip upload for transient files (Office lock files, system metadata, etc.)
-        if is_transient_file(&item.name) {
-            tracing::debug!(ino, name = %item.name, "skipping upload for transient file");
-            let _ = self
-                .rt
-                .block_on(self.cache.writeback.remove(&self.drive_id, &item_id));
-            return Ok(());
-        }
-
-        let parent_id = item
-            .parent_reference
-            .as_ref()
-            .and_then(|p| p.id.as_deref())
-            .unwrap_or("")
-            .to_string();
-
-        let is_new_file = item_id.starts_with("local:");
-        let content_bytes = Bytes::from(content);
-
-        // Conflict check: compare cached eTag with server eTag.
-        // On match, use the server eTag as If-Match for the upload to close the TOCTOU window.
-        let mut server_etag: Option<String> = None;
-
-        if let Some(cached_etag) = item.etag.as_ref()
-            && !is_new_file
-        {
-            match self
-                .rt
-                .block_on(self.graph.get_item(&self.drive_id, &item_id))
-            {
-                Ok(server_item) => {
-                    if server_item.etag.as_deref() != Some(cached_etag) {
-                        tracing::warn!(
-                            "conflict detected for {}: cached={:?}, server={:?}",
-                            item.name,
-                            item.etag,
-                            server_item.etag
-                        );
-                        let timestamp = Utc::now().timestamp();
-                        let cname = conflict_name(&item.name, timestamp);
-                        if !parent_id.is_empty()
-                            && let Err(e) = self.rt.block_on(self.graph.upload_small(
-                                &self.drive_id,
-                                &parent_id,
-                                &cname,
-                                content_bytes.clone(),
-                                None,
-                            ))
-                        {
-                            tracing::error!(
-                                "conflict copy upload failed for {}, aborting flush: {e}",
-                                item.name
-                            );
-                            return Err(VfsError::IoError(format!(
-                                "conflict copy upload failed: {e}"
-                            )));
-                        }
-                        self.send_event(VfsEvent::ConflictDetected {
-                            file_name: item.name.clone(),
-                            conflict_name: cname,
-                        });
-                    } else {
-                        // eTags match — use as If-Match to close TOCTOU window
-                        server_etag = server_item.etag;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("conflict check failed for {item_id}: {e}");
-                }
-            }
-        }
-
-        // Persist to disk for crash safety before the network upload
-        let _ = self
-            .rt
-            .block_on(self.cache.writeback.persist(&self.drive_id, &item_id));
-
-        let if_match = server_etag.as_deref();
-
-        let upload_result = if is_new_file {
-            if parent_id.is_empty() {
-                return Err(VfsError::IoError("no parent for new file".to_string()));
-            }
-            self.rt.block_on(self.graph.upload_small(
-                &self.drive_id,
-                &parent_id,
-                &item.name,
-                content_bytes.clone(),
-                None, // new files have no eTag
-            ))
+        let success = self.rt.block_on(crate::sync_processor::flush_inode_async(
+            ino,
+            &self.graph,
+            &self.cache,
+            &self.inodes,
+            &self.drive_id,
+            self.event_tx.as_ref(),
+        ));
+        if success {
+            Ok(())
         } else {
-            self.rt.block_on(self.graph.upload(
-                &self.drive_id,
-                &parent_id,
-                Some(&item_id),
-                &item.name,
-                content_bytes.clone(),
-                if_match,
-            ))
-        };
-
-        match upload_result {
-            Ok(updated_item) => {
-                if is_new_file {
-                    self.inodes.reassign(ino, &updated_item.id);
-                }
-                self.cache.memory.insert(ino, updated_item.clone());
-                let _ = self
-                    .rt
-                    .block_on(self.cache.writeback.remove(&self.drive_id, &item_id));
-
-                Ok(())
-            }
-            Err(cloudmount_core::Error::PreconditionFailed) => {
-                // Server content changed between conflict check and upload — treat as conflict
-                tracing::warn!(
-                    "upload precondition failed for {} (412), treating as conflict",
-                    item.name
-                );
-                self.send_event(VfsEvent::ConflictDetected {
-                    file_name: item.name.clone(),
-                    conflict_name: format!("{} (server version changed)", item.name),
-                });
-                Err(VfsError::IoError(
-                    "upload conflict: server content changed".to_string(),
-                ))
-            }
-            Err(cloudmount_core::Error::Locked) => {
-                // File is locked (co-authoring or checkout) — save as conflict copy
-                tracing::warn!(
-                    "upload locked for {} (423), saving as conflict copy",
-                    item.name
-                );
-                let timestamp = Utc::now().timestamp();
-                let cname = conflict_name(&item.name, timestamp);
-                if !parent_id.is_empty() {
-                    match self.rt.block_on(self.graph.upload_small(
-                        &self.drive_id,
-                        &parent_id,
-                        &cname,
-                        content_bytes,
-                        None,
-                    )) {
-                        Ok(_) => {
-                            let _ = self
-                                .rt
-                                .block_on(self.cache.writeback.remove(&self.drive_id, &item_id));
-                            self.send_event(VfsEvent::FileLocked {
-                                file_name: item.name.clone(),
-                            });
-                            // Conflict copy saved — return Ok so flush_handle clears
-                            // dirty and release_file doesn't re-write to writeback.
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "conflict copy upload failed for {} (locked): {e}",
-                                item.name
-                            );
-                            // Preserve writeback buffer for crash recovery
-                        }
-                    }
-                }
-                Err(VfsError::IoError(
-                    "file is locked on OneDrive, conflict copy upload failed".to_string(),
-                ))
-            }
-            Err(e) => {
-                tracing::error!("flush upload failed for {item_id}: {e}");
-                Err(VfsError::IoError(format!("upload failed: {e}")))
-            }
+            Err(VfsError::IoError("flush_inode upload failed".to_string()))
         }
     }
 
@@ -1429,7 +1259,13 @@ impl CoreOps {
             )
             .map_err(|e| VfsError::IoError(format!("flush writeback failed: {e}")))?;
 
-        self.flush_inode(ino)?;
+        if let Some(ref sync_handle) = self.sync_handle {
+            // Delegate upload to the async sync processor — returns immediately
+            sync_handle.send(crate::sync_processor::SyncRequest::Flush { ino });
+        } else {
+            // Fallback: synchronous inline upload (tests or processor disabled)
+            self.flush_inode(ino)?;
+        }
 
         if let Some(mut entry) = self.open_files.get_mut(fh) {
             entry.dirty = false;

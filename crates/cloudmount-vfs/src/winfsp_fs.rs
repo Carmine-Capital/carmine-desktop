@@ -87,6 +87,8 @@ pub struct WinFspMountHandle {
     rt: Handle,
     mountpoint: String,
     delta_observer: Arc<WinFspDeltaObserver>,
+    sync_handle: Option<crate::sync_processor::SyncHandle>,
+    sync_join: Option<tokio::task::JoinHandle<()>>,
 }
 
 /// Delta sync observer for the WinFsp backend.
@@ -214,10 +216,14 @@ impl CloudMountWinFsp {
         drive_id: String,
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
+        sync_handle: Option<crate::sync_processor::SyncHandle>,
     ) -> Self {
         let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt.clone());
         if let Some(tx) = event_tx.clone() {
             ops = ops.with_event_sender(tx);
+        }
+        if let Some(sh) = sync_handle {
+            ops = ops.with_sync_handle(sh);
         }
         let open_files = ops.open_files().clone();
         Self {
@@ -933,6 +939,7 @@ impl WinFspMountHandle {
         mountpoint: &str,
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
+        sync_handle: Option<crate::sync_processor::SyncHandle>,
     ) -> cloudmount_core::Result<Self> {
         // 1. Fetch drive root from Graph API.
         let root_item =
@@ -958,6 +965,7 @@ impl WinFspMountHandle {
             drive_id.clone(),
             rt.clone(),
             event_tx,
+            sync_handle,
         );
 
         // 4. Create delta observer before host takes ownership.
@@ -1001,14 +1009,31 @@ impl WinFspMountHandle {
             rt,
             mountpoint: mountpoint.to_string(),
             delta_observer,
+            sync_handle,
+            sync_join: None,
         })
+    }
+
+    pub fn set_sync_join(&mut self, join: tokio::task::JoinHandle<()>) {
+        self.sync_join = Some(join);
     }
 
     /// Unmount the WinFsp filesystem.
     ///
-    /// Flushes pending writeback items, then stops and unmounts the host.
+    /// Sends shutdown to the sync processor, waits for drain, then flushes
+    /// remaining pending items as a safety net before stopping the host.
     pub fn unmount(mut self) -> cloudmount_core::Result<()> {
-        // Flush pending writeback items.
+        // Send shutdown to sync processor and await drain
+        if let Some(ref sh) = self.sync_handle {
+            sh.send(crate::sync_processor::SyncRequest::Shutdown);
+        }
+        if let Some(join) = self.sync_join.take() {
+            tokio::task::block_in_place(|| {
+                let _ = self.rt.block_on(join);
+            });
+        }
+
+        // Safety net: flush any remaining pending writes
         tokio::task::block_in_place(|| {
             self.rt.block_on(crate::pending::flush_pending(
                 &self.cache,

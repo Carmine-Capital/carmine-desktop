@@ -1038,7 +1038,19 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
 
     let state = app.state::<AppState>();
 
-    let handle = MountHandle::mount(
+    // Spawn the async sync processor for this mount
+    let (sync_handle, sync_join) = cloudmount_vfs::spawn_sync_processor(
+        cloudmount_vfs::SyncProcessorDeps {
+            graph: state.graph.clone(),
+            cache: ctx.cache.clone(),
+            inodes: ctx.inodes.clone(),
+            drive_id: ctx.drive_id.clone(),
+            event_tx: Some(ctx.event_tx.clone()),
+        },
+        cloudmount_vfs::SyncProcessorConfig::default(),
+    );
+
+    let mut handle = MountHandle::mount(
         state.graph.clone(),
         ctx.cache.clone(),
         ctx.inodes.clone(),
@@ -1046,8 +1058,11 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         &ctx.mountpoint,
         ctx.rt.clone(),
         Some(ctx.event_tx),
+        Some(sync_handle),
     )
     .map_err(|e| e.to_string())?;
+
+    handle.set_sync_join(sync_join);
 
     spawn_event_forwarder(&ctx.rt, app, ctx.event_rx);
 
@@ -1084,7 +1099,19 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
 
     let state = app.state::<AppState>();
 
-    let handle = cloudmount_vfs::WinFspMountHandle::mount(
+    // Spawn the async sync processor for this mount
+    let (sync_handle, sync_join) = cloudmount_vfs::spawn_sync_processor(
+        cloudmount_vfs::SyncProcessorDeps {
+            graph: state.graph.clone(),
+            cache: ctx.cache.clone(),
+            inodes: ctx.inodes.clone(),
+            drive_id: ctx.drive_id.clone(),
+            event_tx: Some(ctx.event_tx.clone()),
+        },
+        cloudmount_vfs::SyncProcessorConfig::default(),
+    );
+
+    let mut handle = cloudmount_vfs::WinFspMountHandle::mount(
         state.graph.clone(),
         ctx.cache.clone(),
         ctx.inodes.clone(),
@@ -1092,8 +1119,11 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         &ctx.mountpoint,
         ctx.rt.clone(),
         Some(ctx.event_tx),
+        Some(sync_handle),
     )
     .map_err(|e| e.to_string())?;
+
+    handle.set_sync_join(sync_join);
 
     spawn_event_forwarder(&ctx.rt, app, ctx.event_rx);
 
@@ -1177,10 +1207,7 @@ fn start_delta_sync(app: &tauri::AppHandle) {
 
     let graph = state.graph.clone();
     let app_handle = app.clone();
-    let retry_graph = state.graph.clone();
-    let retry_app_handle = app.clone();
     let delta_cancel = cancel.clone();
-    let retry_cancel = cancel.clone();
 
     tauri::async_runtime::spawn(async move {
         // Tracks drives that already sent a 403 notification to avoid spam.
@@ -1278,36 +1305,8 @@ fn start_delta_sync(app: &tauri::AppHandle) {
         }
     });
 
-    tauri::async_runtime::spawn(async move {
-        let retry_interval = std::time::Duration::from_secs(15);
-
-        loop {
-            let snapshot: Vec<(String, Arc<CacheManager>)> = {
-                use tauri::Manager;
-                let state = retry_app_handle.state::<AppState>();
-                let caches = state.mount_caches.lock().unwrap();
-                caches
-                    .iter()
-                    .map(|(drive_id, (cache, _, _))| (drive_id.clone(), cache.clone()))
-                    .collect()
-            };
-
-            for (drive_id, cache) in &snapshot {
-                let _ = cloudmount_vfs::retry_pending_writes_for_drive(
-                    cache,
-                    &retry_graph,
-                    drive_id,
-                    "mounted retry",
-                )
-                .await;
-            }
-
-            tokio::select! {
-                _ = retry_cancel.cancelled() => break,
-                _ = tokio::time::sleep(retry_interval) => {}
-            }
-        }
-    });
+    // Note: retry_pending_writes task removed — the SyncProcessor's tick-based
+    // retry with exponential backoff handles all upload retries.
 }
 
 #[cfg(feature = "desktop")]
@@ -1592,6 +1591,7 @@ fn run_headless(
                     &mountpoint,
                     rt_handle.clone(),
                     None,
+                    None, // no sync processor in headless mode
                 ) {
                     Ok(handle) => {
                         tracing::info!("mount '{}' started at {mountpoint}", mount_config.name);

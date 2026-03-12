@@ -90,6 +90,7 @@ impl CloudMountFs {
         drive_id: String,
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
+        sync_handle: Option<crate::sync_processor::SyncHandle>,
     ) -> Self {
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
@@ -111,6 +112,9 @@ impl CloudMountFs {
         ops = ops.with_inode_invalidator(invalidator);
         if let Some(tx) = event_tx {
             ops = ops.with_event_sender(tx);
+        }
+        if let Some(sh) = sync_handle {
+            ops = ops.with_sync_handle(sh);
         }
         Self {
             ops,
