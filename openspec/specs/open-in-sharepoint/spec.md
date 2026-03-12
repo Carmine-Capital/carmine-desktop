@@ -90,11 +90,11 @@ The system SHALL register a `cloudmount://` URL protocol handler that allows ext
 On Windows, the system SHALL register a context menu entry in Explorer that allows users to open files in SharePoint directly from the right-click menu.
 
 #### Scenario: Context menu registration on mount
-- **WHEN** a CfApi sync root is registered during mount
+- **WHEN** a WinFsp mount is registered during mount
 - **THEN** the system creates registry entries under `HKCU\Software\Classes` that add an "Open in SharePoint" menu item for files, with the command invoking the `cloudmount://open-online` deep link with the selected file's path
 
 #### Scenario: Context menu cleanup on unmount
-- **WHEN** a CfApi sync root is unregistered during unmount
+- **WHEN** a WinFsp mount is unmounted during unmount
 - **THEN** the system removes the registry entries for the context menu
 
 #### Scenario: User clicks "Open in SharePoint"

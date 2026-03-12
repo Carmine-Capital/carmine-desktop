@@ -6,7 +6,7 @@ The system SHALL initialize all service components in dependency order during ap
 
 #### Scenario: Initialization sequence
 - **WHEN** the application starts
-- **THEN** it initializes in this order: (1) load .env file if present, (2) parse CLI arguments (including env var fallbacks), (3) load user config → derive effective config with built-in defaults, (4) run pre-flight validation (client ID sanity check, FUSE availability on Linux/macOS, CfApi version on Windows), (5) create AuthManager with the official CloudMount client_id (overridden by `--client-id` CLI arg if provided), (6) create GraphClient with AuthManager's token provider, (7) create CacheManager with cache directory and SQLite database, (8) create shared InodeTable, (9) assemble AppState with all components, (10) register `tauri-plugin-updater` in the Tauri builder (desktop mode only)
+- **THEN** it initializes in this order: (1) load .env file if present, (2) parse CLI arguments (including env var fallbacks), (3) load user config → derive effective config with built-in defaults, (4) run pre-flight validation (client ID sanity check, FUSE availability on Linux/macOS, WinFsp version on Windows), (5) create AuthManager with the official CloudMount client_id (overridden by `--client-id` CLI arg if provided), (6) create GraphClient with AuthManager's token provider, (7) create CacheManager with cache directory and SQLite database, (8) create shared InodeTable, (9) assemble AppState with all components, (10) register `tauri-plugin-updater` in the Tauri builder (desktop mode only)
 
 #### Scenario: Initialization failure in config
 - **WHEN** the user config cannot be loaded
@@ -51,13 +51,13 @@ The system SHALL automatically discover the authenticated user's OneDrive drive 
 - **THEN** the system automatically creates a mount configuration for the OneDrive drive at `{home}/{root_dir}/OneDrive` and starts the mount
 
 ### Requirement: Mount lifecycle management
-The system SHALL manage the lifecycle of filesystem mounts — starting, stopping, and restarting them based on configuration and authentication state. The `start_mount` function SHALL extract shared initialization logic (drive validation, cache directory resolution, CacheManager creation, InodeTable setup, event channel wiring, state insertion) into a platform-agnostic helper, with only the platform-specific mount handle construction remaining in cfg-gated code. On Windows, the `account_name` parameter passed to `CfMountHandle::mount()` SHALL be the mount configuration's display name (not the Graph API drive ID). 
+The system SHALL manage the lifecycle of filesystem mounts — starting, stopping, and restarting them based on configuration and authentication state. The `start_mount` function SHALL extract shared initialization logic (drive validation, cache directory resolution, CacheManager creation, InodeTable setup, event channel wiring, state insertion) into a platform-agnostic helper, with only the platform-specific mount handle construction remaining in cfg-gated code. On Windows, the `account_name` parameter passed to `WinFspMountHandle::mount()` SHALL be the mount configuration's display name (not the Graph API drive ID).
 
 `start_mount` SHALL NOT send notifications — the caller is responsible for notification dispatch. This enables different notification strategies: batch summaries for startup (`start_all_mounts`) and per-mount notifications for user-initiated actions (`add_mount`, `toggle_mount`).
 
 #### Scenario: Start mount
 - **WHEN** the system needs to mount a drive (after sign-in, on startup with valid tokens, or when a new mount is added)
-- **THEN** it resolves the drive root item from the Graph API, detects and cleans up any stale FUSE mount at the target path, creates the mount point directory if it does not exist, starts a FUSE or CfApi session for the drive with the root inode pre-seeded, adds the drive to the delta sync timer's drive list
+- **THEN** it resolves the drive root item from the Graph API, detects and cleans up any stale FUSE mount at the target path, creates the mount point directory if it does not exist, starts a FUSE or WinFsp session for the drive with the root inode pre-seeded, adds the drive to the delta sync timer's drive list
 - **AND** the function returns success without sending any notification
 
 #### Scenario: Start mount failure — root resolution
@@ -69,18 +69,18 @@ The system SHALL manage the lifecycle of filesystem mounts — starting, stoppin
 - **THEN** the system attempts to clean up the stale mount via `fusermount -u` (or `umount` on macOS), logs the cleanup result, and retries directory creation; if cleanup fails, the mount is skipped with an actionable error message suggesting manual `fusermount -u <path>`
 
 #### Scenario: Start mount passes correct account_name on Windows
-- **WHEN** the system starts a CfApi mount on Windows
-- **THEN** the `account_name` parameter passed to `CfMountHandle::mount()` is the mount configuration's human-readable display name (e.g., "OneDrive - Contoso"), NOT the Graph API drive ID
+- **WHEN** the system starts a WinFsp mount on Windows
+- **THEN** the `account_name` parameter passed to `WinFspMountHandle::mount()` is the mount configuration's human-readable display name (e.g., "OneDrive - Contoso"), NOT the Graph API drive ID
 - **AND** the `account_name` is sanitized by replacing `!` characters with `_` per the sync root ID spec
 
 #### Scenario: Start mount uses shared initialization helper
 - **WHEN** the system starts a mount on any platform
 - **THEN** the shared helper performs: drive validation, cache directory resolution, CacheManager creation, InodeTable setup, event channel creation, and state insertion
-- **AND** only the final mount handle construction (FUSE `MountHandle` or CfApi `CfMountHandle`) is platform-specific
+- **AND** only the final mount handle construction (FUSE `MountHandle` or WinFsp `WinFspMountHandle`) is platform-specific
 
 #### Scenario: Stop mount
 - **WHEN** the system needs to unmount a drive (on sign-out, mount removal, or application quit)
-- **THEN** it flushes all pending writes for the drive (30-second timeout), unmounts the FUSE or CfApi session, and removes the drive from the delta sync timer's drive list
+- **THEN** it flushes all pending writes for the drive (30-second timeout), unmounts the FUSE or WinFsp session, and removes the drive from the delta sync timer's drive list
 
 #### Scenario: Start all mounts after authentication — batch notification
 - **WHEN** the user successfully authenticates or tokens are restored on startup
@@ -171,7 +171,7 @@ The system SHALL perform an ordered shutdown to prevent data loss.
 
 #### Scenario: Quit from tray menu
 - **WHEN** the user selects "Quit" from the tray context menu
-- **THEN** the system stops the delta sync timer, flushes pending writes for all mounts (30-second timeout per mount), unmounts all FUSE/CfApi sessions, closes database connections, and exits the process
+- **THEN** the system stops the delta sync timer, flushes pending writes for all mounts (30-second timeout per mount), unmounts all FUSE/WinFsp sessions, closes database connections, and exits the process
 
 #### Scenario: System signal (SIGTERM, Ctrl+C)
 - **WHEN** the process receives SIGTERM or SIGINT
@@ -184,7 +184,7 @@ The system SHALL perform an ordered shutdown to prevent data loss.
 ### Requirement: Headless mode operation
 The system SHALL support running without the `desktop` feature flag, performing the full mount lifecycle (authentication, mounting, sync, graceful shutdown) as a foreground terminal process without Tauri or any graphical UI. The system SHALL also support running in headless mode with the `desktop` feature when `--headless` is passed. On Windows, headless mode SHALL exit with a clear error message instead of silently running as an idle process.
 
-On Windows, headless mode is not supported because the Cloud Files API requires a desktop session. The `run_headless` function SHALL exit immediately with a clear error message on Windows. The remainder of the function body (runtime creation, authentication, mount iteration, sync loop, signal handling) SHALL NOT compile on Windows — it SHALL be gated with `#[cfg(not(target_os = "windows"))]` to prevent unused-variable and dead-code warnings under `RUSTFLAGS=-Dwarnings`.
+On Windows, headless mode is supported via WinFsp. The `run_headless` function SHALL NOT reject Windows builds. WinFsp mounts work without a desktop session because `FileSystemHost::start()` operates independently of Explorer or any GUI components.
 
 #### Scenario: Headless startup with existing tokens
 - **WHEN** the application starts in headless mode and valid tokens are found in the credential store
@@ -200,7 +200,7 @@ On Windows, headless mode is not supported because the Cloud Files API requires 
 
 #### Scenario: Headless graceful shutdown
 - **WHEN** the headless process receives SIGTERM or SIGINT (Ctrl+C)
-- **THEN** the system cancels the delta sync timer, flushes pending writes for all mounts (30-second timeout per mount), unmounts all FUSE/CfApi sessions, and exits the process with exit code 0
+- **THEN** the system cancels the delta sync timer, flushes pending writes for all mounts (30-second timeout per mount), unmounts all FUSE/WinFsp sessions, and exits the process with exit code 0
 
 #### Scenario: Headless authentication degradation
 - **WHEN** the headless process encounters an expired or revoked refresh token during operation
@@ -210,9 +210,10 @@ On Windows, headless mode is not supported because the Cloud Files API requires 
 - **WHEN** the application starts in headless mode
 - **THEN** the process SHALL remain in the foreground (not daemonize), blocking on a signal wait after completing initialization; all log output goes to stderr via the tracing subscriber
 
-#### Scenario: Headless mode on Windows exits with error
+#### Scenario: Headless mode on Windows
 - **WHEN** the application starts in headless mode on Windows
-- **THEN** the system prints "Error: headless mode is not supported on Windows. Cloud Files API requires desktop mode. Use 'cloudmount' without --headless." to stderr and exits with exit code 1
+- **THEN** the system initializes WinFsp mounts, starts delta sync, and runs until terminated by a signal
+- **AND** the mounted drives are accessible by all processes on the system
 
 #### Scenario: Headless via --headless flag
 - **WHEN** the application is compiled with the `desktop` feature and started with `--headless`

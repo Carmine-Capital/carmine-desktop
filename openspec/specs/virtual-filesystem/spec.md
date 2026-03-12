@@ -21,7 +21,7 @@ On Windows, the system SHALL mount the drive using WinFsp via `WinFspMountHandle
 
 #### Scenario: Root resolution failure
 - **WHEN** the drive root item cannot be fetched from the Graph API at mount time (network error, invalid drive_id, auth error)
-- **THEN** the mount fails and returns an error; the mount point directory is not registered with FUSE/CfApi, and the error is logged and surfaced to the caller
+- **THEN** the mount fails and returns an error; the mount point directory is not registered with FUSE/WinFsp, and the error is logged and surfaced to the caller
 
 ### Requirement: Stale FUSE mount detection and cleanup
 The system SHALL detect and attempt to clean up stale FUSE mounts before mounting a drive. A stale mount occurs when a previous FUSE daemon exited without proper unmount (crash, kill signal, or `auto_unmount` not supported).
@@ -95,7 +95,7 @@ The system SHALL return file attributes (size, timestamps, permissions) when req
 - **THEN** the system returns size=T (the expected final size) with a TTL of 0 seconds
 
 ### Requirement: Open file table with per-handle content buffering
-The system SHALL maintain an open file table that maps file handles to in-memory content buffers. Each `open()` call SHALL load the file content once and return a unique file handle. Before serving content from the disk cache, the system SHALL validate freshness by checking the dirty-inode set, comparing the disk cache eTag against the metadata eTag, and comparing the content length against the metadata size. If any check fails, the disk cache entry SHALL be discarded and content SHALL be re-downloaded from the Graph API. For files smaller than 4 MB or files with valid disk cache content, content SHALL be loaded eagerly before the file handle is returned. For uncached files of 4 MB or larger, the system SHALL return the file handle immediately and download content in the background via a streaming download task. Subsequent `read()` and `write()` calls SHALL operate on the buffer associated with the file handle, not the inode. The open file table SHALL be shared between FUSE and CfApi backends via `CoreOps`. Each `OpenFile` entry SHALL include a `stale` flag (default `false`) that the delta sync observer can set to `true` when remote content changes are detected. The OpenFileTable SHALL expose a method to query the content size for a given inode (`get_content_size_by_ino`), and a method to mark all handles for a given inode as stale (`mark_stale_by_ino`).
+The system SHALL maintain an open file table that maps file handles to in-memory content buffers. Each `open()` call SHALL load the file content once and return a unique file handle. Before serving content from the disk cache, the system SHALL validate freshness by checking the dirty-inode set, comparing the disk cache eTag against the metadata eTag, and comparing the content length against the metadata size. If any check fails, the disk cache entry SHALL be discarded and content SHALL be re-downloaded from the Graph API. For files smaller than 4 MB or files with valid disk cache content, content SHALL be loaded eagerly before the file handle is returned. For uncached files of 4 MB or larger, the system SHALL return the file handle immediately and download content in the background via a streaming download task. Subsequent `read()` and `write()` calls SHALL operate on the buffer associated with the file handle, not the inode. The open file table SHALL be shared between FUSE and WinFsp backends via `CoreOps`. Each `OpenFile` entry SHALL include a `stale` flag (default `false`) that the delta sync observer can set to `true` when remote content changes are detected. The OpenFileTable SHALL expose a method to query the content size for a given inode (`get_content_size_by_ino`), and a method to mark all handles for a given inode as stale (`mark_stale_by_ino`).
 
 #### Scenario: Open loads content once (small or cached file)
 - **WHEN** an application opens a file that is smaller than 4 MB or is already present in the disk cache with valid content
@@ -369,7 +369,7 @@ The system SHALL cleanly unmount drives without data loss. On unmount, the syste
 - **AND** other threads can access the (now-empty) mounts collection during the unmount process
 
 ### Requirement: Pending writes flushed on unmount via shared implementation
-On unmount, both the FUSE and CfApi backends SHALL flush any pending write-back
+On unmount, both the FUSE and WinFsp backends SHALL flush any pending write-back
 uploads for the unmounting drive using a single shared implementation. The flush
 logic SHALL NOT be duplicated per platform.
 
@@ -466,7 +466,7 @@ The system SHALL implement the FUSE `copy_file_range` operation to optimize file
 - **THEN** the system updates the open file handle's inode metadata to reflect the copied file's size and marks the handle as non-dirty (the server already has the complete data)
 
 #### Scenario: Platform without copy_file_range support
-- **WHEN** a file copy is performed on macOS (which lacks FUSE `copy_file_range`) or on Windows (CfApi)
+- **WHEN** a file copy is performed on macOS (which lacks FUSE `copy_file_range`) or on Windows (WinFsp)
 - **THEN** the copy proceeds via the existing read+write path with no behavior change
 ## Requirements
 ### Requirement: Atomic inode allocation
@@ -482,28 +482,28 @@ The InodeTable SHALL guarantee a 1:1 mapping between `item_id` and `inode` under
 
 ### Requirement: TOCTOU-safe placeholder population on Windows
 
-### Requirement: CfApi fetch_data immediate failure signaling
+### Requirement: WinFsp read failure signaling
 
 - **THEN** the system aborts the transfer, logs a warning with the absolute file path and error details, and returns a failure status to the OS immediately
 - **AND** Windows discards the partial transfer and leaves the file in dehydrated state
 
-### Requirement: CfApi closed callback surfaces upload failures
-On Windows, the `closed()` Cloud Files API callback SHALL emit a `VfsEvent::WritebackFailed` event on every error path, including when `flush_inode` fails after a successful writeback write. The system SHALL NOT silently log upload failures without notifying the user.
+### Requirement: WinFsp cleanup callback surfaces upload failures
+On Windows, the `cleanup()` WinFsp callback SHALL emit a `VfsEvent::WritebackFailed` event on every error path, including when `flush_inode` fails after a successful writeback write. The system SHALL NOT silently log upload failures without notifying the user.
 
 #### Scenario: flush_inode fails after writeback write succeeds
-- **WHEN** the `closed()` callback successfully writes file content to the writeback buffer but the subsequent `flush_inode()` upload fails (network error, auth error, conflict error)
+- **WHEN** the `cleanup()` callback successfully writes file content to the writeback buffer but the subsequent `flush_inode()` upload fails (network error, auth error, conflict error)
 - **THEN** the system logs the error at `error` level and emits a `VfsEvent::WritebackFailed` event with the file name
 - **AND** the UI surfaces a notification to the user indicating the file was not uploaded
 
 #### Scenario: writeback write fails
-- **WHEN** the `closed()` callback fails to write file content to the writeback buffer
+- **WHEN** the `cleanup()` callback fails to write file content to the writeback buffer
 - **THEN** the system logs the error at `error` level, emits a `VfsEvent::WritebackFailed` event, and skips the `flush_inode` call
 
-### Requirement: CfApi writeback failure notification
-The system SHALL emit a `VfsEvent::WritebackFailed` event when a CfApi `closed` callback fails to persist file content to the writeback buffer. The app layer SHALL surface this event as a desktop notification informing the user that their changes were not saved.
+### Requirement: WinFsp writeback failure notification
+The system SHALL emit a `VfsEvent::WritebackFailed` event when a WinFsp `cleanup` callback fails to persist file content to the writeback buffer. The app layer SHALL surface this event as a desktop notification informing the user that their changes were not saved.
 
 #### Scenario: Writeback failure emits VfsEvent
-- **WHEN** the CfApi `closed` callback fails to write content to the writeback buffer
+- **WHEN** the WinFsp `cleanup` callback fails to write content to the writeback buffer
 - **THEN** the system emits a `VfsEvent::WritebackFailed { file_name }` event containing the affected file name
 
 #### Scenario: App surfaces writeback failure notification
@@ -514,11 +514,11 @@ The system SHALL emit a `VfsEvent::WritebackFailed` event when a CfApi `closed` 
 On Windows, sync root registration SHALL explicitly configure supported in-sync attributes for Cloud Files state evaluation, including last-write-time attributes for files and directories.
 
 #### Scenario: Sync root registration on Windows
-- **WHEN** a CfApi mount is registered
+- **WHEN** a WinFsp mount is registered
 - **THEN** the sync root registration includes explicit supported in-sync attributes used by Explorer to determine sync-state transitions
 
 ### Requirement: VfsEvent for upload failures
-The system SHALL define a `VfsEvent::UploadFailed { file_name: String, reason: String }` variant for generic upload failures. The FUSE backend SHALL emit this event from the `flush` callback when `flush_handle` returns an error, providing parity with the CfApi backend's existing `WritebackFailed` emission on `closed()` errors.
+The system SHALL define a `VfsEvent::UploadFailed { file_name: String, reason: String }` variant for generic upload failures. The FUSE backend SHALL emit this event from the `flush` callback when `flush_handle` returns an error, providing parity with the WinFsp backend's existing `WritebackFailed` emission on `cleanup()` errors.
 
 #### Scenario: FUSE flush emits UploadFailed on error
 - **WHEN** the FUSE `flush` callback calls `flush_handle` and it returns an error

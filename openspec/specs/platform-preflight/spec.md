@@ -10,24 +10,24 @@ On Windows release desktop builds, the system SHALL display a native `MessageBox
 - **WHEN** `preflight_checks` detects a placeholder client ID on a Windows release desktop build
 - **THEN** the system displays a `MessageBoxW` dialog with the error message and install instructions, then exits with code 1; no `eprintln!` call is made (stderr is detached)
 
-#### Scenario: CfApi version check fails on Windows release build
+#### Scenario: WinFsp version check fails on Windows release build
 - **WHEN** `preflight_checks` detects that the Windows version is below build 16299 (Windows 10 1709) on a Windows desktop build
-- **THEN** the system displays a `MessageBoxW` dialog stating that Cloud Files API requires Windows 10 version 1709 or later, then exits with code 1
+- **THEN** the system displays a `MessageBoxW` dialog stating that WinFsp requires Windows 10 version 1709 or later, then exits with code 1
 
 #### Scenario: Fatal error on non-Windows or debug build
 - **WHEN** `preflight_checks` returns an error on Linux, macOS, or a Windows debug build
 - **THEN** the system prints the error to stderr via `eprintln!` and exits with code 1 (existing behavior preserved)
 
-### Requirement: Windows Cloud Files API version guard
-The system SHALL verify that the Windows version supports Cloud Files API before attempting any CfApi mount operation.
+### Requirement: Windows WinFsp version guard
+The system SHALL verify that WinFsp is available before attempting any WinFsp mount operation.
 
 #### Scenario: Supported Windows version
 - **WHEN** `preflight_checks` runs on Windows 10 build 16299 or later
-- **THEN** the CfApi version check passes silently and startup continues normally
+- **THEN** the WinFsp version check passes silently and startup continues normally
 
 #### Scenario: Unsupported Windows version
 - **WHEN** `preflight_checks` runs on a Windows version earlier than build 16299
-- **THEN** the system displays a `MessageBoxW` dialog with an actionable message ("Cloud Files API requires Windows 10 version 1709 or later") and exits with code 1
+- **THEN** the system displays a `MessageBoxW` dialog with an actionable message ("WinFsp requires Windows 10 version 1709 or later") and exits with code 1
 
 ### Requirement: FUSE unavailable notification
 On Linux and macOS desktop builds, when FUSE is not available, the system SHALL surface a system notification with platform-specific install instructions after sign-in completes, rather than silently degrading.

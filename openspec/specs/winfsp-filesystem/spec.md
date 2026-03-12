@@ -282,7 +282,7 @@ The system SHALL implement `DeltaSyncObserver` for WinFsp via a `WinFspDeltaObse
 - **THEN** it creates the `WinFspDeltaObserver` sharing the same `OpenFileTable` as the `CloudMountWinFsp` instance, and the observer is accessible via `delta_observer()`
 
 ### Requirement: WinFsp driver availability check
-On Windows, the `preflight_checks()` function SHALL verify WinFsp driver availability instead of the CfApi version check. The check SHALL query the registry key `HKLM\SOFTWARE\WinFsp\InstallDir`. If the key exists, the system SHALL verify the WinFsp DLL (`winfsp-x64.dll` on 64-bit systems) is present in the install directory's `bin` subdirectory. If either check fails, the function SHALL return an error with a message directing the user to install WinFsp.
+On Windows, the `preflight_checks()` function SHALL verify WinFsp driver availability. The check SHALL query the registry key `HKLM\SOFTWARE\WinFsp\InstallDir`. If the key exists, the system SHALL verify the WinFsp DLL (`winfsp-x64.dll` on 64-bit systems) is present in the install directory's `bin` subdirectory. If either check fails, the function SHALL return an error with a message directing the user to install WinFsp.
 
 #### Scenario: WinFsp installed and available
 - **WHEN** preflight checks run on Windows and the WinFsp registry key exists and the DLL is present
@@ -296,24 +296,7 @@ On Windows, the `preflight_checks()` function SHALL verify WinFsp driver availab
 - **WHEN** the registry key exists but the DLL file is not found at the expected path
 - **THEN** the check fails with an error message indicating a broken WinFsp installation
 
-### Requirement: CfApi sync root cleanup on upgrade
-On first run after upgrading from a CfApi-based version, the system SHALL detect and unregister any orphaned CfApi sync roots. The system SHALL store a `cfapi_migrated: true` flag in the user config after successful migration. If the flag is already set, the migration step SHALL be skipped.
-
-#### Scenario: First launch after upgrade from CfApi version
-- **WHEN** the application starts on Windows and `cfapi_migrated` is not set in the config
-- **THEN** the system enumerates CfApi sync roots registered by CloudMount, unregisters each one, sets `cfapi_migrated: true` in the config, and logs the number of sync roots cleaned up
-
-#### Scenario: No orphaned sync roots found
-- **WHEN** the migration step runs and no CloudMount-registered sync roots exist
-- **THEN** the system sets `cfapi_migrated: true` and continues without error
-
-#### Scenario: Migration already completed
-- **WHEN** the application starts and `cfapi_migrated: true` is already set
-- **THEN** the system skips the migration step entirely
-
-#### Scenario: Sync root unregistration fails
-- **WHEN** the system attempts to unregister an orphaned sync root and the operation fails (permissions, corrupt state)
-- **THEN** the system logs a warning and continues with the remaining sync roots; the migration flag is still set to avoid retrying indefinitely
+> **Historical note:** CfApi sync root cleanup was performed as a one-time migration step in v0.x. The `cfapi_migrated` config flag and `cleanup_cfapi_sync_roots()` function were removed once migration was complete.
 
 ### Requirement: Windows headless mode support
 On Windows with the WinFsp backend, the system SHALL support `--headless` mode. The `run_headless()` function SHALL NOT reject Windows builds. WinFsp mounts SHALL work without a desktop session because `FileSystemHost::start()` operates independently of Explorer or any GUI components.

@@ -5,25 +5,25 @@ Defines reference-counted lifecycle rules for registering and removing the Windo
 ## Requirements
 
 ### Requirement: Register context menu on first active Windows mount
-The system SHALL register the Windows Explorer "Open in SharePoint" context-menu command when CloudMount transitions from zero active CfApi mounts to one active CfApi mount.
+The system SHALL register the Windows Explorer "Open in SharePoint" context-menu command when CloudMount transitions from zero active WinFsp mounts to one active WinFsp mount.
 
 #### Scenario: First mount starts
-- **WHEN** a Windows CfApi mount completes successfully and no other CfApi mounts are currently active
+- **WHEN** a Windows WinFsp mount completes successfully and no other WinFsp mounts are currently active
 - **THEN** the system creates (or updates) the required registry keys under `HKCU\\Software\\Classes\\*\\shell\\CloudMount.OpenInSharePoint` and sets the command to launch `cloudmount://open-online?path=%1`
 
 #### Scenario: Additional mount starts
-- **WHEN** a Windows CfApi mount completes successfully and at least one other CfApi mount is already active
+- **WHEN** a Windows WinFsp mount completes successfully and at least one other WinFsp mount is already active
 - **THEN** the system does not remove or reinitialize lifecycle state and keeps the context-menu command available
 
 ### Requirement: Remove context menu only after last active Windows mount
-The system SHALL remove the Windows Explorer "Open in SharePoint" context-menu command only when CloudMount transitions from one active CfApi mount to zero active CfApi mounts.
+The system SHALL remove the Windows Explorer "Open in SharePoint" context-menu command only when CloudMount transitions from one active WinFsp mount to zero active WinFsp mounts.
 
 #### Scenario: Non-final unmount
-- **WHEN** one Windows CfApi mount is unmounted while at least one other CfApi mount remains active
+- **WHEN** one Windows WinFsp mount is unmounted while at least one other WinFsp mount remains active
 - **THEN** the system keeps the context-menu registry keys in place
 
 #### Scenario: Final unmount
-- **WHEN** the final active Windows CfApi mount is unmounted
+- **WHEN** the final active Windows WinFsp mount is unmounted
 - **THEN** the system removes the context-menu registry subtree for `CloudMount.OpenInSharePoint`
 
 ### Requirement: Idempotent registry lifecycle operations
