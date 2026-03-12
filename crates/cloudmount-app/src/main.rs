@@ -7,12 +7,16 @@
 mod commands;
 #[cfg(all(feature = "desktop", target_os = "linux"))]
 mod linux_integrations;
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+mod macos_integrations;
 #[cfg(feature = "desktop")]
 mod notify;
 #[cfg(feature = "desktop")]
 mod tray;
 #[cfg(feature = "desktop")]
 mod update;
+#[cfg(all(feature = "desktop", target_os = "windows"))]
+mod windows_integrations;
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
@@ -523,6 +527,8 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::check_fuse_available,
             commands::get_default_mount_root,
             commands::open_online,
+            commands::get_collab_config,
+            commands::update_collab_config,
         ])
         .setup(move |app| {
             // Populate the opener's AppHandle slot now that the app is running.
@@ -978,9 +984,195 @@ fn spawn_event_forwarder(
                 cloudmount_vfs::core_ops::VfsEvent::FileLocked { file_name } => {
                     notify::file_locked(&app_handle, &file_name);
                 }
+                cloudmount_vfs::core_ops::VfsEvent::CollabGateTimeout { path } => {
+                    let file_name = std::path::Path::new(&path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&path)
+                        .to_string();
+                    tracing::warn!("CollabGate timeout for {path}, opened locally");
+                    notify::collab_gate_timeout(&app_handle, &file_name);
+                }
             }
         }
     });
+}
+
+/// Resolve the user's preference for how to open a collaborative file.
+///
+/// Returns `Some(response)` if the preference can be determined automatically
+/// (per-extension override or default action), or `None` if a dialog should be shown.
+#[cfg(feature = "desktop")]
+fn resolve_collab_preference(
+    config: &cloudmount_core::config::CollaborativeOpenConfig,
+    ext: &str,
+    has_local_changes: bool,
+) -> Option<cloudmount_core::types::CollabOpenResponse> {
+    use cloudmount_core::config::CollabDefaultAction;
+    use cloudmount_core::types::CollabOpenResponse;
+
+    // Force dialog when there are unsaved local changes
+    if has_local_changes {
+        return None;
+    }
+
+    // Check per-extension override (strip leading dot if present)
+    let ext_key = ext.strip_prefix('.').unwrap_or(ext);
+    if let Some(action) = config.extensions.get(ext_key) {
+        match action.as_str() {
+            "online" => return Some(CollabOpenResponse::OpenOnline),
+            "local" => return Some(CollabOpenResponse::OpenLocally),
+            _ => {}
+        }
+    }
+
+    // Check default action
+    match config.default_action {
+        CollabDefaultAction::Online => Some(CollabOpenResponse::OpenOnline),
+        CollabDefaultAction::Local => Some(CollabOpenResponse::OpenLocally),
+        CollabDefaultAction::Ask => None,
+    }
+}
+
+/// Open a file online using its web URL and Office URI scheme.
+///
+/// Resolves the web URL from the request or falls back to `resolve_web_url`,
+/// applies the Office URI scheme mapping, and opens via `open_with_clean_env`.
+/// Returns `Err` if URL resolution or opening fails.
+#[cfg(feature = "desktop")]
+async fn handle_collab_open_online(
+    app: &tauri::AppHandle,
+    request: &cloudmount_core::types::CollabOpenRequest,
+) -> Result<(), String> {
+    use tauri::Manager;
+
+    let state = app.state::<AppState>();
+
+    // Use web_url from the request if available, otherwise resolve via cache/Graph
+    let web_url = match &request.web_url {
+        Some(url) if !url.is_empty() => url.clone(),
+        _ => commands::resolve_web_url(&state, &request.path).await?,
+    };
+
+    let uri = cloudmount_core::open_online::office_uri(&request.extension, &web_url);
+
+    if uri != web_url {
+        // Office URI -- try desktop app first, fall back to browser on failure
+        if let Err(e) = open_with_clean_env(&uri) {
+            tracing::warn!("Office URI scheme failed ({e}), falling back to browser");
+            open_with_clean_env(&web_url).map_err(|e| format!("failed to open URL: {e}"))?;
+        }
+    } else {
+        open_with_clean_env(&web_url).map_err(|e| format!("failed to open URL: {e}"))?;
+    }
+
+    Ok(())
+}
+
+/// Spawn a task that listens on the CollabGate channel and handles requests.
+///
+/// For each request: resolve user preference -> auto-respond or show dialog ->
+/// if OpenOnline, launch the Office URI. Falls back to OpenLocally on errors.
+#[cfg(feature = "desktop")]
+fn spawn_collab_handler(
+    rt: &tokio::runtime::Handle,
+    app: &tauri::AppHandle,
+    mut collab_rx: tokio::sync::mpsc::Receiver<(
+        cloudmount_core::types::CollabOpenRequest,
+        tokio::sync::oneshot::Sender<cloudmount_core::types::CollabOpenResponse>,
+    )>,
+) {
+    use cloudmount_core::types::CollabOpenResponse;
+    use tauri::Manager;
+
+    let app_handle = app.clone();
+    rt.spawn(async move {
+        while let Some((request, reply_tx)) = collab_rx.recv().await {
+            let file_name = std::path::Path::new(&request.path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&request.path)
+                .to_string();
+
+            // Read current collab config for preference resolution
+            let collab_config = {
+                let state = app_handle.state::<AppState>();
+                let cfg = state.effective_config.lock().unwrap();
+                cfg.collaborative_open.clone()
+            };
+
+            // Try to resolve preference without a dialog
+            let response = match resolve_collab_preference(
+                &collab_config,
+                &request.extension,
+                request.has_local_changes,
+            ) {
+                Some(pref) => {
+                    tracing::debug!("CollabGate: auto-resolved {file_name} -> {pref:?}");
+                    pref
+                }
+                None => {
+                    // Show native dialog to ask the user
+                    show_collab_dialog(&app_handle, &file_name, request.has_local_changes).await
+                }
+            };
+
+            // If OpenOnline, launch the URI before responding
+            if response == CollabOpenResponse::OpenOnline
+                && let Err(e) = handle_collab_open_online(&app_handle, &request).await
+            {
+                tracing::warn!(
+                    "CollabGate: failed to open {file_name} online: {e}, falling back to local"
+                );
+                notify::collab_open_failed(&app_handle, &file_name, &e);
+                let _ = reply_tx.send(CollabOpenResponse::OpenLocally);
+                continue;
+            }
+
+            let _ = reply_tx.send(response);
+        }
+    });
+}
+
+/// Show a native dialog asking the user how to open a collaborative file.
+///
+/// Returns `OpenOnline` if the user chooses the online option, `OpenLocally` otherwise.
+// TODO: Add a "Remember my choice" checkbox when tauri_plugin_dialog supports it.
+// For now, users can set per-extension preferences via the Settings UI.
+#[cfg(feature = "desktop")]
+async fn show_collab_dialog(
+    app: &tauri::AppHandle,
+    file_name: &str,
+    has_local_changes: bool,
+) -> cloudmount_core::types::CollabOpenResponse {
+    use cloudmount_core::types::CollabOpenResponse;
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+    let mut message = format!("\"{}\" can be edited collaboratively online.", file_name);
+    if has_local_changes {
+        message.push_str(
+            "\n\nWarning: This file has unsaved local changes. Opening online will not include your local edits.",
+        );
+    }
+    message.push_str("\n\nOpen online for collaborative editing?");
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+    app.dialog()
+        .message(&message)
+        .title("Collaborative Editing")
+        .kind(MessageDialogKind::Info)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Open Online".to_string(),
+            "Open Locally".to_string(),
+        ))
+        .show(move |open_online| {
+            let _ = tx.send(open_online);
+        });
+
+    match rx.await {
+        Ok(true) => CollabOpenResponse::OpenOnline,
+        _ => CollabOpenResponse::OpenLocally,
+    }
 }
 
 #[cfg(all(feature = "desktop", any(target_os = "linux", target_os = "macos")))]
@@ -1012,6 +1204,13 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         cloudmount_vfs::SyncProcessorConfig::default(),
     );
 
+    // Read collab config and create the CollabGate channel
+    let collab_config = {
+        let cfg = state.effective_config.lock().map_err(|e| e.to_string())?;
+        cfg.collaborative_open.clone()
+    };
+    let (collab_tx, collab_rx) = tokio::sync::mpsc::channel(8);
+
     let mut handle = MountHandle::mount(
         state.graph.clone(),
         ctx.cache.clone(),
@@ -1021,12 +1220,15 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         ctx.rt.clone(),
         Some(ctx.event_tx),
         Some(sync_handle),
+        Some(collab_tx),
+        Some(collab_config),
     )
     .map_err(|e| e.to_string())?;
 
     handle.set_sync_join(sync_join);
 
     spawn_event_forwarder(&ctx.rt, app, ctx.event_rx);
+    spawn_collab_handler(&ctx.rt, app, collab_rx);
 
     let observer = Some(handle.delta_observer());
     state
@@ -1073,6 +1275,13 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         cloudmount_vfs::SyncProcessorConfig::default(),
     );
 
+    // Read collab config and create the CollabGate channel
+    let collab_config = {
+        let cfg = state.effective_config.lock().map_err(|e| e.to_string())?;
+        cfg.collaborative_open.clone()
+    };
+    let (collab_tx, collab_rx) = tokio::sync::mpsc::channel(8);
+
     let mut handle = cloudmount_vfs::WinFspMountHandle::mount(
         state.graph.clone(),
         ctx.cache.clone(),
@@ -1082,12 +1291,15 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         ctx.rt.clone(),
         Some(ctx.event_tx),
         Some(sync_handle),
+        Some(collab_tx),
+        Some(collab_config),
     )
     .map_err(|e| e.to_string())?;
 
     handle.set_sync_join(sync_join);
 
     spawn_event_forwarder(&ctx.rt, app, ctx.event_rx);
+    spawn_collab_handler(&ctx.rt, app, collab_rx);
 
     let observer = Some(handle.delta_observer());
     state
@@ -1096,11 +1308,18 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         .unwrap()
         .insert(ctx.drive_id.clone(), (ctx.cache, ctx.inodes, observer));
 
-    state
-        .mounts
-        .lock()
-        .unwrap()
-        .insert(mount_config.id.clone(), handle);
+    let mount_count = {
+        let mut mounts = state.mounts.lock().unwrap();
+        mounts.insert(mount_config.id.clone(), handle);
+        mounts.len()
+    };
+
+    // Register context menus on first mount
+    if mount_count == 1 {
+        if let Err(e) = windows_integrations::register_context_menus() {
+            tracing::warn!("failed to register context menus: {e}");
+        }
+    }
 
     tracing::info!(
         "mount '{}' started at {}",
@@ -1130,6 +1349,15 @@ fn stop_mount(app: &tauri::AppHandle, mount_id: &str) -> Result<(), String> {
 
     handle.unmount().map_err(|e| e.to_string())?;
     tracing::info!("mount '{mount_id}' stopped");
+
+    // Unregister context menus when no mounts remain
+    #[cfg(target_os = "windows")]
+    if state.mounts.lock().unwrap().is_empty() {
+        if let Err(e) = windows_integrations::unregister_context_menus() {
+            tracing::warn!("failed to unregister context menus: {e}");
+        }
+    }
+
     tray::update_tray_menu(app);
 
     Ok(())
@@ -1517,6 +1745,8 @@ fn run_headless(
                     rt_handle.clone(),
                     None,
                     None, // no sync processor in headless mode
+                    None, // no collab channel in headless mode
+                    None,
                 ) {
                     Ok(handle) => {
                         tracing::info!("mount '{}' started at {mountpoint}", mount_config.name);

@@ -10,9 +10,9 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use tokio::runtime::Handle;
 use windows_sys::Win32::Foundation::{
-    STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_FULL, STATUS_IO_DEVICE_ERROR,
-    STATUS_IO_TIMEOUT, STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_COLLISION,
-    STATUS_OBJECT_NAME_NOT_FOUND,
+    STATUS_ACCESS_DENIED, STATUS_CANCELLED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_FULL,
+    STATUS_IO_DEVICE_ERROR, STATUS_IO_TIMEOUT, STATUS_NOT_A_DIRECTORY,
+    STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND,
 };
 use windows_sys::Win32::Storage::FileSystem::FILE_ACCESS_RIGHTS;
 use winfsp::U16CStr;
@@ -117,10 +117,11 @@ fn vfs_err_to_ntstatus(e: VfsError) -> winfsp::FspError {
         VfsError::NotFound => STATUS_OBJECT_NAME_NOT_FOUND,
         VfsError::NotADirectory => STATUS_NOT_A_DIRECTORY,
         VfsError::DirectoryNotEmpty => STATUS_DIRECTORY_NOT_EMPTY,
-        VfsError::PermissionDenied => STATUS_ACCESS_DENIED,
+        VfsError::PermissionDenied | VfsError::CollabRedirect => STATUS_ACCESS_DENIED,
         VfsError::TimedOut => STATUS_IO_TIMEOUT,
         VfsError::QuotaExceeded => STATUS_DISK_FULL,
         VfsError::IoError(_) => STATUS_IO_DEVICE_ERROR,
+        VfsError::OperationCancelled => STATUS_CANCELLED,
     };
     winfsp::FspError::NTSTATUS(code)
 }
@@ -234,6 +235,7 @@ fn build_normalized_path(ops: &CoreOps, components: &[String]) -> Option<Vec<u16
 
 impl CloudMountWinFsp {
     /// Create a new WinFsp filesystem context.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         graph: Arc<GraphClient>,
         cache: Arc<CacheManager>,
@@ -242,6 +244,8 @@ impl CloudMountWinFsp {
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
         sync_handle: Option<crate::sync_processor::SyncHandle>,
+        collab_tx: Option<crate::core_ops::CollabSender>,
+        collab_config: Option<cloudmount_core::config::CollaborativeOpenConfig>,
     ) -> Self {
         let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt.clone());
         if let Some(tx) = event_tx.clone() {
@@ -249,6 +253,12 @@ impl CloudMountWinFsp {
         }
         if let Some(sh) = sync_handle {
             ops = ops.with_sync_handle(sh);
+        }
+        if let Some(tx) = collab_tx {
+            ops = ops.with_collab_sender(tx);
+        }
+        if let Some(cfg) = collab_config {
+            ops = ops.with_collab_config(cfg);
         }
         let open_files = ops.open_files().clone();
         Self {
@@ -344,11 +354,25 @@ impl FileSystemContext for CloudMountWinFsp {
 
         let is_dir = item.is_folder();
 
+        // Reconstruct the file path for CollabGate.
+        let path_str = if components.is_empty() {
+            String::from("/")
+        } else {
+            format!("/{}", components.join("/"))
+        };
+
+        // TODO: Extract caller PID from WinFsp if the Rust bindings expose
+        // FspFileSystemOperationProcessId(). Currently unavailable in winfsp-rs.
+        let caller_pid: Option<u32> = None;
+
         // Open a file handle for regular files; directories don't need one.
         let fh = if is_dir {
             None
         } else {
-            let handle = self.ops.open_file(ino).map_err(vfs_err_to_ntstatus)?;
+            let handle = self
+                .ops
+                .open_file(ino, caller_pid, Some(&path_str))
+                .map_err(vfs_err_to_ntstatus)?;
             Some(handle)
         };
 
@@ -981,6 +1005,7 @@ impl WinFspMountHandle {
     /// Follows the same pattern as the FUSE `MountHandle::mount()`:
     /// fetch root item, seed caches, create filesystem, configure WinFsp host,
     /// mount and start.
+    #[allow(clippy::too_many_arguments)]
     pub fn mount(
         graph: Arc<GraphClient>,
         cache: Arc<CacheManager>,
@@ -990,6 +1015,8 @@ impl WinFspMountHandle {
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
         sync_handle: Option<crate::sync_processor::SyncHandle>,
+        collab_tx: Option<crate::core_ops::CollabSender>,
+        collab_config: Option<cloudmount_core::config::CollaborativeOpenConfig>,
     ) -> cloudmount_core::Result<Self> {
         // 1. Fetch drive root from Graph API.
         let root_item =
@@ -1017,6 +1044,8 @@ impl WinFspMountHandle {
             rt.clone(),
             event_tx,
             sync_handle,
+            collab_tx,
+            collab_config,
         );
 
         // 4. Create delta observer before host takes ownership.

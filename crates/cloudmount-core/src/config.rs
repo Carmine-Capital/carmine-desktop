@@ -67,6 +67,7 @@ impl UserConfig {
                 "log_level" => g.log_level = None,
                 "notifications" => g.notifications = None,
                 "root_dir" => g.root_dir = None,
+                "collaborative_open" => g.collaborative_open = None,
                 _ => {}
             }
         }
@@ -164,6 +165,8 @@ pub struct UserGeneralSettings {
     pub notifications: Option<bool>,
     #[serde(default)]
     pub root_dir: Option<String>,
+    #[serde(default)]
+    pub collaborative_open: Option<CollaborativeOpenConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,6 +194,45 @@ fn default_true() -> bool {
     true
 }
 
+fn default_collab_timeout() -> u64 {
+    15
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollaborativeOpenConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub default_action: CollabDefaultAction,
+    #[serde(default = "default_collab_timeout")]
+    pub timeout_seconds: u64,
+    #[serde(default)]
+    pub shell_processes: Vec<String>,
+    #[serde(default)]
+    pub extensions: std::collections::HashMap<String, String>,
+}
+
+impl Default for CollaborativeOpenConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            default_action: CollabDefaultAction::default(),
+            timeout_seconds: default_collab_timeout(),
+            shell_processes: Vec::new(),
+            extensions: std::collections::HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CollabDefaultAction {
+    #[default]
+    Ask,
+    Online,
+    Local,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountMetadata {
     pub id: String,
@@ -216,6 +258,7 @@ pub struct EffectiveConfig {
     pub root_dir: String,
     pub mounts: Vec<MountConfig>,
     pub accounts: Vec<AccountMetadata>,
+    pub collaborative_open: CollaborativeOpenConfig,
 }
 
 impl EffectiveConfig {
@@ -246,6 +289,10 @@ impl EffectiveConfig {
             .unwrap_or_else(|| "info".to_string());
         let notifications = user_general.and_then(|g| g.notifications).unwrap_or(true);
 
+        let collaborative_open = user_general
+            .and_then(|g| g.collaborative_open.clone())
+            .unwrap_or_default();
+
         Self {
             auto_start,
             cache_max_size,
@@ -257,6 +304,7 @@ impl EffectiveConfig {
             root_dir,
             mounts: user.mounts.clone(),
             accounts: user.accounts.clone(),
+            collaborative_open,
         }
     }
 }

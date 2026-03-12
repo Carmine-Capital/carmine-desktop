@@ -83,6 +83,7 @@ pub struct CloudMountFs {
 }
 
 impl CloudMountFs {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         graph: Arc<GraphClient>,
         cache: Arc<CacheManager>,
@@ -91,6 +92,8 @@ impl CloudMountFs {
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
         sync_handle: Option<crate::sync_processor::SyncHandle>,
+        collab_tx: Option<crate::core_ops::CollabSender>,
+        collab_config: Option<cloudmount_core::config::CollaborativeOpenConfig>,
     ) -> Self {
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
@@ -115,6 +118,12 @@ impl CloudMountFs {
         }
         if let Some(sh) = sync_handle {
             ops = ops.with_sync_handle(sh);
+        }
+        if let Some(tx) = collab_tx {
+            ops = ops.with_collab_sender(tx);
+        }
+        if let Some(cfg) = collab_config {
+            ops = ops.with_collab_config(cfg);
         }
         Self {
             ops,
@@ -218,10 +227,11 @@ impl CloudMountFs {
             VfsError::NotFound => Errno::ENOENT,
             VfsError::NotADirectory => Errno::ENOTDIR,
             VfsError::DirectoryNotEmpty => Errno::ENOTEMPTY,
-            VfsError::PermissionDenied => Errno::EACCES,
+            VfsError::PermissionDenied | VfsError::CollabRedirect => Errno::EACCES,
             VfsError::TimedOut => Errno::ETIMEDOUT,
             VfsError::QuotaExceeded => Errno::ENOSPC,
             VfsError::IoError(_) => Errno::EIO,
+            VfsError::OperationCancelled => Errno::ECANCELED,
         }
     }
 }
@@ -400,8 +410,10 @@ impl Filesystem for CloudMountFs {
         }
     }
 
-    fn open(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
-        match self.ops.open_file(ino.0) {
+    fn open(&self, req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
+        let caller_pid = Some(req.pid());
+        let file_path = self.ops.lookup_item(ino.0).map(|item| item.name.clone());
+        match self.ops.open_file(ino.0, caller_pid, file_path.as_deref()) {
             Ok(fh) => reply.opened(FileHandle(fh), FopenFlags::empty()),
             Err(e) => reply.error(Self::vfs_err_to_errno(e)),
         }

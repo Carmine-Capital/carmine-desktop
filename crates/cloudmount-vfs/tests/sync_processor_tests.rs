@@ -615,7 +615,7 @@ async fn test_sync_processor_flush_handle_with_sync_processor() {
     // open_file, write_handle, flush_handle — must run outside async context
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(file_ino).unwrap();
+        let fh = ops2.open_file(file_ino, None, None).unwrap();
         ops2.write_handle(fh, 0, WRITTEN_CONTENT).unwrap();
         // flush_handle should write to writeback and send Flush to sync processor,
         // NOT perform an inline upload

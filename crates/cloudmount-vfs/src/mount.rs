@@ -100,6 +100,8 @@ impl MountHandle {
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
         sync_handle: Option<crate::sync_processor::SyncHandle>,
+        collab_tx: Option<crate::core_ops::CollabSender>,
+        collab_config: Option<cloudmount_core::config::CollaborativeOpenConfig>,
     ) -> cloudmount_core::Result<Self> {
         let root_item =
             tokio::task::block_in_place(|| rt.block_on(graph.get_item(&drive_id, "root")))
@@ -120,7 +122,9 @@ impl MountHandle {
         let try_mount =
             |auto_unmount: bool,
              event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
-             sync_handle: Option<crate::sync_processor::SyncHandle>| {
+             sync_handle: Option<crate::sync_processor::SyncHandle>,
+             collab_tx: Option<crate::core_ops::CollabSender>,
+             collab_config: Option<cloudmount_core::config::CollaborativeOpenConfig>| {
                 let fs = CloudMountFs::new(
                     graph.clone(),
                     cache.clone(),
@@ -129,6 +133,8 @@ impl MountHandle {
                     rt.clone(),
                     event_tx,
                     sync_handle,
+                    collab_tx,
+                    collab_config,
                 );
                 let observer = fs.create_delta_observer();
                 let session = fs.mount(mountpoint, auto_unmount)?;
@@ -139,12 +145,17 @@ impl MountHandle {
         // Try with auto_unmount first (crash safety net), fall back without it
         // since it requires fusermount3 + non-Owner ACL which isn't always available.
         let stored_handle = sync_handle.clone();
-        let (session, delta_observer) = match try_mount(true, event_tx.clone(), sync_handle.clone())
-        {
+        let (session, delta_observer) = match try_mount(
+            true,
+            event_tx.clone(),
+            sync_handle.clone(),
+            collab_tx.clone(),
+            collab_config.clone(),
+        ) {
             Ok(result) => result,
             Err(_) => {
                 tracing::warn!("auto_unmount not supported, mounting without it");
-                try_mount(false, event_tx, sync_handle)?
+                try_mount(false, event_tx, sync_handle, collab_tx, collab_config)?
             }
         };
 

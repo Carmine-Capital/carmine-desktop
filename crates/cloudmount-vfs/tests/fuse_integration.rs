@@ -78,6 +78,8 @@ impl TestFixture {
             rt,
             None,
             None,
+            None,
+            None,
         )
         .expect("FUSE mount failed — is FUSE available?");
 
@@ -211,6 +213,8 @@ async fn mount_fails_when_root_fetch_returns_error() {
         DRIVE_ID.to_string(),
         mountpoint.to_str().unwrap(),
         rt,
+        None,
+        None,
         None,
         None,
     );

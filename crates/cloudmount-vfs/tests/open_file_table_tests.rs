@@ -116,8 +116,8 @@ async fn open_returns_unique_handles() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh1 = ops2.open_file(2).unwrap();
-        let fh2 = ops2.open_file(2).unwrap();
+        let fh1 = ops2.open_file(2, None, None).unwrap();
+        let fh2 = ops2.open_file(2, None, None).unwrap();
         assert_ne!(fh1, fh2, "each open should return a unique handle");
         let _ = ops2.release_file(fh1);
         let _ = ops2.release_file(fh2);
@@ -139,7 +139,7 @@ async fn read_slices_from_buffer() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
 
         let data = ops2.read_handle(fh, 0, 100).unwrap();
         assert_eq!(data, b"Hello, world!");
@@ -169,7 +169,7 @@ async fn write_mutates_buffer_in_place() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
 
         let written = ops2.write_handle(fh, 7, b"Rust!").unwrap();
         assert_eq!(written, 5);
@@ -196,7 +196,7 @@ async fn write_extends_buffer() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
 
         let written = ops2.write_handle(fh, 5, b"there").unwrap();
         assert_eq!(written, 5);
@@ -261,7 +261,7 @@ async fn flush_pushes_to_writeback() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
         ops2.write_handle(fh, 0, b"changed").unwrap();
         ops2.flush_handle(fh, false).unwrap();
         let _ = ops2.release_file(fh);
@@ -283,7 +283,7 @@ async fn release_dirty_handle_pushes_to_writeback() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
         ops2.write_handle(fh, 0, b"modified").unwrap();
         ops2.release_file(fh).unwrap();
     })
@@ -307,7 +307,7 @@ async fn release_clean_handle_no_writeback() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
         let data = ops2.read_handle(fh, 0, 10).unwrap();
         assert_eq!(data, b"data");
         ops2.release_file(fh).unwrap();
@@ -335,7 +335,7 @@ async fn truncate_on_open_file() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
 
         ops2.truncate(2, 5).unwrap();
         let data = ops2.read_handle(fh, 0, 100).unwrap();
@@ -540,8 +540,8 @@ async fn copy_file_range_eligible_when_remote_full_file() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh_in = ops2.open_file(ino1).unwrap();
-        let fh_out = ops2.open_file(ino2).unwrap();
+        let fh_in = ops2.open_file(ino1, None, None).unwrap();
+        let fh_out = ops2.open_file(ino2, None, None).unwrap();
 
         // full-file, remote source → server-side copy
         let copied = ops2
@@ -662,8 +662,8 @@ async fn copy_file_range_ineligible_local_source() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh_in = ops2.open_file(ino_src).unwrap();
-        let fh_out = ops2.open_file(ino_dst).unwrap();
+        let fh_in = ops2.open_file(ino_src, None, None).unwrap();
+        let fh_out = ops2.open_file(ino_dst, None, None).unwrap();
 
         // local: source → should fallback to buffer copy
         let copied = ops2
@@ -715,8 +715,8 @@ async fn copy_file_range_ineligible_partial_offset() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh_in = ops2.open_file(ino1).unwrap();
-        let fh_out = ops2.open_file(ino2).unwrap();
+        let fh_in = ops2.open_file(ino1, None, None).unwrap();
+        let fh_out = ops2.open_file(ino2, None, None).unwrap();
 
         // offset_in > 0 → fallback
         let copied = ops2
@@ -767,8 +767,8 @@ async fn copy_file_range_ineligible_len_too_small() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh_in = ops2.open_file(ino1).unwrap();
-        let fh_out = ops2.open_file(ino2).unwrap();
+        let fh_in = ops2.open_file(ino1, None, None).unwrap();
+        let fh_out = ops2.open_file(ino2, None, None).unwrap();
 
         // len < source size → fallback
         let copied = ops2
@@ -1011,7 +1011,7 @@ async fn streaming_open_read_lifecycle() {
     let ops2 = ops.clone();
     let content2 = content.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(file_ino).unwrap();
+        let fh = ops2.open_file(file_ino, None, None).unwrap();
 
         let data = ops2.read_handle(fh, 0, 4096).unwrap();
         assert_eq!(data.len(), 4096);
@@ -1054,7 +1054,7 @@ async fn streaming_cancellation_no_disk_cache() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(file_ino).unwrap();
+        let fh = ops2.open_file(file_ino, None, None).unwrap();
         ops2.release_file(fh).unwrap();
     })
     .await
@@ -1104,7 +1104,7 @@ async fn streaming_random_access_uses_range_request() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(file_ino).unwrap();
+        let fh = ops2.open_file(file_ino, None, None).unwrap();
 
         // Give background task a moment to fail on 404
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -1146,7 +1146,7 @@ async fn streaming_download_failure_propagates_to_read() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(file_ino).unwrap();
+        let fh = ops2.open_file(file_ino, None, None).unwrap();
 
         let result = ops2.read_handle(fh, 0, 4096);
         assert!(
@@ -1185,7 +1185,7 @@ async fn write_to_streaming_file_blocks_until_complete() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(file_ino).unwrap();
+        let fh = ops2.open_file(file_ino, None, None).unwrap();
 
         let written = ops2.write_handle(fh, 0, b"PATCHED!").unwrap();
         assert_eq!(written, 8);
@@ -1236,8 +1236,8 @@ async fn copy_file_range_fallback_copies_at_offsets() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh_in = ops2.open_file(ino1).unwrap();
-        let fh_out = ops2.open_file(ino2).unwrap();
+        let fh_in = ops2.open_file(ino1, None, None).unwrap();
+        let fh_out = ops2.open_file(ino2, None, None).unwrap();
 
         // Copy 3 bytes from offset 2 in source to offset 5 in dest
         let copied = ops2
@@ -1279,7 +1279,7 @@ async fn open_file_with_stale_disk_cache_wrong_size_triggers_redownload() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
         let data = ops2.read_handle(fh, 0, 100).unwrap();
         assert_eq!(data, b"Hello, world!");
         let _ = ops2.release_file(fh);
@@ -1308,7 +1308,7 @@ async fn open_file_with_stale_etag_triggers_redownload() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
         let data = ops2.read_handle(fh, 0, 100).unwrap();
         assert_eq!(data, b"Hello, world!");
         let _ = ops2.release_file(fh);
@@ -1340,7 +1340,7 @@ async fn open_file_with_dirty_inode_skips_disk_cache() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
         let data = ops2.read_handle(fh, 0, 100).unwrap();
         assert_eq!(data, b"Hello, world!");
         // Dirty flag should be cleared after download
@@ -1371,7 +1371,7 @@ async fn open_file_with_valid_cache_serves_from_disk() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
         let data = ops2.read_handle(fh, 0, 100).unwrap();
         assert_eq!(data, b"Hello, world!");
         let _ = ops2.release_file(fh);
@@ -1542,7 +1542,7 @@ async fn test_lookup_item_for_getattr_returns_handle_size() {
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
         // Open file — handle holds 13 bytes
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
 
         // Simulate delta sync updating cache with a new size
         let mut item = ops2.lookup_item(2).unwrap();
@@ -1624,7 +1624,7 @@ async fn open_file_serves_fresh_content_when_server_etag_differs() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
         let data = ops2.read_handle(fh, 0, 100).unwrap();
         assert_eq!(
             data, b"new content",
@@ -1659,7 +1659,7 @@ async fn open_file_falls_back_to_disk_cache_when_get_item_fails() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
         let data = ops2.read_handle(fh, 0, 100).unwrap();
         assert_eq!(
             data, b"Hello, world!",
@@ -1724,7 +1724,7 @@ async fn flush_inode_creates_conflict_copy_on_423_locked() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
         ops2.write_handle(fh, 0, b"changed").unwrap();
         // flush_handle returns Ok when conflict copy upload succeeds
         // (data is safe as conflict copy, dirty is cleared)
@@ -1788,7 +1788,7 @@ async fn flush_inode_preserves_writeback_when_conflict_copy_also_fails() {
 
     let ops2 = ops.clone();
     tokio::task::spawn_blocking(move || {
-        let fh = ops2.open_file(2).unwrap();
+        let fh = ops2.open_file(2, None, None).unwrap();
         ops2.write_handle(fh, 0, b"changed").unwrap();
         let result = ops2.flush_handle(fh, false);
         assert!(result.is_err(), "flush should fail");

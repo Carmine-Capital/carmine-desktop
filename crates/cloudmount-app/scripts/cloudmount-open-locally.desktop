@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=KonqPopupMenu/Plugin
+MimeType=all/allfiles;
+Actions=openLocally
+X-KDE-Priority=TopLevel
+X-KDE-RequiredPrograms=cloudmount-kde-open-locally
+
+[Desktop Action openLocally]
+Name=Open Locally
+Name[en_US]=Open Locally
+Icon=cloudmount
+Exec=cloudmount-kde-open-locally %F

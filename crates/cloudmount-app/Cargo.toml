@@ -40,6 +40,7 @@ url = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
+winreg = { workspace = true }
 
 [build-dependencies]
 tauri-build = { workspace = true, optional = true }

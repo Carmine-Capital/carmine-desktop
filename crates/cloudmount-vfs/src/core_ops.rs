@@ -18,7 +18,10 @@ use tokio::sync::watch;
 
 use crate::inode::InodeTable;
 use cloudmount_cache::CacheManager;
-use cloudmount_core::types::{DriveItem, DriveQuota, FileFacet, ParentReference};
+use cloudmount_core::config::CollaborativeOpenConfig;
+use cloudmount_core::types::{
+    CollabOpenRequest, CollabOpenResponse, DriveItem, DriveQuota, FileFacet, ParentReference,
+};
 use cloudmount_graph::{CopyStatus, GraphClient, SMALL_FILE_LIMIT};
 
 /// Compare item names for child lookup.
@@ -332,6 +335,13 @@ impl OpenFileTable {
     pub fn has_open_handles(&self, ino: u64) -> bool {
         self.files.iter().any(|e| e.value().ino == ino)
     }
+
+    /// Returns whether any open handle for the given inode has been marked dirty.
+    pub fn has_dirty_handles(&self, ino: u64) -> bool {
+        self.files
+            .iter()
+            .any(|e| e.value().ino == ino && e.value().dirty)
+    }
 }
 
 /// Events emitted by VFS operations for the app layer to handle.
@@ -348,6 +358,8 @@ pub enum VfsEvent {
     UploadFailed { file_name: String, reason: String },
     /// The file is locked on OneDrive (co-authoring or checkout).
     FileLocked { file_name: String },
+    /// CollabGate dialog timed out; file opened locally.
+    CollabGateTimeout { path: String },
 }
 
 /// Check if a filename matches known transient file patterns that should not
@@ -403,6 +415,10 @@ pub enum VfsError {
     QuotaExceeded,
     /// I/O or network operation failed (FUSE: EIO, Windows: STATUS_DEVICE_NOT_READY)
     IoError(String),
+    /// CollabGate redirected the open to the browser (FUSE: EACCES, Windows: STATUS_ACCESS_DENIED)
+    CollabRedirect,
+    /// User cancelled the open via CollabGate dialog (FUSE: ECANCELED, Windows: STATUS_CANCELLED)
+    OperationCancelled,
 }
 
 impl VfsError {
@@ -458,6 +474,12 @@ const QUOTA_CACHE_TTL_SECS: u64 = 60;
 /// at open time. Without this, `FUSE_WRITEBACK_CACHE` keeps stale values.
 pub type InodeInvalidator = Arc<dyn Fn(u64) + Send + Sync>;
 
+/// Channel type for sending CollabGate requests with a oneshot reply channel.
+pub type CollabSender = tokio::sync::mpsc::Sender<(
+    CollabOpenRequest,
+    tokio::sync::oneshot::Sender<CollabOpenResponse>,
+)>;
+
 pub struct CoreOps {
     graph: Arc<GraphClient>,
     cache: Arc<CacheManager>,
@@ -469,6 +491,8 @@ pub struct CoreOps {
     sync_handle: Option<crate::sync_processor::SyncHandle>,
     quota_cache: std::sync::Mutex<Option<(Instant, DriveQuota)>>,
     inode_invalidator: Option<InodeInvalidator>,
+    collab_tx: Option<CollabSender>,
+    collab_config: CollaborativeOpenConfig,
 }
 
 impl CoreOps {
@@ -490,6 +514,8 @@ impl CoreOps {
             sync_handle: None,
             quota_cache: std::sync::Mutex::new(None),
             inode_invalidator: None,
+            collab_tx: None,
+            collab_config: CollaborativeOpenConfig::default(),
         }
     }
 
@@ -505,6 +531,16 @@ impl CoreOps {
 
     pub fn with_inode_invalidator(mut self, f: InodeInvalidator) -> Self {
         self.inode_invalidator = Some(f);
+        self
+    }
+
+    pub fn with_collab_sender(mut self, tx: CollabSender) -> Self {
+        self.collab_tx = Some(tx);
+        self
+    }
+
+    pub fn with_collab_config(mut self, config: CollaborativeOpenConfig) -> Self {
+        self.collab_config = config;
         self
     }
 
@@ -966,7 +1002,75 @@ impl CoreOps {
     /// Small files (< 4 MB) and cached files load eagerly.
     /// Large uncached files return immediately with a background streaming download.
     /// Validates disk cache freshness via dirty-inode set, eTag, and size checks.
-    pub fn open_file(&self, ino: u64) -> VfsResult<u64> {
+    ///
+    /// When CollabGate is enabled and the caller is an interactive shell opening a
+    /// collaborative file type, blocks until the Tauri app responds with an action.
+    pub fn open_file(
+        &self,
+        ino: u64,
+        caller_pid: Option<u32>,
+        file_path: Option<&str>,
+    ) -> VfsResult<u64> {
+        // CollabGate: intercept collaborative file opens from interactive shells
+        if let (Some(tx), Some(path), Some(pid)) = (&self.collab_tx, file_path, caller_pid)
+            && self.collab_config.enabled
+        {
+            let ext = std::path::Path::new(path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+
+            if cloudmount_core::open_online::is_collaborative(&ext)
+                && crate::process_filter::is_interactive_shell(
+                    pid,
+                    &self.collab_config.shell_processes,
+                )
+            {
+                let item_id_for_collab = self.inodes.get_item_id(ino).unwrap_or_default();
+                let has_local_changes = self.open_files.has_dirty_handles(ino)
+                    || self
+                        .cache
+                        .writeback
+                        .has_pending(&self.drive_id, &item_id_for_collab);
+
+                let web_url = self.lookup_item(ino).and_then(|i| i.web_url.clone());
+
+                let request = CollabOpenRequest {
+                    path: path.to_string(),
+                    extension: ext,
+                    item_id: item_id_for_collab,
+                    web_url,
+                    has_local_changes,
+                };
+
+                let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                if tx.blocking_send((request, resp_tx)).is_ok() {
+                    let timeout =
+                        std::time::Duration::from_secs(self.collab_config.timeout_seconds);
+                    match self
+                        .rt
+                        .block_on(async { tokio::time::timeout(timeout, resp_rx).await })
+                    {
+                        Ok(Ok(CollabOpenResponse::OpenLocally)) => { /* proceed normally */ }
+                        Ok(Ok(CollabOpenResponse::OpenOnline)) => {
+                            return Err(VfsError::CollabRedirect);
+                        }
+                        Ok(Ok(CollabOpenResponse::Cancel)) => {
+                            return Err(VfsError::OperationCancelled);
+                        }
+                        Ok(Err(_)) => { /* channel closed, proceed locally */ }
+                        Err(_) => {
+                            // Timeout — notify the app layer and proceed locally
+                            self.send_event(VfsEvent::CollabGateTimeout {
+                                path: path.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
 
         // Local files haven't been uploaded yet — Graph API would reject any download

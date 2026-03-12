@@ -610,6 +610,42 @@ button.btn-remove:hover {
   color: var(--text-primary);
 }
 
+/* Extension preference list (collab settings) */
+.ext-pref-list {
+  list-style: none;
+  margin-bottom: var(--space-2);
+}
+.ext-pref-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-1);
+  font-size: 0.875rem;
+}
+.ext-pref-item .ext-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.ext-pref-item .ext-action {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+.ext-pref-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  padding: var(--space-2) 0;
+  font-size: 0.875rem;
+}
+.ext-pref-add {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
 /* Unsaved changes badge */
 .unsaved-badge {
   background: var(--accent);

@@ -37,6 +37,33 @@
     <div class="actions">
       <button id="btn-save-general">Save</button>
     </div>
+
+    <h3 class="section-heading" style="margin-top: var(--space-6);">Collaborative Editing</h3>
+    <div class="field">
+      <label><input type="checkbox" id="collab-enabled"> Enable collaborative editing</label>
+    </div>
+    <div id="collab-options">
+      <div class="field">
+        <label for="collab-default-action">Default action when a file is opened by another user</label>
+        <select id="collab-default-action">
+          <option value="ask">Ask every time</option>
+          <option value="online">Open online</option>
+          <option value="local">Open locally</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Per-extension preferences</label>
+        <ul class="ext-pref-list" id="ext-pref-list"></ul>
+        <div class="ext-pref-add">
+          <input type="text" id="ext-pref-ext" placeholder="Extension (e.g. docx)" style="width: 40%; display: inline-block;">
+          <select id="ext-pref-action" style="width: 35%; display: inline-block;">
+            <option value="online">Open online</option>
+            <option value="local">Open locally</option>
+          </select>
+          <button id="btn-add-ext-pref" class="btn-sm btn-secondary" style="width: 20%; display: inline-block;">Add</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="mounts" class="panel" role="tabpanel" aria-labelledby="tab-mounts">

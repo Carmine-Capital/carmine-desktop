@@ -1,0 +1,26 @@
+#!/bin/bash
+# CloudMount KDE Dolphin Service Menu Helper: Open Locally
+#
+# This script is invoked by the Dolphin Service Menu when a user right-clicks
+# on files and selects "Open Locally". It opens the selected files with the
+# default local application.
+#
+# INSTALLATION:
+# 1. Copy the .desktop file to:
+#    - Plasma 5: ~/.local/share/kservices5/ServiceMenus/
+#    - Plasma 6: ~/.local/share/kio/servicemenus/
+# 2. Copy this script to a directory in your PATH (e.g., ~/.local/bin/)
+#    or update the Exec line in the .desktop file to use the full path
+# 3. Make both files executable: chmod +x <files>
+# 4. Restart Dolphin or run: kbuildsycoca5 (Plasma 5) or kbuildsycoca6 (Plasma 6)
+#
+# REQUIREMENTS:
+# - xdg-utils (for xdg-open) - typically pre-installed on Linux
+
+# Dolphin passes selected file paths as command-line arguments
+for path in "$@"; do
+    # Skip empty entries (defensive)
+    if [ -n "$path" ]; then
+        xdg-open "$path"
+    fi
+done

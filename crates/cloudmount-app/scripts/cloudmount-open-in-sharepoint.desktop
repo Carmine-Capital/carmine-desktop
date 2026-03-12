@@ -2,12 +2,12 @@
 Type=Service
 ServiceTypes=KonqPopupMenu/Plugin
 MimeType=all/allfiles;
-Actions=openInSharePoint
+Actions=openOnline
 X-KDE-Priority=TopLevel
 X-KDE-RequiredPrograms=cloudmount-kde-helper
 
-[Desktop Action openInSharePoint]
-Name=Open in SharePoint
-Name[en_US]=Open in SharePoint
+[Desktop Action openOnline]
+Name=Open Online (SharePoint)
+Name[en_US]=Open Online (SharePoint)
 Icon=cloudmount
 Exec=cloudmount-kde-helper %F
