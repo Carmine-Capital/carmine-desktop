@@ -1134,15 +1134,22 @@ impl CoreOps {
                 .inodes
                 .get_item_id(open_file.ino)
                 .ok_or(VfsError::NotFound)?;
-            let content = open_file
+            let mut content = open_file
                 .content
                 .as_complete()
-                .ok_or_else(|| VfsError::IoError("dirty file in non-complete state".to_string()))?;
+                .ok_or_else(|| VfsError::IoError("dirty file in non-complete state".to_string()))?
+                .clone();
+            // Apply logical_size truncation to match flush_handle behaviour —
+            // otherwise a failed flush followed by release would overwrite the
+            // correctly-truncated writeback content with the full raw buffer.
+            if let Some(size) = open_file.logical_size {
+                content.truncate(size);
+            }
             self.rt
                 .block_on(
                     self.cache
                         .writeback
-                        .write(&self.drive_id, &item_id, content),
+                        .write(&self.drive_id, &item_id, &content),
                 )
                 .map_err(|e| VfsError::IoError(format!("release writeback failed: {e}")))?;
         }
