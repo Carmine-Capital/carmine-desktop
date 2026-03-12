@@ -845,6 +845,23 @@ impl CoreOps {
         }
     }
 
+    /// Grow the open file buffer to at least `capacity` bytes (zero-filled)
+    /// without changing `logical_size` or `dirty` flags.
+    ///
+    /// Used by WinFsp when Windows sets the *allocation* size (disk reservation)
+    /// rather than the actual file size.
+    pub fn ensure_buffer_capacity(&self, ino: u64, capacity: u64) -> VfsResult<()> {
+        let capacity = capacity as usize;
+        if let Some(mut entry) = self.open_files.find_by_ino(ino) {
+            ensure_complete(&mut entry, &self.rt)?;
+            let buf = entry.content.as_complete_mut().unwrap();
+            if buf.len() < capacity {
+                buf.resize(capacity, 0);
+            }
+        }
+        Ok(())
+    }
+
     /// Truncate or extend a file to the given size.
     /// If the file has an open handle, resizes that buffer directly.
     pub fn truncate(&self, ino: u64, new_size: u64) -> VfsResult<()> {

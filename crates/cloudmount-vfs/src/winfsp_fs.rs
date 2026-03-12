@@ -203,6 +203,31 @@ fn split_path(path: &U16CStr) -> Vec<String> {
         .collect()
 }
 
+/// Build the correct-case normalized path (UTF-16) for WinFsp.
+///
+/// Case-insensitive filesystems must report the canonical name via
+/// `OpenFileInfo::set_normalized_name` so that Explorer shows the
+/// server-side casing rather than whatever the caller typed.
+fn build_normalized_path(ops: &CoreOps, components: &[String]) -> Option<Vec<u16>> {
+    use crate::inode::ROOT_INODE;
+
+    if components.is_empty() {
+        return Some(vec!['\\' as u16]);
+    }
+
+    let mut path: Vec<u16> = Vec::new();
+    let mut current_ino = ROOT_INODE;
+
+    for comp in components {
+        let (child_ino, item) = ops.find_child(current_ino, std::ffi::OsStr::new(comp))?;
+        path.push('\\' as u16);
+        path.extend(item.name.encode_utf16());
+        current_ino = child_ino;
+    }
+
+    Some(path)
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Group 4: FileSystemContext implementation (read path)
 // ──────────────────────────────────────────────────────────────────────────────
@@ -345,6 +370,11 @@ impl FileSystemContext for CloudMountWinFsp {
 
         let fi = item_to_file_info(&fresh_item, handle_size);
         *file_info.as_mut() = fi;
+
+        // Report the correct-case path so Explorer shows the server-side name.
+        if let Some(normalized) = build_normalized_path(&self.ops, &components) {
+            file_info.set_normalized_name(&normalized, None);
+        }
 
         let buf_size = if !is_dir {
             self.open_files.get_content_size_by_ino(ino)
@@ -609,6 +639,11 @@ impl FileSystemContext for CloudMountWinFsp {
             let fi = item_to_file_info(&item, None);
             *file_info.as_mut() = fi;
 
+            // Set normalized name with correct case from server.
+            if let Some(normalized) = build_normalized_path(&self.ops, &components) {
+                file_info.set_normalized_name(&normalized, None);
+            }
+
             Ok(WinFspFileContext {
                 ino,
                 fh: None,
@@ -622,6 +657,11 @@ impl FileSystemContext for CloudMountWinFsp {
 
             let fi = item_to_file_info(&item, Some(0));
             *file_info.as_mut() = fi;
+
+            // Set normalized name with correct case from server.
+            if let Some(normalized) = build_normalized_path(&self.ops, &components) {
+                file_info.set_normalized_name(&normalized, None);
+            }
 
             Ok(WinFspFileContext {
                 ino,
@@ -821,16 +861,27 @@ impl FileSystemContext for CloudMountWinFsp {
         &self,
         context: &Self::FileContext,
         new_size: u64,
-        _set_allocation_size: bool,
+        set_allocation_size: bool,
         file_info: &mut FileInfo,
     ) -> winfsp::Result<()> {
         tracing::debug!(
-            "[DIAG:set_file_size] ino={} new_size={new_size}",
+            "[DIAG:set_file_size] ino={} new_size={new_size} set_alloc={set_allocation_size}",
             context.ino
         );
-        self.ops
-            .truncate(context.ino, new_size)
-            .map_err(vfs_err_to_ntstatus)?;
+
+        if set_allocation_size {
+            // Allocation size: grow buffer capacity but don't change logical_size.
+            // Windows sets this to reserve disk blocks — it does NOT change the
+            // actual end-of-file position.
+            self.ops
+                .ensure_buffer_capacity(context.ino, new_size)
+                .map_err(vfs_err_to_ntstatus)?;
+        } else {
+            // File size: actual truncate/extend — updates logical_size.
+            self.ops
+                .truncate(context.ino, new_size)
+                .map_err(vfs_err_to_ntstatus)?;
+        }
 
         let item = self
             .ops
