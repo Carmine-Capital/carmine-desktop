@@ -108,8 +108,7 @@ pub fn spawn_sync_processor(
     config: SyncProcessorConfig,
 ) -> (SyncHandle, JoinHandle<()>) {
     let (req_tx, req_rx) = mpsc::unbounded_channel::<SyncRequest>();
-    let (result_tx, result_rx) =
-        mpsc::channel::<UploadResult>(config.max_concurrent_uploads);
+    let (result_tx, result_rx) = mpsc::channel::<UploadResult>(config.max_concurrent_uploads);
     let (metrics_tx, metrics_rx) = watch::channel(SyncMetrics::default());
 
     let handle = SyncHandle {
@@ -117,7 +116,9 @@ pub fn spawn_sync_processor(
         metrics_rx,
     };
 
-    let join = tokio::spawn(processor_loop(deps, config, req_rx, result_tx, result_rx, metrics_tx));
+    let join = tokio::spawn(processor_loop(
+        deps, config, req_rx, result_tx, result_rx, metrics_tx,
+    ));
 
     (handle, join)
 }
@@ -441,17 +442,14 @@ pub(crate) async fn flush_inode_async(
     };
 
     // Look up item metadata from memory cache or SQLite
-    let item = cache
-        .memory
-        .get(ino)
-        .or_else(|| {
-            cache
-                .sqlite
-                .get_item_by_id(&item_id)
-                .ok()
-                .flatten()
-                .map(|(_, item)| item)
-        });
+    let item = cache.memory.get(ino).or_else(|| {
+        cache
+            .sqlite
+            .get_item_by_id(&item_id)
+            .ok()
+            .flatten()
+            .map(|(_, item)| item)
+    });
 
     let item = match item {
         Some(item) => item,

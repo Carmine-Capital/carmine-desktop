@@ -139,14 +139,14 @@ impl MountHandle {
         // Try with auto_unmount first (crash safety net), fall back without it
         // since it requires fusermount3 + non-Owner ACL which isn't always available.
         let stored_handle = sync_handle.clone();
-        let (session, delta_observer) =
-            match try_mount(true, event_tx.clone(), sync_handle.clone()) {
-                Ok(result) => result,
-                Err(_) => {
-                    tracing::warn!("auto_unmount not supported, mounting without it");
-                    try_mount(false, event_tx, sync_handle)?
-                }
-            };
+        let (session, delta_observer) = match try_mount(true, event_tx.clone(), sync_handle.clone())
+        {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::warn!("auto_unmount not supported, mounting without it");
+                try_mount(false, event_tx, sync_handle)?
+            }
+        };
 
         tracing::info!("mounted drive {drive_id} at {mountpoint}");
 

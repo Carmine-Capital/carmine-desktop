@@ -739,7 +739,11 @@ impl FileSystemContext for CloudMountWinFsp {
     // 5.5  flush
     // ──────────────────────────────────────────────────────────────────────
 
-    fn flush(&self, context: Option<&Self::FileContext>, file_info: &mut FileInfo) -> winfsp::Result<()> {
+    fn flush(
+        &self,
+        context: Option<&Self::FileContext>,
+        file_info: &mut FileInfo,
+    ) -> winfsp::Result<()> {
         let context = match context {
             Some(ctx) => ctx,
             None => return Ok(()), // no file context — nothing to flush
