@@ -962,6 +962,7 @@ impl WinFspMountHandle {
             .upsert_item(ROOT_INODE, &drive_id, &root_item, None)?;
 
         // 3. Create filesystem context.
+        let stored_handle = sync_handle.clone();
         let fs = CloudMountWinFsp::new(
             graph.clone(),
             cache.clone(),
@@ -1013,7 +1014,7 @@ impl WinFspMountHandle {
             rt,
             mountpoint: mountpoint.to_string(),
             delta_observer,
-            sync_handle,
+            sync_handle: stored_handle,
             sync_join: None,
         })
     }
