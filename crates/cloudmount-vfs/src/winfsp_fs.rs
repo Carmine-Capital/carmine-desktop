@@ -303,6 +303,7 @@ impl FileSystemContext for CloudMountWinFsp {
         file_info: &mut OpenFileInfo,
     ) -> winfsp::Result<Self::FileContext> {
         let components = split_path(file_name);
+        tracing::debug!("[DIAG:open] path={:?}", components);
 
         let (ino, item) = if components.is_empty() {
             // Root directory.
@@ -345,6 +346,18 @@ impl FileSystemContext for CloudMountWinFsp {
         let fi = item_to_file_info(&fresh_item, handle_size);
         *file_info.as_mut() = fi;
 
+        let buf_size = if !is_dir {
+            self.open_files.get_content_size_by_ino(ino)
+        } else {
+            None
+        };
+        tracing::debug!(
+            "[DIAG:open] ino={ino} name={:?} fh={:?} buf_size={:?}",
+            fresh_item.name,
+            fh,
+            buf_size
+        );
+
         Ok(WinFspFileContext { ino, fh, is_dir })
     }
 
@@ -353,6 +366,7 @@ impl FileSystemContext for CloudMountWinFsp {
     // ──────────────────────────────────────────────────────────────────────
 
     fn close(&self, context: Self::FileContext) {
+        tracing::debug!("[DIAG:close] ino={}", context.ino);
         if let Some(fh) = context.fh {
             let _ = self.ops.release_file(fh);
         }
@@ -584,6 +598,7 @@ impl FileSystemContext for CloudMountWinFsp {
         };
 
         let is_dir = create_options & FILE_DIRECTORY_FILE != 0;
+        tracing::debug!("[DIAG:create] parent_ino={parent_ino} name={name:?} is_dir={is_dir}");
 
         if is_dir {
             let (ino, item) = self
@@ -640,6 +655,11 @@ impl FileSystemContext for CloudMountWinFsp {
         } else {
             offset
         };
+        tracing::debug!(
+            "[DIAG:write] ino={} fh={fh} offset={actual_offset} len={} write_to_eof={write_to_eof}",
+            context.ino,
+            buffer.len()
+        );
 
         let written = self
             .ops
@@ -671,6 +691,7 @@ impl FileSystemContext for CloudMountWinFsp {
         _extra_buffer: Option<&[u8]>,
         file_info: &mut FileInfo,
     ) -> winfsp::Result<()> {
+        tracing::debug!("[DIAG:overwrite] ino={}", context.ino);
         self.ops
             .truncate(context.ino, 0)
             .map_err(vfs_err_to_ntstatus)?;
@@ -691,6 +712,15 @@ impl FileSystemContext for CloudMountWinFsp {
     fn cleanup(&self, context: &Self::FileContext, file_name: Option<&U16CStr>, flags: u32) {
         // FspCleanupDelete = 0x01: file should be deleted on close.
         const FSP_CLEANUP_DELETE: u32 = 0x01;
+        let cleanup_name: Option<String> = file_name.map(|f| {
+            let os = OsString::from_wide(f.as_slice());
+            os.to_string_lossy().to_string()
+        });
+        tracing::debug!(
+            "[DIAG:cleanup] ino={} fh={:?} flags=0x{flags:x} name={cleanup_name:?}",
+            context.ino,
+            context.fh
+        );
 
         // Flush dirty file handles.
         if let Some(fh) = context.fh
@@ -753,6 +783,7 @@ impl FileSystemContext for CloudMountWinFsp {
             Some(fh) => fh,
             None => return Ok(()), // directories — nothing to flush
         };
+        tracing::debug!("[DIAG:flush] ino={} fh={fh}", context.ino);
 
         match self.ops.flush_handle(fh, true) {
             Ok(()) => {
@@ -793,6 +824,10 @@ impl FileSystemContext for CloudMountWinFsp {
         _set_allocation_size: bool,
         file_info: &mut FileInfo,
     ) -> winfsp::Result<()> {
+        tracing::debug!(
+            "[DIAG:set_file_size] ino={} new_size={new_size}",
+            context.ino
+        );
         self.ops
             .truncate(context.ino, new_size)
             .map_err(vfs_err_to_ntstatus)?;
@@ -878,6 +913,9 @@ impl FileSystemContext for CloudMountWinFsp {
     ) -> winfsp::Result<()> {
         let src_components = split_path(file_name);
         let dst_components = split_path(new_file_name);
+        tracing::debug!(
+            "[DIAG:rename] src={src_components:?} dst={dst_components:?} replace={replace_if_exists}"
+        );
 
         if src_components.is_empty() || dst_components.is_empty() {
             return Err(winfsp::FspError::NTSTATUS(STATUS_ACCESS_DENIED));
