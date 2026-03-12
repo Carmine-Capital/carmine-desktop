@@ -229,6 +229,13 @@ pub struct OpenFile {
     /// Set to `true` by the delta sync observer when remote content changes are detected.
     /// Does not interrupt active reads — the current content buffer continues to be served.
     pub stale: bool,
+    /// Tracks the logical file size after truncation.
+    ///
+    /// When a file is truncated smaller, the underlying buffer may remain at its
+    /// original capacity (to avoid reallocating on subsequent writes). This field
+    /// records the intended size so that `flush_handle` truncates the buffer
+    /// before uploading and `write_handle` uses the correct size for metadata.
+    pub logical_size: Option<usize>,
 }
 
 pub struct OpenFileTable {
@@ -259,6 +266,7 @@ impl OpenFileTable {
                 content,
                 dirty: false,
                 stale: false,
+                logical_size: None,
             },
         );
         fh
@@ -291,6 +299,9 @@ impl OpenFileTable {
     pub fn get_content_size_by_ino(&self, ino: u64) -> Option<u64> {
         for entry in self.files.iter() {
             if entry.value().ino == ino {
+                if let Some(ls) = entry.value().logical_size {
+                    return Some(ls as u64);
+                }
                 return match &entry.value().content {
                     DownloadState::Complete(data) => Some(data.len() as u64),
                     DownloadState::Streaming { buffer, .. } => Some(buffer.total_size),
@@ -845,6 +856,7 @@ impl CoreOps {
             let buf = entry.content.as_complete_mut().unwrap();
             buf.resize(new_size, 0);
             entry.dirty = true;
+            entry.logical_size = Some(new_size);
             drop(entry);
         } else {
             // Fallback: truncate via writeback buffer
@@ -1212,21 +1224,31 @@ impl CoreOps {
     pub fn write_handle(&self, fh: u64, offset: usize, data: &[u8]) -> VfsResult<u32> {
         let mut entry = self.open_files.get_mut(fh).ok_or(VfsError::NotFound)?;
         ensure_complete(&mut entry, &self.rt)?;
-        let new_size = {
+        let write_end = offset + data.len();
+        {
             let buf = entry.content.as_complete_mut().unwrap();
-            let needed = offset + data.len();
-            if buf.len() < needed {
-                buf.resize(needed, 0);
+            if buf.len() < write_end {
+                buf.resize(write_end, 0);
             }
-            buf[offset..offset + data.len()].copy_from_slice(data);
-            buf.len() as i64
-        };
+            buf[offset..write_end].copy_from_slice(data);
+        }
         entry.dirty = true;
+
+        // Update logical_size: if set (post-truncate), expand to cover the write;
+        // otherwise leave None so flush uses the full buffer length.
+        let reported_size = if let Some(ls) = entry.logical_size {
+            let new_ls = ls.max(write_end);
+            entry.logical_size = Some(new_ls);
+            new_ls as i64
+        } else {
+            entry.content.as_complete().unwrap().len() as i64
+        };
+
         let ino = entry.ino;
         drop(entry);
 
         if let Some(mut item) = self.lookup_item(ino) {
-            item.size = new_size;
+            item.size = reported_size;
             self.cache.memory.insert(ino, item);
         }
 
@@ -1235,7 +1257,12 @@ impl CoreOps {
 
     /// Flush an open file handle: push dirty content to writeback and upload.
     /// If streaming, waits for download to complete first.
-    pub fn flush_handle(&self, fh: u64) -> VfsResult<()> {
+    ///
+    /// When `wait_for_completion` is true and a sync processor is available,
+    /// sends a `FlushSync` request and blocks until the upload completes
+    /// (with a 60-second timeout). This is used by WinFsp where the OS
+    /// expects flush to guarantee data is persisted.
+    pub fn flush_handle(&self, fh: u64, wait_for_completion: bool) -> VfsResult<()> {
         // Check dirty flag; if streaming, wait and transition to Complete
         {
             let mut entry = self.open_files.get_mut(fh).ok_or(VfsError::NotFound)?;
@@ -1247,9 +1274,14 @@ impl CoreOps {
 
         let entry = self.open_files.get(fh).ok_or(VfsError::NotFound)?;
         let ino = entry.ino;
+        let logical_size = entry.logical_size;
         let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
-        let content = entry.content.as_complete().unwrap().clone();
+        let mut content = entry.content.as_complete().unwrap().clone();
         drop(entry);
+
+        if let Some(size) = logical_size {
+            content.truncate(size);
+        }
 
         self.rt
             .block_on(
@@ -1260,8 +1292,26 @@ impl CoreOps {
             .map_err(|e| VfsError::IoError(format!("flush writeback failed: {e}")))?;
 
         if let Some(ref sync_handle) = self.sync_handle {
-            // Delegate upload to the async sync processor — returns immediately
-            sync_handle.send(crate::sync_processor::SyncRequest::Flush { ino });
+            if wait_for_completion {
+                // Synchronous flush: block until the upload completes or times out.
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                sync_handle.send(crate::sync_processor::SyncRequest::FlushSync { ino, done: tx });
+                match self.rt.block_on(async {
+                    tokio::time::timeout(std::time::Duration::from_secs(60), rx).await
+                }) {
+                    Ok(Ok(true)) => {} // success
+                    Ok(Ok(false)) => {
+                        return Err(VfsError::IoError("flush upload failed".to_string()));
+                    }
+                    Ok(Err(_)) => {
+                        return Err(VfsError::IoError("sync processor closed".to_string()));
+                    }
+                    Err(_) => return Err(VfsError::TimedOut),
+                }
+            } else {
+                // Fire-and-forget: delegate upload to the async sync processor
+                sync_handle.send(crate::sync_processor::SyncRequest::Flush { ino });
+            }
         } else {
             // Fallback: synchronous inline upload (tests or processor disabled)
             self.flush_inode(ino)?;

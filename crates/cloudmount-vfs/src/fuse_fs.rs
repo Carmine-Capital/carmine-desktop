@@ -433,7 +433,7 @@ impl Filesystem for CloudMountFs {
         _lock_owner: LockOwner,
         reply: ReplyEmpty,
     ) {
-        match self.ops.flush_handle(fh.0) {
+        match self.ops.flush_handle(fh.0, false) {
             Ok(()) => reply.ok(),
             Err(e) => {
                 let file_name = self
@@ -476,7 +476,7 @@ impl Filesystem for CloudMountFs {
         _datasync: bool,
         reply: ReplyEmpty,
     ) {
-        match self.ops.flush_handle(fh.0) {
+        match self.ops.flush_handle(fh.0, false) {
             Ok(()) => reply.ok(),
             Err(e) => reply.error(Self::vfs_err_to_errno(e)),
         }

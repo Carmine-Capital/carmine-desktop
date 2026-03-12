@@ -619,7 +619,7 @@ async fn test_sync_processor_flush_handle_with_sync_processor() {
         ops2.write_handle(fh, 0, WRITTEN_CONTENT).unwrap();
         // flush_handle should write to writeback and send Flush to sync processor,
         // NOT perform an inline upload
-        ops2.flush_handle(fh).unwrap();
+        ops2.flush_handle(fh, false).unwrap();
         let _ = ops2.release_file(fh);
     })
     .await

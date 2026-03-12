@@ -263,7 +263,7 @@ async fn flush_pushes_to_writeback() {
     tokio::task::spawn_blocking(move || {
         let fh = ops2.open_file(2).unwrap();
         ops2.write_handle(fh, 0, b"changed").unwrap();
-        ops2.flush_handle(fh).unwrap();
+        ops2.flush_handle(fh, false).unwrap();
         let _ = ops2.release_file(fh);
     })
     .await
@@ -1728,7 +1728,7 @@ async fn flush_inode_creates_conflict_copy_on_423_locked() {
         ops2.write_handle(fh, 0, b"changed").unwrap();
         // flush_handle returns Ok when conflict copy upload succeeds
         // (data is safe as conflict copy, dirty is cleared)
-        ops2.flush_handle(fh)
+        ops2.flush_handle(fh, false)
             .expect("flush should succeed after conflict copy upload");
         let _ = ops2.release_file(fh);
     })
@@ -1790,7 +1790,7 @@ async fn flush_inode_preserves_writeback_when_conflict_copy_also_fails() {
     tokio::task::spawn_blocking(move || {
         let fh = ops2.open_file(2).unwrap();
         ops2.write_handle(fh, 0, b"changed").unwrap();
-        let result = ops2.flush_handle(fh);
+        let result = ops2.flush_handle(fh, false);
         assert!(result.is_err(), "flush should fail");
         let _ = ops2.release_file(fh);
     })

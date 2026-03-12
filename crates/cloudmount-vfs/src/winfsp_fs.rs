@@ -693,19 +693,19 @@ impl FileSystemContext for CloudMountWinFsp {
         const FSP_CLEANUP_DELETE: u32 = 0x01;
 
         // Flush dirty file handles.
-        if let Some(fh) = context.fh {
-            if let Err(e) = self.ops.flush_handle(fh) {
-                let file_name_str = self
-                    .ops
-                    .lookup_item(context.ino)
-                    .map(|i| i.name)
-                    .unwrap_or_default();
-                if !file_name_str.is_empty() {
-                    self.ops.send_event(VfsEvent::UploadFailed {
-                        file_name: file_name_str,
-                        reason: format!("{e:?}"),
-                    });
-                }
+        if let Some(fh) = context.fh
+            && let Err(e) = self.ops.flush_handle(fh, true)
+        {
+            let file_name_str = self
+                .ops
+                .lookup_item(context.ino)
+                .map(|i| i.name)
+                .unwrap_or_default();
+            if !file_name_str.is_empty() {
+                self.ops.send_event(VfsEvent::UploadFailed {
+                    file_name: file_name_str,
+                    reason: format!("{e:?}"),
+                });
             }
         }
 
@@ -754,7 +754,7 @@ impl FileSystemContext for CloudMountWinFsp {
             None => return Ok(()), // directories — nothing to flush
         };
 
-        match self.ops.flush_handle(fh) {
+        match self.ops.flush_handle(fh, true) {
             Ok(()) => {
                 // Update FileInfo with fresh metadata after successful flush.
                 let item = self

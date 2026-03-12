@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::{Semaphore, mpsc, watch};
+use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::core_ops::VfsEvent;
@@ -11,12 +11,26 @@ use cloudmount_cache::CacheManager;
 use cloudmount_graph::GraphClient;
 
 /// Request sent to the sync processor.
-#[derive(Debug)]
 pub enum SyncRequest {
     /// Schedule an upload for the given inode.
     Flush { ino: u64 },
+    /// Schedule a synchronous upload; signals completion via the oneshot channel.
+    FlushSync {
+        ino: u64,
+        done: oneshot::Sender<bool>,
+    },
     /// Drain pending/in-flight uploads and exit.
     Shutdown,
+}
+
+impl std::fmt::Debug for SyncRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Flush { ino } => f.debug_struct("Flush").field("ino", ino).finish(),
+            Self::FlushSync { ino, .. } => f.debug_struct("FlushSync").field("ino", ino).finish(),
+            Self::Shutdown => write!(f, "Shutdown"),
+        }
+    }
 }
 
 /// Configuration for the sync processor.
@@ -138,7 +152,7 @@ async fn processor_loop(
     let shutdown_timeout = Duration::from_secs(config.shutdown_timeout_secs);
 
     let mut pending: HashMap<u64, Instant> = HashMap::new();
-    let mut in_flight: HashSet<u64> = HashSet::new();
+    let mut in_flight: HashMap<u64, Vec<oneshot::Sender<bool>>> = HashMap::new();
     let mut failed: HashMap<u64, FailedEntry> = HashMap::new();
 
     let mut total_uploaded: u64 = 0;
@@ -170,7 +184,7 @@ async fn processor_loop(
             req = req_rx.recv() => {
                 match req {
                     Some(SyncRequest::Flush { ino }) => {
-                        if in_flight.contains(&ino) {
+                        if in_flight.contains_key(&ino) {
                             total_deduplicated += 1;
                         } else {
                             use std::collections::hash_map::Entry;
@@ -185,12 +199,26 @@ async fn processor_loop(
                             }
                         }
                     }
+                    Some(SyncRequest::FlushSync { ino, done }) => {
+                        if let Some(waiters) = in_flight.get_mut(&ino) {
+                            // Already in-flight — attach the oneshot to receive result
+                            waiters.push(done);
+                        } else {
+                            // Not in-flight — bypass debounce, spawn immediately
+                            pending.remove(&ino);
+                            spawn_upload(ino, &deps, &semaphore, &result_tx, &mut in_flight);
+                            // Attach the oneshot to the newly in-flight entry
+                            if let Some(waiters) = in_flight.get_mut(&ino) {
+                                waiters.push(done);
+                            }
+                        }
+                    }
                     Some(SyncRequest::Shutdown) => {
                         // Flush all pending immediately (no debounce)
                         let ready: Vec<u64> = pending.keys().copied().collect();
                         for ino in ready {
                             pending.remove(&ino);
-                            if !in_flight.contains(&ino) {
+                            if !in_flight.contains_key(&ino) {
                                 spawn_upload(ino, &deps, &semaphore, &result_tx, &mut in_flight);
                             }
                         }
@@ -217,7 +245,7 @@ async fn processor_loop(
 
                 for ino in ready {
                     pending.remove(&ino);
-                    if !in_flight.contains(&ino) {
+                    if !in_flight.contains_key(&ino) {
                         spawn_upload(ino, &deps, &semaphore, &result_tx, &mut in_flight);
                     }
                 }
@@ -230,7 +258,7 @@ async fn processor_loop(
                     .collect();
 
                 for ino in retryable {
-                    if !in_flight.contains(&ino) && !pending.contains_key(&ino) {
+                    if !in_flight.contains_key(&ino) && !pending.contains_key(&ino) {
                         pending.insert(ino, Instant::now() - debounce); // ready immediately
                     }
                 }
@@ -273,6 +301,12 @@ async fn processor_loop(
                         "{} uploads still in-flight at shutdown, content preserved in writeback cache",
                         in_flight.len()
                     );
+                    // Resolve any outstanding FlushSync waiters
+                    for (_, waiters) in in_flight.drain() {
+                        for waiter in waiters {
+                            let _ = waiter.send(false);
+                        }
+                    }
                     break;
                 }
             }
@@ -290,16 +324,19 @@ async fn processor_loop(
     });
 }
 
-/// Handle an upload result: update in-flight set, failed map, and counters.
+/// Handle an upload result: update in-flight map, resolve waiters, failed map, and counters.
 fn handle_result(
     result: UploadResult,
     deps: &Arc<SyncProcessorDeps>,
-    in_flight: &mut HashSet<u64>,
+    in_flight: &mut HashMap<u64, Vec<oneshot::Sender<bool>>>,
     failed: &mut HashMap<u64, FailedEntry>,
     total_uploaded: &mut u64,
     total_failed: &mut u64,
 ) {
-    in_flight.remove(&result.ino);
+    let waiters = in_flight.remove(&result.ino).unwrap_or_default();
+    for waiter in waiters {
+        let _ = waiter.send(result.success);
+    }
     if result.success {
         *total_uploaded += 1;
         failed.remove(&result.ino);
@@ -334,9 +371,9 @@ fn spawn_upload(
     deps: &Arc<SyncProcessorDeps>,
     semaphore: &Arc<Semaphore>,
     result_tx: &mpsc::Sender<UploadResult>,
-    in_flight: &mut HashSet<u64>,
+    in_flight: &mut HashMap<u64, Vec<oneshot::Sender<bool>>>,
 ) {
-    in_flight.insert(ino);
+    in_flight.insert(ino, Vec::new());
     let deps = deps.clone();
     let sem = semaphore.clone();
     let tx = result_tx.clone();
@@ -459,10 +496,21 @@ pub(crate) async fn flush_inode_async(
         }
     };
 
-    // Skip transient files
+    // Skip transient files — full cleanup to prevent ghost entries
     if crate::core_ops::is_transient_file(&item.name) {
         tracing::debug!(ino, name = %item.name, "skipping upload for transient file");
         let _ = cache.writeback.remove(drive_id, &item_id).await;
+        cache.memory.invalidate(ino);
+        if let Some(parent_id) = item.parent_reference.as_ref().and_then(|p| p.id.as_deref()) {
+            if let Some(parent_ino) = inodes.get_inode(parent_id) {
+                cache.memory.remove_child(parent_ino, &item.name);
+            } else {
+                tracing::debug!(ino, name = %item.name, "transient cleanup: parent inode not found, skipping remove_child");
+            }
+        } else {
+            tracing::debug!(ino, name = %item.name, "transient cleanup: no parent reference, skipping remove_child");
+        }
+        inodes.remove_by_item_id(&item_id);
         return true;
     }
 
