@@ -642,7 +642,7 @@ pub fn check_fuse_available() -> bool {
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        true // Windows uses CfApi, always available after preflight
+        true // Windows uses WinFsp, always available after preflight
     }
 }
 

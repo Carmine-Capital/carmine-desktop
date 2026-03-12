@@ -61,7 +61,7 @@ pub fn resolve_deleted_path(info: &DeletedItemInfo) -> Option<PathBuf> {
 
 /// Result of a delta sync operation, containing items that changed or were deleted.
 /// Callers can use this to propagate updates to platform-specific layers
-/// (e.g., CfApi placeholder updates on Windows).
+/// (e.g., WinFsp placeholder updates on Windows).
 #[derive(Debug, Clone, Default)]
 pub struct DeltaSyncResult {
     /// Items whose eTag changed (content was modified on the server).

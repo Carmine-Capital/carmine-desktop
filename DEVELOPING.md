@@ -20,7 +20,7 @@ brew install macfuse
 
 ### Windows
 
-Windows 10 1709+ (Cloud Files API is built-in). No additional dependencies for headless mode.
+Windows 10 1709+ with [WinFsp](https://winfsp.dev/rel/) installed. No additional dependencies for headless mode.
 
 For desktop builds, install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 
