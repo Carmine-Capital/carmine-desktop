@@ -67,7 +67,6 @@ impl UserConfig {
                 "log_level" => g.log_level = None,
                 "notifications" => g.notifications = None,
                 "root_dir" => g.root_dir = None,
-                "cfapi_migrated" => g.cfapi_migrated = None,
                 _ => {}
             }
         }
@@ -165,9 +164,6 @@ pub struct UserGeneralSettings {
     pub notifications: Option<bool>,
     #[serde(default)]
     pub root_dir: Option<String>,
-    /// Whether the CfApi sync root cleanup has been performed after migration to WinFsp.
-    #[serde(default)]
-    pub cfapi_migrated: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

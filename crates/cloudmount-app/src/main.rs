@@ -587,44 +587,6 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
         tracing::warn!("failed to reconcile Linux file manager integrations: {e}");
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        let needs_migration = {
-            let config = state.user_config.lock().unwrap();
-            !config
-                .general
-                .as_ref()
-                .and_then(|g| g.cfapi_migrated)
-                .unwrap_or(false)
-        };
-
-        if needs_migration {
-            tracing::info!("performing one-time CfApi sync root cleanup after WinFsp migration");
-            match cleanup_cfapi_sync_roots() {
-                Ok(count) => {
-                    if count > 0 {
-                        tracing::info!("removed {count} CfApi sync root(s)");
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("CfApi sync root cleanup failed (non-fatal): {e}");
-                }
-            }
-
-            // Mark migration as complete regardless of cleanup result
-            {
-                let mut user_config = state.user_config.lock().unwrap();
-                let general = user_config.general.get_or_insert_with(Default::default);
-                general.cfapi_migrated = Some(true);
-                if let Ok(cfg_path) = cloudmount_core::config::config_file_path() {
-                    if let Err(e) = user_config.save_to_file(&cfg_path) {
-                        tracing::warn!("failed to save cfapi_migrated flag: {e}");
-                    }
-                }
-            }
-        }
-    }
-
     let account = {
         let config = state.effective_config.lock().unwrap();
         config.accounts.first().cloned()
@@ -940,7 +902,7 @@ fn start_mount_common(
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("create mountpoint parent failed: {e}"))?;
         }
-        // Remove stale directory left over from CfApi migration or a previous run.
+        // Remove stale directory left over from a previous run.
         let mp = std::path::Path::new(&mountpoint);
         if mp.exists() {
             let _ = std::fs::remove_dir_all(mp);
@@ -1363,43 +1325,6 @@ pub fn graceful_shutdown_without_exit(app: &tauri::AppHandle) {
 pub fn graceful_shutdown(app: &tauri::AppHandle) {
     graceful_shutdown_without_exit(app);
     app.exit(0);
-}
-
-/// Attempt to unregister CfApi sync roots left over from the previous backend.
-/// Returns the number of roots successfully unregistered.
-#[cfg(target_os = "windows")]
-fn cleanup_cfapi_sync_roots() -> Result<usize, String> {
-    // CfApi sync roots are registered under the SyncRootManager registry key.
-    // Since we removed the cloud-filter dependency, we enumerate via `reg query`
-    // and delete entries containing "CloudMount".
-    let output = std::process::Command::new("reg")
-        .args([
-            "query",
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager",
-            "/s",
-        ])
-        .output()
-        .map_err(|e| format!("reg query failed: {e}"))?;
-
-    if !output.status.success() {
-        // No sync roots registered — nothing to clean up
-        return Ok(0);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut removed = 0;
-
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("HKCU\\") && trimmed.to_lowercase().contains("cloudmount") {
-            let _ = std::process::Command::new("reg")
-                .args(["delete", trimmed, "/f"])
-                .output();
-            removed += 1;
-        }
-    }
-
-    Ok(removed)
 }
 
 // On Windows the function body is cfg-gated as #[cfg(not(target_os = "windows"))];
