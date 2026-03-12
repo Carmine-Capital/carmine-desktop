@@ -11,15 +11,15 @@ crates/
 ├── cloudmount-cache/    # Multi-tier cache: memory (DashMap) → SQLite → disk + writeback
 ├── cloudmount-core/     # Shared types (DriveItem, Drive, Site, errors) + config system
 ├── cloudmount-graph/    # Microsoft Graph API v1.0 client with retry/backoff
-└── cloudmount-vfs/      # VFS: FUSE (Linux/macOS), Cloud Files API (Windows)
+└── cloudmount-vfs/      # VFS: FUSE (Linux/macOS), WinFsp (Windows)
 ```
 
 ## WHERE TO LOOK
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Shared VFS logic | `cloudmount-vfs/src/core_ops.rs` | Both FUSE and CfApi delegate here — cache lookups, Graph calls, writeback, conflict detection |
-| FUSE / CfApi backends | `fuse_fs.rs` / `cfapi.rs` | Implement platform trait methods, delegate to `CoreOps` |
+| Shared VFS logic | `cloudmount-vfs/src/core_ops.rs` | Both FUSE and WinFsp delegate here — cache lookups, Graph calls, writeback, conflict detection |
+| FUSE / WinFsp backends | `fuse_fs.rs` / `winfsp_fs.rs` | Implement platform trait methods, delegate to `CoreOps` |
 | Mount lifecycle | `cloudmount-app/src/main.rs` | `start_mount`, `stop_mount`, `setup_after_launch`, `graceful_shutdown`, `start_delta_sync` |
 | Tauri commands | `cloudmount-app/src/commands.rs` | `#[tauri::command]` fns — register in `invoke_handler!` |
 | Frontend | `cloudmount-app/dist/` | Vanilla JS, no build step. Tauri IPC via `window.__TAURI__.core.invoke()` |
@@ -27,10 +27,10 @@ crates/
 ## CONVENTIONS
 
 - **Errors**: `thiserror` enum in `cloudmount-core::Error`. Propagate via `cloudmount_core::Result<T>`. `anyhow` for the `Other` variant only.
-- **Async**: Tokio throughout. VFS uses `rt.block_on()` because FUSE/CfApi trait methods are sync.
+- **Async**: Tokio throughout. VFS uses `rt.block_on()` because FUSE/WinFsp trait methods are sync.
 - **Dependencies**: ALL deps in workspace root `[workspace.dependencies]`. Crates reference `{ workspace = true }`.
 - **Serde**: `#[serde(rename = "camelCase")]` to match Microsoft Graph API JSON field names.
-- **Platform gates**: `#[cfg(any(target_os = "linux", target_os = "macos"))]` for FUSE, `#[cfg(target_os = "windows")]` for CfApi, `#[cfg(feature = "desktop")]` for Tauri UI.
+- **Platform gates**: `#[cfg(any(target_os = "linux", target_os = "macos"))]` for FUSE, `#[cfg(target_os = "windows")]` for WinFsp, `#[cfg(feature = "desktop")]` for Tauri UI.
 
 ## CONSTRAINTS
 
