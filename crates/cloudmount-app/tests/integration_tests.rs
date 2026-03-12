@@ -1136,10 +1136,10 @@ async fn test_auth_degradation_detection_in_delta_sync() -> cloudmount_core::Res
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires Windows with Cloud Files API"]
+#[ignore = "requires Windows with WinFsp"]
 #[cfg(target_os = "windows")]
-async fn test_smoke_windows_cfapi_mount_list_read_write_unmount() -> cloudmount_core::Result<()> {
-    use cloudmount_vfs::CfMountHandle;
+async fn test_smoke_windows_winfsp_mount_list_read_write_unmount() -> cloudmount_core::Result<()> {
+    use cloudmount_vfs::WinFspMountHandle;
     use cloudmount_vfs::inode::InodeTable;
 
     let server = MockServer::start().await;
@@ -1221,15 +1221,14 @@ async fn test_smoke_windows_cfapi_mount_list_read_write_unmount() -> cloudmount_
         .await;
 
     let rt = tokio::runtime::Handle::current();
-    let mount = CfMountHandle::mount(
+    let mount = WinFspMountHandle::mount(
         graph,
         cache,
         inodes,
         drive_id.to_string(),
-        &sync_root,
+        sync_root.to_str().unwrap(),
         rt,
-        drive_id.to_string(),
-        "Smoke Mount".to_string(),
+        None,
         None,
     )?;
 
