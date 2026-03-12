@@ -1,6 +1,6 @@
 # cloudmount-vfs
 
-Virtual filesystem exposing OneDrive/SharePoint as local mount. FUSE on Linux/macOS, Cloud Files API (CfApi) on Windows. All platform-gated via `#[cfg]`.
+Virtual filesystem exposing OneDrive/SharePoint as local mount. FUSE on Linux/macOS, WinFsp on Windows. All platform-gated via `#[cfg]`.
 
 ## CONFLICT DETECTION
 
@@ -11,7 +11,7 @@ In `flush_inode`, before uploading existing files:
 
 ## CONVENTIONS
 
-- All `Filesystem`/`SyncFilter` trait methods are sync. Bridge to async via `rt.block_on()`.
+- All `Filesystem`/`FileSystemContext` trait methods are sync. Bridge to async via `rt.block_on()`.
 - Reply `Errno::ENOENT` for missing items, `Errno::EIO` for server/upload errors.
 - After child mutations (create, delete, rename): invalidate parent's memory cache entry.
 
