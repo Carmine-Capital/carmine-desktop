@@ -53,3 +53,14 @@ crates/
 All cargo commands run inside the `cloudmount-build` toolbox container — see `Makefile` for targets (`make build`, `make test`, `make clippy`, `make check`). The app itself must run on the host (FUSE mounts are invisible inside toolbox).
 
 GitHub interactions use the `gh` CLI (not GitHub MCP).
+
+## OPENSPEC STATE
+Active changes: check `openspec/changes/` for in-progress proposals
+Specs source of truth: `openspec/specs/` (read-only — use OpenSpec workflow to modify)
+
+## WORKFLOW
+- Understand: /opsx:explore (codebase) and/or /superpowers:brainstorm (requirements)
+- Formalize: /opsx:propose
+- Execute: /superpowers:execute-plan (reads tasks.md as plan) OR /opsx:apply
+- Verify: /opsx:verify
+- Archive: /opsx:archive
