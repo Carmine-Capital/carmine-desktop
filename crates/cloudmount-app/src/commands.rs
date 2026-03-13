@@ -913,7 +913,8 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                 tracing::info!("open_file: invoking previous handler: {cmd}");
 
                 // Set recursion guard before spawning, in case the handler somehow re-invokes us
-                std::env::set_var(OPEN_GUARD_ENV, "1");
+                // SAFETY: single-threaded access to this env var, guarded by cfg(windows)
+                unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
 
                 // Parse the command line to extract executable and arguments
                 // The command is typically: "C:\path\to\app.exe" args...
@@ -938,7 +939,8 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                     std::process::Command::new(exe).raw_arg(args).spawn()
                 };
 
-                std::env::remove_var(OPEN_GUARD_ENV);
+                // SAFETY: single-threaded access to this env var, guarded by cfg(windows)
+                unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
 
                 match result {
                     Ok(_) => return Ok(()),
@@ -980,10 +982,12 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
             }
 
             // For extensions we don't handle, set the recursion guard and use OS fallback
-            std::env::set_var(OPEN_GUARD_ENV, "1");
+            // SAFETY: single-threaded access to this env var, guarded by cfg(windows)
+            unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
             let result = crate::open_with_clean_env(&path)
                 .map_err(|e| format!("failed to open with OS handler: {e}"));
-            std::env::remove_var(OPEN_GUARD_ENV);
+            // SAFETY: single-threaded access to this env var, guarded by cfg(windows)
+            unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
             result
         }
 
