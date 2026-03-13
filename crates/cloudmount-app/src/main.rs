@@ -197,6 +197,10 @@ struct CliArgs {
     #[arg(long)]
     print_default_config: bool,
 
+    /// Open a mounted file in SharePoint Online (used by Explorer context menu)
+    #[arg(long)]
+    open_online: Option<String>,
+
     /// Positional passthrough values (e.g. `cloudmount://...` deep-link URL on Linux/Windows)
     #[arg(hide = true)]
     _passthrough: Vec<String>,
@@ -514,7 +518,20 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
     };
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // When a second instance is launched (e.g. via Explorer context menu),
+            // its argv is forwarded here. Check for --open-online <path>.
+            if let Some(pos) = argv.iter().position(|a| a == "--open-online")
+                && let Some(path) = argv.get(pos + 1).cloned()
+            {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = commands::open_online(handle, path).await {
+                        tracing::error!("open-online from context menu failed: {e}");
+                    }
+                });
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
