@@ -840,30 +840,6 @@ async fn build_direct_url(
     ))
 }
 
-/// Resolve a local mount path to its SharePoint `webUrl`.
-///
-/// Finds the mount containing the path, strips the mount prefix, walks path
-/// components through the cache hierarchy (memory → SQLite → Graph API), and
-/// returns the item's web URL. Falls back to `graph.get_item()` if the cached
-/// item has no `web_url` (e.g. cached before the field was added).
-pub async fn resolve_web_url(state: &AppState, local_path: &str) -> Result<String, String> {
-    let (_drive_id, item) = resolve_item_for_path(state, local_path).await?;
-
-    match item.web_url {
-        Some(url) => Ok(url),
-        None => {
-            let fresh = state
-                .graph
-                .get_item(&_drive_id, &item.id)
-                .await
-                .map_err(|e| format!("failed to fetch item web URL: {e}"))?;
-            fresh
-                .web_url
-                .ok_or_else(|| "item has no SharePoint URL".to_string())
-        }
-    }
-}
-
 /// Resolve a local mount path to its `(drive_id, DriveItem)`.
 async fn resolve_item_for_path(
     state: &AppState,
