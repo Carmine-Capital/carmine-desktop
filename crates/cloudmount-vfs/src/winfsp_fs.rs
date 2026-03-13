@@ -10,9 +10,9 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use tokio::runtime::Handle;
 use windows_sys::Win32::Foundation::{
-    STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_FULL, STATUS_IO_DEVICE_ERROR,
-    STATUS_IO_TIMEOUT, STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_COLLISION,
-    STATUS_OBJECT_NAME_NOT_FOUND,
+    STATUS_ACCESS_DENIED, STATUS_CANCELLED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_FULL,
+    STATUS_IO_DEVICE_ERROR, STATUS_IO_TIMEOUT, STATUS_NOT_A_DIRECTORY,
+    STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND,
 };
 use windows_sys::Win32::Storage::FileSystem::FILE_ACCESS_RIGHTS;
 use winfsp::U16CStr;
@@ -117,7 +117,8 @@ fn vfs_err_to_ntstatus(e: VfsError) -> winfsp::FspError {
         VfsError::NotFound => STATUS_OBJECT_NAME_NOT_FOUND,
         VfsError::NotADirectory => STATUS_NOT_A_DIRECTORY,
         VfsError::DirectoryNotEmpty => STATUS_DIRECTORY_NOT_EMPTY,
-        VfsError::PermissionDenied | VfsError::CollabRedirect => STATUS_ACCESS_DENIED,
+        VfsError::PermissionDenied => STATUS_ACCESS_DENIED,
+        VfsError::CollabRedirect => STATUS_CANCELLED,
         VfsError::TimedOut => STATUS_IO_TIMEOUT,
         VfsError::QuotaExceeded => STATUS_DISK_FULL,
         VfsError::IoError(_) => STATUS_IO_DEVICE_ERROR,
@@ -362,9 +363,12 @@ impl FileSystemContext for CloudMountWinFsp {
             format!("/{}", components.join("/"))
         };
 
-        // WinFsp doesn't expose caller PID in the Rust bindings.
-        // CollabGate skips the interactive-shell check on Windows instead.
-        let caller_pid: Option<u32> = None;
+        // Extract the calling process ID so CollabGate can check whether
+        // the open originates from an interactive shell (e.g. Explorer).
+        // Safety: FspFileSystemOperationProcessIdF() is valid during
+        // Create/Open callbacks and returns 0 when unavailable.
+        let raw_pid = unsafe { winfsp_sys::FspFileSystemOperationProcessIdF() };
+        let caller_pid: Option<u32> = if raw_pid != 0 { Some(raw_pid) } else { None };
 
         // Open a file handle for regular files; directories don't need one.
         let fh = if is_dir {

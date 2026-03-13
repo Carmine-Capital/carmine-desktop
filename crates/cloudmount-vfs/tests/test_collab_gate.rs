@@ -417,3 +417,155 @@ async fn collab_gate_open_online_returns_redirect_error() {
 
     cleanup(&base);
 }
+
+// ---------------------------------------------------------------------------
+// CollabGate skips transient lock files (e.g. ~$Budget.xlsx)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn collab_gate_skips_transient_lock_file() {
+    let server = MockServer::start().await;
+    mock_get_item(&server).await;
+    mock_file_download(&server, b"lock file content").await;
+
+    let (cache, base) = make_cache("collab-skip-lock-file");
+    let graph = make_graph(&server.uri());
+    // Lock file has a collaborative extension (.xlsx) but transient prefix (~$).
+    let item = make_file_item("~$Budget.xlsx");
+    let inodes = setup_inodes_and_cache(&cache, &item);
+    let file_ino = 2u64;
+
+    let (collab_tx, mut collab_rx) = tokio::sync::mpsc::channel(1);
+    let config = collab_config_for_test_process();
+    let rt = tokio::runtime::Handle::current();
+
+    let ops = Arc::new(
+        CoreOps::new(graph, cache, inodes, DRIVE_ID.to_string(), rt)
+            .with_collab_sender(collab_tx)
+            .with_collab_config(config),
+    );
+
+    let pid = std::process::id();
+    let ops2 = ops.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        ops2.open_file(file_ino, Some(pid), Some("~$Budget.xlsx"))
+    })
+    .await
+    .unwrap();
+
+    // Lock files should open locally without triggering CollabGate.
+    assert!(
+        result.is_ok(),
+        "open_file should succeed for transient lock file"
+    );
+
+    assert!(
+        collab_rx.try_recv().is_err(),
+        "no collab request should be sent for lock files (~$...)"
+    );
+
+    cleanup(&base);
+}
+
+// ---------------------------------------------------------------------------
+// CollabGate skips transient temp files (e.g. ~WRS0001.tmp)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn collab_gate_skips_transient_temp_file() {
+    let server = MockServer::start().await;
+    mock_get_item(&server).await;
+    mock_file_download(&server, b"temp file content").await;
+
+    let (cache, base) = make_cache("collab-skip-temp-file");
+    let graph = make_graph(&server.uri());
+    let item = make_file_item("~WRS0001.tmp");
+    let inodes = setup_inodes_and_cache(&cache, &item);
+    let file_ino = 2u64;
+
+    let (collab_tx, mut collab_rx) = tokio::sync::mpsc::channel(1);
+    let config = collab_config_for_test_process();
+    let rt = tokio::runtime::Handle::current();
+
+    let ops = Arc::new(
+        CoreOps::new(graph, cache, inodes, DRIVE_ID.to_string(), rt)
+            .with_collab_sender(collab_tx)
+            .with_collab_config(config),
+    );
+
+    let pid = std::process::id();
+    let ops2 = ops.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        ops2.open_file(file_ino, Some(pid), Some("~WRS0001.tmp"))
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        result.is_ok(),
+        "open_file should succeed for transient temp file"
+    );
+
+    assert!(
+        collab_rx.try_recv().is_err(),
+        "no collab request should be sent for temp files (~...tmp)"
+    );
+
+    cleanup(&base);
+}
+
+// ---------------------------------------------------------------------------
+// CollabGate fires for real collaborative files (regression: transient
+// filter must not block genuine .xlsx/.docx files)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn collab_gate_fires_for_real_collaborative_file() {
+    let server = MockServer::start().await;
+    mock_get_item(&server).await;
+    mock_file_download(&server, b"excel spreadsheet content").await;
+
+    let (cache, base) = make_cache("collab-fires-real-file");
+    let graph = make_graph(&server.uri());
+    let item = make_file_item("Budget.xlsx");
+    let inodes = setup_inodes_and_cache(&cache, &item);
+    let file_ino = 2u64;
+
+    let (collab_tx, mut collab_rx) = tokio::sync::mpsc::channel(1);
+    let config = collab_config_for_test_process();
+    let rt = tokio::runtime::Handle::current();
+
+    let ops = Arc::new(
+        CoreOps::new(graph, cache, inodes, DRIVE_ID.to_string(), rt)
+            .with_collab_sender(collab_tx)
+            .with_collab_config(config),
+    );
+
+    // Respond OpenLocally so open_file succeeds.
+    let (req_tx, req_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        if let Some((request, reply)) = collab_rx.recv().await {
+            let _ = req_tx.send(request);
+            let _ = reply.send(CollabOpenResponse::OpenLocally);
+        }
+    });
+
+    let pid = std::process::id();
+    let ops2 = ops.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        ops2.open_file(file_ino, Some(pid), Some("Budget.xlsx"))
+    })
+    .await
+    .unwrap();
+
+    // Verify CollabGate fired — a request was received.
+    let request = req_rx
+        .await
+        .expect("collab request should be sent for real .xlsx file");
+    assert_eq!(request.extension, ".xlsx");
+
+    // OpenLocally response should let open_file succeed.
+    assert!(result.is_ok(), "open_file should succeed with OpenLocally");
+
+    cleanup(&base);
+}

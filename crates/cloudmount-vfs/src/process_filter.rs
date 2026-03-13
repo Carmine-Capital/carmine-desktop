@@ -36,6 +36,26 @@ pub fn is_interactive_shell(pid: u32, extra_shells: &[String]) -> bool {
         return false;
     };
 
+    if is_known_shell(&name, extra_shells) {
+        return true;
+    }
+
+    // On Windows, Explorer launches the associated app (e.g. Excel) which then
+    // calls CreateFile. The caller PID is Excel, not Explorer. Check the parent
+    // process to catch this indirection.
+    #[cfg(target_os = "windows")]
+    if let Some(parent_pid) = resolve_parent_pid(pid)
+        && let Some(parent_name) = resolve_process_name(parent_pid)
+        && is_known_shell(&parent_name, extra_shells)
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Check whether a process name matches any known interactive shell.
+fn is_known_shell(name: &str, extra_shells: &[String]) -> bool {
     let name_lower = name.to_lowercase();
 
     for &known in KNOWN_SHELLS {
@@ -137,6 +157,61 @@ fn resolve_process_name(pid: u32) -> Option<String> {
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 fn resolve_process_name(_pid: u32) -> Option<String> {
     None
+}
+
+// ---------------------------------------------------------------------------
+// Windows: parent-PID resolution via Toolhelp API
+// ---------------------------------------------------------------------------
+
+/// Windows: resolve the parent PID of a given process using the Toolhelp API.
+///
+/// Enumerates all processes via `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)`,
+/// finds the entry whose `th32ProcessID` matches `pid`, and returns its
+/// `th32ParentProcessID`. Returns `None` on failure (snapshot error, PID not
+/// found, or parent PID is 0).
+#[cfg(target_os = "windows")]
+fn resolve_parent_pid(pid: u32) -> Option<u32> {
+    use std::mem;
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+
+    // Safety: TH32CS_SNAPPROCESS with 0 takes a snapshot of all processes.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return None;
+    }
+
+    let result = (|| {
+        let mut entry: PROCESSENTRY32W = unsafe { mem::zeroed() };
+        entry.dwSize = mem::size_of::<PROCESSENTRY32W>() as u32;
+
+        // Safety: snapshot is a valid handle, entry is properly sized.
+        if unsafe { Process32FirstW(snapshot, &mut entry) } == 0 {
+            return None;
+        }
+
+        loop {
+            if entry.th32ProcessID == pid {
+                let parent = entry.th32ParentProcessID;
+                return if parent != 0 { Some(parent) } else { None };
+            }
+
+            // Safety: snapshot is valid, entry is properly sized.
+            if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
+                break;
+            }
+        }
+
+        None
+    })();
+
+    // Safety: snapshot is a valid handle from CreateToolhelp32Snapshot.
+    unsafe { CloseHandle(snapshot) };
+
+    result
 }
 
 // ---------------------------------------------------------------------------

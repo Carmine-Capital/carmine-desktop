@@ -1021,18 +1021,22 @@ impl CoreOps {
         file_path: Option<&str>,
     ) -> VfsResult<u64> {
         // CollabGate: intercept collaborative file opens from interactive shells.
-        // On Windows, WinFsp doesn't expose caller PID, but all opens come from
-        // userspace (Explorer, apps), so we skip the interactive-shell check.
         if let (Some(tx), Some(path)) = (&self.collab_tx, file_path) {
+            // Skip CollabGate for transient files (lock files like ~$Report.xlsx,
+            // temp files like ~WRS0001.tmp). They have collaborative extensions
+            // but are local-only artifacts that don't exist on OneDrive.
+            let filename = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+
             let ext = std::path::Path::new(path)
                 .extension()
                 .and_then(|e| e.to_str())
                 .map(|e| format!(".{e}"))
                 .unwrap_or_default();
 
-            let is_interactive = if cfg!(target_os = "windows") {
-                true
-            } else if let Some(pid) = caller_pid {
+            let is_interactive = if let Some(pid) = caller_pid {
                 crate::process_filter::is_interactive_shell(
                     pid,
                     &self.collab_config.shell_processes,
@@ -1041,7 +1045,10 @@ impl CoreOps {
                 false
             };
 
-            if cloudmount_core::open_online::is_collaborative(&ext) && is_interactive {
+            if !is_transient_file(filename)
+                && cloudmount_core::open_online::is_collaborative(&ext)
+                && is_interactive
+            {
                 // Cooldown: skip CollabGate if we recently handled this inode.
                 // Explorer/apps may issue multiple CreateFile calls for a single
                 // user action (preview, open, retry on ACCESS_DENIED).
