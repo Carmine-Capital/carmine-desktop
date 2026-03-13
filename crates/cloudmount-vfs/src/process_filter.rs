@@ -33,10 +33,14 @@ pub const KNOWN_SHELLS: &[&str] = &[];
 /// unsupported platform) — fail-safe to local open.
 pub fn is_interactive_shell(pid: u32, extra_shells: &[String]) -> bool {
     let Some(name) = resolve_process_name(pid) else {
+        tracing::debug!(pid, "CollabGate process_filter: could not resolve process name");
         return false;
     };
 
+    tracing::debug!(pid, %name, "CollabGate process_filter: resolved caller process");
+
     if is_known_shell(&name, extra_shells) {
+        tracing::debug!(pid, %name, "CollabGate process_filter: caller IS a known shell");
         return true;
     }
 
@@ -44,13 +48,28 @@ pub fn is_interactive_shell(pid: u32, extra_shells: &[String]) -> bool {
     // calls CreateFile. The caller PID is Excel, not Explorer. Check the parent
     // process to catch this indirection.
     #[cfg(target_os = "windows")]
-    if let Some(parent_pid) = resolve_parent_pid(pid)
-        && let Some(parent_name) = resolve_process_name(parent_pid)
-        && is_known_shell(&parent_name, extra_shells)
     {
-        return true;
+        let parent_pid = resolve_parent_pid(pid);
+        tracing::debug!(pid, %name, ?parent_pid, "CollabGate process_filter: checking parent PID");
+
+        if let Some(ppid) = parent_pid
+            && let Some(parent_name) = resolve_process_name(ppid)
+        {
+            tracing::debug!(
+                pid, %name, ppid, %parent_name,
+                "CollabGate process_filter: resolved parent process"
+            );
+            if is_known_shell(&parent_name, extra_shells) {
+                tracing::debug!(
+                    pid, %name, ppid, %parent_name,
+                    "CollabGate process_filter: parent IS a known shell → interactive"
+                );
+                return true;
+            }
+        }
     }
 
+    tracing::debug!(pid, %name, "CollabGate process_filter: NOT interactive");
     false
 }
 

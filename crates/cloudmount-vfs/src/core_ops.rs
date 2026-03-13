@@ -1036,6 +1036,8 @@ impl CoreOps {
                 .map(|e| format!(".{e}"))
                 .unwrap_or_default();
 
+            let is_transient = is_transient_file(filename);
+            let is_collab = cloudmount_core::open_online::is_collaborative(&ext);
             let is_interactive = if let Some(pid) = caller_pid {
                 crate::process_filter::is_interactive_shell(
                     pid,
@@ -1045,10 +1047,18 @@ impl CoreOps {
                 false
             };
 
-            if !is_transient_file(filename)
-                && cloudmount_core::open_online::is_collaborative(&ext)
-                && is_interactive
-            {
+            tracing::debug!(
+                ino,
+                ?caller_pid,
+                %filename,
+                %ext,
+                is_transient,
+                is_collab,
+                is_interactive,
+                "CollabGate open_file: gate check"
+            );
+
+            if !is_transient && is_collab && is_interactive {
                 // Cooldown: skip CollabGate if we recently handled this inode.
                 // Explorer/apps may issue multiple CreateFile calls for a single
                 // user action (preview, open, retry on ACCESS_DENIED).
@@ -1057,6 +1067,11 @@ impl CoreOps {
                     .collab_cooldown
                     .get(&ino)
                     .is_some_and(|t| t.elapsed().as_secs() < COLLAB_COOLDOWN_SECS);
+
+                tracing::debug!(
+                    ino, on_cooldown,
+                    "CollabGate open_file: cooldown check"
+                );
 
                 if !on_cooldown {
                     // Build a full local path by prepending the mountpoint.
@@ -1074,6 +1089,12 @@ impl CoreOps {
 
                     let web_url = self.lookup_item(ino).and_then(|i| i.web_url.clone());
 
+                    tracing::debug!(
+                        ino, %full_path, %item_id_for_collab,
+                        has_web_url = web_url.is_some(),
+                        "CollabGate open_file: sending request to app"
+                    );
+
                     let request = CollabOpenRequest {
                         path: full_path.clone(),
                         extension: ext,
@@ -1090,18 +1111,25 @@ impl CoreOps {
                             .block_on(async { tokio::time::timeout(timeout, resp_rx).await })
                         {
                             Ok(Ok(CollabOpenResponse::OpenLocally)) => {
+                                tracing::debug!(ino, "CollabGate open_file: response = OpenLocally");
                                 self.collab_cooldown.insert(ino, Instant::now());
                             }
                             Ok(Ok(CollabOpenResponse::OpenOnline)) => {
+                                tracing::debug!(ino, "CollabGate open_file: response = OpenOnline → returning CollabRedirect");
                                 self.collab_cooldown.insert(ino, Instant::now());
                                 return Err(VfsError::CollabRedirect);
                             }
-                            Ok(Err(_)) => { /* channel closed, proceed locally */ }
+                            Ok(Err(_)) => {
+                                tracing::debug!(ino, "CollabGate open_file: channel closed, proceeding locally");
+                            }
                             Err(_) => {
+                                tracing::warn!(ino, "CollabGate open_file: TIMEOUT, proceeding locally");
                                 // Timeout — notify the app layer and proceed locally
                                 self.send_event(VfsEvent::CollabGateTimeout { path: full_path });
                             }
                         }
+                    } else {
+                        tracing::warn!(ino, "CollabGate open_file: failed to send request (channel full/closed)");
                     }
                 }
             }

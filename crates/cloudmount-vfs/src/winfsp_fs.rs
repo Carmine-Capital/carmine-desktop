@@ -369,6 +369,13 @@ impl FileSystemContext for CloudMountWinFsp {
         // Create/Open callbacks and returns 0 when unavailable.
         let raw_pid = unsafe { winfsp_sys::FspFileSystemOperationProcessIdF() };
         let caller_pid: Option<u32> = if raw_pid != 0 { Some(raw_pid) } else { None };
+        tracing::debug!(
+            raw_pid,
+            ?caller_pid,
+            path = %path_str,
+            is_dir,
+            "WinFsp create: caller PID and path"
+        );
 
         // Open a file handle for regular files; directories don't need one.
         let fh = if is_dir {
