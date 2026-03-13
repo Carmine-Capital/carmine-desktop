@@ -77,7 +77,7 @@ argon2 = { version = "0.5.3", default-features = false, features = ["alloc", "ze
 zeroize = { version = "1.8.2", features = ["derive"] }
 
 # WinFsp filesystem driver (Windows virtual filesystem)
-winfsp = "0.12"
+winfsp = { version = "0.12", features = ["system"] }
 winfsp-sys = "0.2"
 nt-time = { version = "0.8", features = ["chrono"] }
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_SystemInformation", "Win32_System_LibraryLoader"] }

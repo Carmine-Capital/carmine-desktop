@@ -1018,6 +1018,13 @@ impl WinFspMountHandle {
         collab_tx: Option<crate::core_ops::CollabSender>,
         collab_config: Option<cloudmount_core::config::CollaborativeOpenConfig>,
     ) -> cloudmount_core::Result<Self> {
+        // 0. Initialize WinFsp DLL (resolves the delay-loaded DLL from PATH or registry).
+        winfsp::winfsp_init().map_err(|e| {
+            cloudmount_core::Error::Filesystem(format!(
+                "WinFsp initialization failed — is WinFsp installed? ({e:?})"
+            ))
+        })?;
+
         // 1. Fetch drive root from Graph API.
         let root_item =
             tokio::task::block_in_place(|| rt.block_on(graph.get_item(&drive_id, "root")))
