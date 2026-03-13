@@ -6,6 +6,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Pinned WinFsp version for bundling — update alongside winfsp crate dependency
+  WINFSP_MSI_VERSION: "2.0.23075"
 
 jobs:
   check-version:
@@ -79,6 +81,15 @@ jobs:
           choco install winfsp llvm -y --params '/Developer'
           echo "WINFSP_INSTALL_DIR=C:\Program Files (x86)\WinFsp" >> $env:GITHUB_ENV
           echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
+      - name: Download WinFsp MSI for bundling (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Force -Path crates/cloudmount-app/resources
+          $url = "https://github.com/winfsp/winfsp/releases/download/v$($env:WINFSP_MSI_VERSION.Split('.')[0..1] -join '.')/winfsp-$env:WINFSP_MSI_VERSION.msi"
+          Write-Host "Downloading WinFsp MSI from $url"
+          Invoke-WebRequest -Uri $url -OutFile crates/cloudmount-app/resources/winfsp.msi
+        shell: pwsh
 
       - name: Cache cargo
         uses: actions/cache@v4
