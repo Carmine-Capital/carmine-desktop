@@ -247,6 +247,7 @@ impl CloudMountWinFsp {
         sync_handle: Option<crate::sync_processor::SyncHandle>,
         collab_tx: Option<crate::core_ops::CollabSender>,
         collab_config: Option<cloudmount_core::config::CollaborativeOpenConfig>,
+        file_associations_registered: bool,
     ) -> Self {
         let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt.clone());
         ops = ops.with_mountpoint(mountpoint.to_string());
@@ -262,6 +263,7 @@ impl CloudMountWinFsp {
         if let Some(cfg) = collab_config {
             ops = ops.with_collab_config(cfg);
         }
+        ops = ops.with_file_associations_registered(file_associations_registered);
         let open_files = ops.open_files().clone();
         Self {
             ops,
@@ -1029,6 +1031,7 @@ impl WinFspMountHandle {
         sync_handle: Option<crate::sync_processor::SyncHandle>,
         collab_tx: Option<crate::core_ops::CollabSender>,
         collab_config: Option<cloudmount_core::config::CollaborativeOpenConfig>,
+        file_associations_registered: bool,
     ) -> cloudmount_core::Result<Self> {
         // 0. Initialize WinFsp DLL (resolves the delay-loaded DLL from PATH or registry).
         winfsp::winfsp_init().map_err(|e| {
@@ -1066,6 +1069,7 @@ impl WinFspMountHandle {
             sync_handle,
             collab_tx,
             collab_config,
+            file_associations_registered,
         );
 
         // 4. Create delta observer before host takes ownership.

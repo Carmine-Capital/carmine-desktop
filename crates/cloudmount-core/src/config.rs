@@ -68,6 +68,7 @@ impl UserConfig {
                 "notifications" => g.notifications = None,
                 "root_dir" => g.root_dir = None,
                 "collaborative_open" => g.collaborative_open = None,
+                "register_file_associations" => g.register_file_associations = None,
                 _ => {}
             }
         }
@@ -167,6 +168,11 @@ pub struct UserGeneralSettings {
     pub root_dir: Option<String>,
     #[serde(default)]
     pub collaborative_open: Option<CollaborativeOpenConfig>,
+    /// Register CloudMount as the handler for Office file types on Windows.
+    /// When enabled, double-clicking .docx/.xlsx/.pptx files opens them via
+    /// CloudMount, which redirects to SharePoint Online for co-authoring.
+    #[serde(default)]
+    pub register_file_associations: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -241,6 +247,9 @@ pub struct EffectiveConfig {
     pub mounts: Vec<MountConfig>,
     pub accounts: Vec<AccountMetadata>,
     pub collaborative_open: CollaborativeOpenConfig,
+    /// Register CloudMount as the handler for Office file types on Windows.
+    /// Default: true on Windows, false on other platforms.
+    pub register_file_associations: bool,
 }
 
 impl EffectiveConfig {
@@ -275,6 +284,16 @@ impl EffectiveConfig {
             .and_then(|g| g.collaborative_open.clone())
             .unwrap_or_default();
 
+        // Default: true on Windows, false on other platforms
+        #[cfg(target_os = "windows")]
+        let default_file_assoc = true;
+        #[cfg(not(target_os = "windows"))]
+        let default_file_assoc = false;
+
+        let register_file_associations = user_general
+            .and_then(|g| g.register_file_associations)
+            .unwrap_or(default_file_assoc);
+
         Self {
             auto_start,
             cache_max_size,
@@ -287,6 +306,7 @@ impl EffectiveConfig {
             mounts: user.mounts.clone(),
             accounts: user.accounts.clone(),
             collaborative_open,
+            register_file_associations,
         }
     }
 }

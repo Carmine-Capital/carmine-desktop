@@ -162,6 +162,7 @@ fn test_user_config_save_and_load_roundtrip() -> cloudmount_core::Result<()> {
             notifications: Some(false),
             root_dir: None,
             collaborative_open: None,
+            register_file_associations: None,
         }),
         mounts: vec![MountConfig {
             id: "user-mount1".to_string(),

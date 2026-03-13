@@ -8,6 +8,8 @@ mod commands;
 #[cfg(feature = "desktop")]
 mod notify;
 #[cfg(feature = "desktop")]
+mod shell_integration;
+#[cfg(feature = "desktop")]
 mod tray;
 #[cfg(feature = "desktop")]
 mod update;
@@ -194,6 +196,11 @@ struct CliArgs {
     /// Open a mounted file in SharePoint Online (used by Explorer context menu)
     #[arg(long)]
     open_online: Option<String>,
+
+    /// Open a file: if on CloudMount drive, open online; otherwise fall through to OS handler
+    /// (used by Windows file associations)
+    #[arg(long)]
+    open: Option<String>,
 
     /// Positional passthrough values (e.g. `cloudmount://...` deep-link URL on Linux/Windows)
     #[arg(hide = true)]
@@ -514,7 +521,7 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             // When a second instance is launched (e.g. via Explorer context menu),
-            // its argv is forwarded here. Check for --open-online <path>.
+            // its argv is forwarded here. Check for --open-online or --open <path>.
             if let Some(pos) = argv.iter().position(|a| a == "--open-online")
                 && let Some(path) = argv.get(pos + 1).cloned()
             {
@@ -522,6 +529,15 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = commands::open_online(handle, path).await {
                         tracing::error!("open-online from context menu failed: {e}");
+                    }
+                });
+            } else if let Some(pos) = argv.iter().position(|a| a == "--open")
+                && let Some(path) = argv.get(pos + 1).cloned()
+            {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = commands::open_file(handle, path).await {
+                        tracing::error!("open from file association failed: {e}");
                     }
                 });
             }
@@ -557,6 +573,7 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::check_fuse_available,
             commands::get_default_mount_root,
             commands::open_online,
+            commands::open_file,
         ])
         .setup(move |app| {
             // Populate the opener's AppHandle slot now that the app is running.
@@ -670,6 +687,24 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
             }
             Err(e) => {
                 tracing::warn!("failed to resolve exe path for auto-start sync: {e}");
+            }
+        }
+
+        // Reconcile Windows file association registration with config.
+        #[cfg(target_os = "windows")]
+        {
+            let register_file_assoc = {
+                let config = state.effective_config.lock().unwrap();
+                config.register_file_associations
+            };
+            if register_file_assoc {
+                if let Err(e) = shell_integration::register_file_associations() {
+                    tracing::warn!("file association registration failed: {e}");
+                }
+            } else if shell_integration::are_file_associations_registered() {
+                if let Err(e) = shell_integration::unregister_file_associations() {
+                    tracing::warn!("file association unregistration failed: {e}");
+                }
             }
         }
 
@@ -1016,6 +1051,17 @@ fn spawn_event_forwarder(
                     tracing::warn!("CollabGate timeout for {path}, opened locally");
                     notify::collab_gate_timeout(&app_handle, &file_name);
                 }
+                cloudmount_vfs::core_ops::VfsEvent::CollabOpenOnlineBackground { path } => {
+                    // Fire-and-forget: open the file online without blocking the VFS.
+                    // This is used when file associations are NOT registered, so the
+                    // VFS proceeds with local open while we asynchronously launch Office.
+                    let handle = app_handle.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = commands::open_online(handle, path.clone()).await {
+                            tracing::warn!("background open-online failed for {path}: {e}");
+                        }
+                    });
+                }
             }
         }
     });
@@ -1205,6 +1251,8 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
     };
     let (collab_tx, collab_rx) = tokio::sync::mpsc::channel(8);
 
+    let file_associations_registered = shell_integration::are_file_associations_registered();
+
     let mut handle = cloudmount_vfs::WinFspMountHandle::mount(
         state.graph.clone(),
         ctx.cache.clone(),
@@ -1216,6 +1264,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         Some(sync_handle),
         Some(collab_tx),
         Some(collab_config),
+        file_associations_registered,
     )
     .map_err(|e| e.to_string())?;
 

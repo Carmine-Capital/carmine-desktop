@@ -708,14 +708,14 @@ pub async fn open_online(app: AppHandle, path: String) -> Result<(), String> {
     // Try the Office URI scheme with a direct document URL (requires the
     // drive's webUrl to construct).  Falls back to the browser if anything
     // in the chain fails.
-    if let Some(direct_url) = build_direct_url(&state.graph, &drive_id, &item).await {
-        if let Some(uri) = cloudmount_core::open_online::office_uri(&extension, &direct_url) {
-            tracing::info!("open_online: launching Office URI {uri}");
-            if crate::open_with_clean_env(&uri).is_ok() {
-                return Ok(());
-            }
-            tracing::warn!("Office URI scheme failed, falling back to browser");
+    if let Some(direct_url) = build_direct_url(&state.graph, &drive_id, &item).await
+        && let Some(uri) = cloudmount_core::open_online::office_uri(&extension, &direct_url)
+    {
+        tracing::info!("open_online: launching Office URI {uri}");
+        if crate::open_with_clean_env(&uri).is_ok() {
+            return Ok(());
         }
+        tracing::warn!("Office URI scheme failed, falling back to browser");
     }
 
     // Fallback: open the _layouts web view URL in the browser.
@@ -840,6 +840,93 @@ fn lookup_cached_item(
         return Some(item);
     }
     None
+}
+
+/// Open a file: if on a CloudMount drive, open online; otherwise fall through to OS handler.
+///
+/// This is the entry point for Windows file associations. When the user double-clicks
+/// an Office file, Windows invokes `CloudMount.exe --open <path>`. If the path is
+/// inside a CloudMount mount, we resolve it to SharePoint and open online. If not,
+/// we pass through to the OS default handler (e.g. local Office installation).
+#[tauri::command]
+pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+
+    // Check if the path is inside any CloudMount mount
+    let is_cloudmount_path = {
+        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+        let path_obj = std::path::Path::new(&path);
+        config.mounts.iter().any(|m| {
+            let expanded = expand_mount_point(&m.mount_point);
+            path_obj.starts_with(&expanded)
+        })
+    };
+
+    if is_cloudmount_path {
+        // Path is on a CloudMount drive — delegate to open_online
+        tracing::info!("open_file: path is on CloudMount, delegating to open_online");
+        open_online(app, path).await
+    } else {
+        // Path is NOT on a CloudMount drive — use the previous handler to avoid infinite loop
+        tracing::info!("open_file: path is not on CloudMount, falling through to OS handler");
+
+        // On Windows: try the previous handler first to avoid infinite loop when
+        // CloudMount is registered as the default handler for Office files
+        #[cfg(target_os = "windows")]
+        {
+            let ext = std::path::Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+
+            if let Some(progid) = crate::shell_integration::get_previous_handler(&ext)
+                && let Some(cmd_template) = crate::shell_integration::get_progid_command(&progid)
+            {
+                // Parse the command template: typically "C:\...\app.exe" "%1" or similar
+                // Replace %1 with the actual path
+                let cmd = cmd_template.replace("%1", &path);
+
+                tracing::info!("open_file: invoking previous handler: {cmd}");
+
+                // Parse the command line to extract executable and arguments
+                // The command is typically: "C:\path\to\app.exe" args...
+                let result = if cmd.starts_with('"') {
+                    // Quoted executable path
+                    if let Some(end_quote) = cmd[1..].find('"') {
+                        let exe = &cmd[1..=end_quote];
+                        let args = cmd[end_quote + 2..].trim();
+                        std::process::Command::new(exe).raw_arg(args).spawn()
+                    } else {
+                        // Malformed command, fall through
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "malformed command template",
+                        ))
+                    }
+                } else {
+                    // Unquoted — split on first space
+                    let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
+                    let exe = parts[0];
+                    let args = parts.get(1).unwrap_or(&"");
+                    std::process::Command::new(exe).raw_arg(args).spawn()
+                };
+
+                match result {
+                    Ok(_) => return Ok(()),
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to invoke previous handler: {e}, falling back to open_with_clean_env"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Fall through to default OS handler for non-Windows or if previous handler failed
+        crate::open_with_clean_env(&path)
+            .map_err(|e| format!("failed to open with OS handler: {e}"))
+    }
 }
 
 /// Find a child item by name under a parent inode.
