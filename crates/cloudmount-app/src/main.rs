@@ -1070,11 +1070,11 @@ fn resolve_collab_preference(
     }
 }
 
-/// Open a file online using its web URL and Office URI scheme.
+/// Open a file online via its SharePoint web URL.
 ///
 /// Resolves the web URL from the request or falls back to `resolve_web_url`,
-/// applies the Office URI scheme mapping, and opens via `open_with_clean_env`.
-/// Returns `Err` if URL resolution or opening fails.
+/// then opens it in the default browser. SharePoint handles desktop Office
+/// handoff if the tenant is configured for it.
 #[cfg(feature = "desktop")]
 async fn handle_collab_open_online(
     app: &tauri::AppHandle,
@@ -1090,17 +1090,8 @@ async fn handle_collab_open_online(
         _ => commands::resolve_web_url(&state, &request.path).await?,
     };
 
-    let uri = cloudmount_core::open_online::office_uri(&request.extension, &web_url);
-
-    if uri != web_url {
-        // Office URI -- try desktop app first, fall back to browser on failure
-        if let Err(e) = open_with_clean_env(&uri) {
-            tracing::warn!("Office URI scheme failed ({e}), falling back to browser");
-            open_with_clean_env(&web_url).map_err(|e| format!("failed to open URL: {e}"))?;
-        }
-    } else {
-        open_with_clean_env(&web_url).map_err(|e| format!("failed to open URL: {e}"))?;
-    }
+    tracing::info!("collab open online: opening {web_url}");
+    open_with_clean_env(&web_url).map_err(|e| format!("failed to open URL: {e}"))?;
 
     Ok(())
 }

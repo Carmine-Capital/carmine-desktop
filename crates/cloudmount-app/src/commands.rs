@@ -784,28 +784,15 @@ pub fn update_collab_config(
 #[tauri::command]
 pub async fn open_online(app: AppHandle, path: String) -> Result<(), String> {
     let state = app.state::<AppState>();
-    tracing::info!("open_online: resolving path={path}");
     let web_url = resolve_web_url(&state, &path).await?;
-    tracing::info!("open_online: web_url={web_url}");
 
-    // Map extension to Office URI scheme (Word/Excel/PowerPoint) or plain URL
-    let extension = std::path::Path::new(&path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| format!(".{e}"))
-        .unwrap_or_default();
-    let uri = cloudmount_core::open_online::office_uri(&extension, &web_url);
-    tracing::info!("open_online: uri={uri}");
-
-    if uri != web_url {
-        // Office URI — try desktop app first, fall back to browser on failure
-        if let Err(e) = crate::open_with_clean_env(&uri) {
-            tracing::warn!("Office URI scheme failed ({e}), falling back to browser");
-            crate::open_with_clean_env(&web_url).map_err(|e| format!("failed to open URL: {e}"))?;
-        }
-    } else {
-        crate::open_with_clean_env(&web_url).map_err(|e| format!("failed to open URL: {e}"))?;
-    }
+    // The webUrl from Microsoft Graph is a SharePoint web view URL
+    // (_layouts/15/Doc.aspx?...). Open it directly in the browser — SharePoint
+    // handles launching the desktop Office app if the user's tenant is configured
+    // for it. Office URI schemes (ms-word:ofe|u|...) do NOT work with these
+    // web view URLs; they require direct document library URLs.
+    tracing::info!("open_online: opening {web_url}");
+    crate::open_with_clean_env(&web_url).map_err(|e| format!("failed to open URL: {e}"))?;
 
     Ok(())
 }
