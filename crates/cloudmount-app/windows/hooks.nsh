@@ -1,4 +1,4 @@
-!macro NSIS_HOOK_PREINSTALL
+!macro NSIS_HOOK_POSTINSTALL
   ; Check if WinFsp is already installed via registry
   ReadRegStr $0 HKLM "SOFTWARE\WinFsp" "InstallDir"
   ${If} $0 != ""
@@ -6,22 +6,22 @@
   ${Else}
     DetailPrint "Installing WinFsp..."
 
-    ; Extract the bundled WinFsp MSI to temp directory
-    SetOutPath "$TEMP"
-    File "${PROJECT_DIR}\resources\winfsp.msi"
+    ${If} ${FileExists} "$INSTDIR\resources\winfsp.msi"
+      ; Copy bundled MSI to temp and run silent install
+      CopyFiles "$INSTDIR\resources\winfsp.msi" "$TEMP\winfsp.msi"
+      ExecWait 'msiexec /i "$TEMP\winfsp.msi" /qn INSTALLLEVEL=1000' $1
 
-    ; Run silent install with full feature set
-    ExecWait 'msiexec /i "$TEMP\winfsp.msi" /qn INSTALLLEVEL=1000' $1
+      ; Clean up temp copy
+      Delete "$TEMP\winfsp.msi"
 
-    ; Clean up temp MSI regardless of outcome
-    Delete "$TEMP\winfsp.msi"
-
-    ; Check exit code
-    ${If} $1 != 0
-      MessageBox MB_OK|MB_ICONSTOP "WinFsp installation failed (exit code: $1).$\n$\nCloudMount requires WinFsp to function. Please install WinFsp manually from https://winfsp.dev and retry."
-      Abort
+      ${If} $1 != 0
+        MessageBox MB_OK|MB_ICONSTOP "WinFsp installation failed (exit code: $1).$\n$\nCloudMount requires WinFsp to function. Please install WinFsp manually from https://winfsp.dev."
+      ${Else}
+        DetailPrint "WinFsp installed successfully."
+      ${EndIf}
     ${EndIf}
-
-    DetailPrint "WinFsp installed successfully."
   ${EndIf}
+
+  ; Clean up bundled MSI from install directory (not needed at runtime)
+  Delete "$INSTDIR\resources\winfsp.msi"
 !macroend
