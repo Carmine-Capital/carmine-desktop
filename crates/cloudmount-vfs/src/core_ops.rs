@@ -494,6 +494,9 @@ pub struct CoreOps {
     collab_tx: Option<CollabSender>,
     collab_config: CollaborativeOpenConfig,
     mountpoint: Option<String>,
+    /// Per-inode cooldown to avoid re-firing CollabGate for the same file
+    /// when Explorer/apps issue multiple CreateFile calls for one user action.
+    collab_cooldown: dashmap::DashMap<u64, Instant>,
 }
 
 impl CoreOps {
@@ -518,6 +521,7 @@ impl CoreOps {
             collab_tx: None,
             collab_config: CollaborativeOpenConfig::default(),
             mountpoint: None,
+            collab_cooldown: dashmap::DashMap::new(),
         }
     }
 
@@ -1042,55 +1046,71 @@ impl CoreOps {
             };
 
             if cloudmount_core::open_online::is_collaborative(&ext) && is_interactive {
-                // Build a full local path by prepending the mountpoint.
-                let full_path = if let Some(mp) = &self.mountpoint {
-                    let trimmed = path.trim_start_matches('/');
-                    std::path::PathBuf::from(mp)
-                        .join(trimmed)
-                        .to_string_lossy()
-                        .into_owned()
-                } else {
-                    path.to_string()
-                };
+                // Cooldown: skip CollabGate if we recently handled this inode.
+                // Explorer/apps may issue multiple CreateFile calls for a single
+                // user action (preview, open, retry on ACCESS_DENIED).
+                const COLLAB_COOLDOWN_SECS: u64 = 30;
+                let on_cooldown = self
+                    .collab_cooldown
+                    .get(&ino)
+                    .is_some_and(|t| t.elapsed().as_secs() < COLLAB_COOLDOWN_SECS);
 
-                let item_id_for_collab = self.inodes.get_item_id(ino).unwrap_or_default();
-                let has_local_changes = self.open_files.has_dirty_handles(ino)
-                    || self
-                        .cache
-                        .writeback
-                        .has_pending(&self.drive_id, &item_id_for_collab);
+                if !on_cooldown {
+                    // Build a full local path by prepending the mountpoint.
+                    let full_path = if let Some(mp) = &self.mountpoint {
+                        let trimmed = path.trim_start_matches('/');
+                        std::path::PathBuf::from(mp)
+                            .join(trimmed)
+                            .to_string_lossy()
+                            .into_owned()
+                    } else {
+                        path.to_string()
+                    };
 
-                let web_url = self.lookup_item(ino).and_then(|i| i.web_url.clone());
+                    let item_id_for_collab =
+                        self.inodes.get_item_id(ino).unwrap_or_default();
+                    let has_local_changes = self.open_files.has_dirty_handles(ino)
+                        || self
+                            .cache
+                            .writeback
+                            .has_pending(&self.drive_id, &item_id_for_collab);
 
-                let request = CollabOpenRequest {
-                    path: full_path.clone(),
-                    extension: ext,
-                    item_id: item_id_for_collab,
-                    web_url,
-                    has_local_changes,
-                };
+                    let web_url = self.lookup_item(ino).and_then(|i| i.web_url.clone());
 
-                let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-                if tx.blocking_send((request, resp_tx)).is_ok() {
-                    let timeout =
-                        std::time::Duration::from_secs(self.collab_config.timeout_seconds);
-                    match self
-                        .rt
-                        .block_on(async { tokio::time::timeout(timeout, resp_rx).await })
-                    {
-                        Ok(Ok(CollabOpenResponse::OpenLocally)) => { /* proceed normally */ }
-                        Ok(Ok(CollabOpenResponse::OpenOnline)) => {
-                            return Err(VfsError::CollabRedirect);
-                        }
-                        Ok(Ok(CollabOpenResponse::Cancel)) => {
-                            return Err(VfsError::OperationCancelled);
-                        }
-                        Ok(Err(_)) => { /* channel closed, proceed locally */ }
-                        Err(_) => {
-                            // Timeout — notify the app layer and proceed locally
-                            self.send_event(VfsEvent::CollabGateTimeout {
-                                path: full_path,
-                            });
+                    let request = CollabOpenRequest {
+                        path: full_path.clone(),
+                        extension: ext,
+                        item_id: item_id_for_collab,
+                        web_url,
+                        has_local_changes,
+                    };
+
+                    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                    if tx.blocking_send((request, resp_tx)).is_ok() {
+                        let timeout =
+                            std::time::Duration::from_secs(self.collab_config.timeout_seconds);
+                        match self
+                            .rt
+                            .block_on(async { tokio::time::timeout(timeout, resp_rx).await })
+                        {
+                            Ok(Ok(CollabOpenResponse::OpenLocally)) => {
+                                self.collab_cooldown.insert(ino, Instant::now());
+                            }
+                            Ok(Ok(CollabOpenResponse::OpenOnline)) => {
+                                self.collab_cooldown.insert(ino, Instant::now());
+                                return Err(VfsError::CollabRedirect);
+                            }
+                            Ok(Ok(CollabOpenResponse::Cancel)) => {
+                                self.collab_cooldown.insert(ino, Instant::now());
+                                return Err(VfsError::OperationCancelled);
+                            }
+                            Ok(Err(_)) => { /* channel closed, proceed locally */ }
+                            Err(_) => {
+                                // Timeout — notify the app layer and proceed locally
+                                self.send_event(VfsEvent::CollabGateTimeout {
+                                    path: full_path,
+                                });
+                            }
                         }
                     }
                 }
