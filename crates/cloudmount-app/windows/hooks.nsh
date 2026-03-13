@@ -1,6 +1,7 @@
 !macro NSIS_HOOK_POSTINSTALL
-  ; NSIS is 32-bit — switch to 64-bit registry view to find WinFsp
-  SetRegView 64
+  ; WinFsp registers under WOW6432Node (32-bit view). Tauri's NSIS template
+  ; sets SetRegView 64, so we must switch to 32-bit to find it.
+  SetRegView 32
 
   ; Check if WinFsp is already installed via registry
   ReadRegStr $0 HKLM "SOFTWARE\WinFsp" "InstallDir"
@@ -28,5 +29,6 @@
   ; Clean up bundled MSI from install directory (not needed at runtime)
   Delete "$INSTDIR\resources\winfsp.msi"
 
-  SetRegView 32
+  ; Restore 64-bit view for Tauri's remaining NSIS steps
+  SetRegView 64
 !macroend
