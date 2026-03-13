@@ -7,7 +7,7 @@
 //! drive can be opened with the original handler, avoiding infinite loops.
 
 #[cfg(target_os = "windows")]
-use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
+use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
 #[cfg(target_os = "windows")]
 use winreg::RegKey;
 
@@ -49,17 +49,19 @@ pub fn register_file_associations() -> cloudmount_core::Result<()> {
         // Open or create the extension key (e.g. .docx)
         let (ext_key, _) = classes.create_subkey(ext)?;
 
-        // Save the previous handler if one exists and we haven't already saved it
+        // Save the previous handler if one exists, we haven't already saved it,
+        // AND the ProgID has a valid command (check both HKCU and HKLM).
+        // This prevents saving useless ProgIDs that would cause fallback failures.
         if ext_key
             .get_value::<String, _>(PREVIOUS_HANDLER_VALUE)
             .is_err()
+            && let Ok(prev) = ext_key.get_value::<String, _>("")
+            && !prev.is_empty()
+            && !prev.starts_with(PROGID_PREFIX)
+            && get_progid_command(&prev).is_some()
         {
-            if let Ok(prev) = ext_key.get_value::<String, _>("") {
-                if !prev.is_empty() && !prev.starts_with(PROGID_PREFIX) {
-                    ext_key.set_value(PREVIOUS_HANDLER_VALUE, &prev)?;
-                    tracing::debug!("saved previous handler for {ext}: {prev}");
-                }
-            }
+            ext_key.set_value(PREVIOUS_HANDLER_VALUE, &prev)?;
+            tracing::debug!("saved previous handler for {ext}: {prev}");
         }
 
         // Set our ProgID as the default handler
@@ -175,16 +177,30 @@ pub fn get_previous_handler(ext: &str) -> Option<String> {
 
 /// Get the command line for a ProgID's shell\open\command.
 ///
-/// Used to invoke the previous handler directly.
+/// Searches both HKCU and HKLM (in that order) since Microsoft Office ProgIDs
+/// (e.g., `Excel.Sheet.12`) are typically registered in HKLM, not HKCU.
 #[cfg(target_os = "windows")]
 pub fn get_progid_command(progid: &str) -> Option<String> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let classes = hkcu
+    let command_path = format!(r"{progid}\shell\open\command");
+
+    // Try HKCU first (user-level overrides)
+    if let Some(cmd) = get_progid_command_from_root(HKEY_CURRENT_USER, &command_path) {
+        return Some(cmd);
+    }
+
+    // Fall back to HKLM (system-level, where Office ProgIDs typically live)
+    get_progid_command_from_root(HKEY_LOCAL_MACHINE, &command_path)
+}
+
+/// Helper to read a ProgID command from a specific registry root.
+#[cfg(target_os = "windows")]
+fn get_progid_command_from_root(root: winreg::HKEY, command_path: &str) -> Option<String> {
+    let root_key = RegKey::predef(root);
+    let classes = root_key
         .open_subkey_with_flags(r"Software\Classes", KEY_READ)
         .ok()?;
-    let command_path = format!(r"{progid}\shell\open\command");
     let command_key = classes
-        .open_subkey_with_flags(&command_path, KEY_READ)
+        .open_subkey_with_flags(command_path, KEY_READ)
         .ok()?;
     command_key.get_value("").ok()
 }
@@ -264,5 +280,23 @@ pub fn get_progid_command(_progid: &str) -> Option<String> {
 #[cfg(not(target_os = "windows"))]
 #[allow(dead_code)]
 pub fn are_file_associations_registered() -> bool {
+    false
+}
+
+/// Check if an extension is one we handle (Office file types).
+///
+/// Used to determine whether a fallback to `open::that()` is safe or would
+/// cause an infinite loop (since we're registered as the handler).
+#[cfg(target_os = "windows")]
+pub fn is_handled_extension(ext: &str) -> bool {
+    OFFICE_EXTENSIONS
+        .iter()
+        .any(|&e| e.eq_ignore_ascii_case(ext))
+}
+
+/// Check if an extension is handled (always `false` on non-Windows).
+#[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
+pub fn is_handled_extension(_ext: &str) -> bool {
     false
 }

@@ -842,6 +842,11 @@ fn lookup_cached_item(
     None
 }
 
+/// Environment variable used as a recursion guard to prevent infinite loops
+/// when CloudMount is invoked as a file handler but cannot find the original handler.
+#[cfg(target_os = "windows")]
+const OPEN_GUARD_ENV: &str = "CLOUDMOUNT_OPEN_GUARD";
+
 /// Open a file: if on a CloudMount drive, open online; otherwise fall through to OS handler.
 ///
 /// This is the entry point for Windows file associations. When the user double-clicks
@@ -850,6 +855,23 @@ fn lookup_cached_item(
 /// we pass through to the OS default handler (e.g. local Office installation).
 #[tauri::command]
 pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
+    // P1 Fix 3: Recursion guard — if we've been re-invoked in a fallback chain, bail immediately
+    #[cfg(target_os = "windows")]
+    if std::env::var(OPEN_GUARD_ENV).is_ok() {
+        tracing::error!(
+            "open_file: recursion guard triggered — CloudMount was re-invoked in fallback chain"
+        );
+        crate::notify::send(
+            &app,
+            "Cannot open file",
+            "CloudMount detected an infinite loop while trying to open the file. \
+             The original application handler could not be found.",
+        );
+        return Err(
+            "recursion guard: CloudMount was re-invoked while trying to open the file".to_string(),
+        );
+    }
+
     let state = app.state::<AppState>();
 
     // Check if the path is inside any CloudMount mount
@@ -890,6 +912,9 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
 
                 tracing::info!("open_file: invoking previous handler: {cmd}");
 
+                // Set recursion guard before spawning, in case the handler somehow re-invokes us
+                std::env::set_var(OPEN_GUARD_ENV, "1");
+
                 // Parse the command line to extract executable and arguments
                 // The command is typically: "C:\path\to\app.exe" args...
                 let result = if cmd.starts_with('"') {
@@ -913,11 +938,13 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                     std::process::Command::new(exe).raw_arg(args).spawn()
                 };
 
+                std::env::remove_var(OPEN_GUARD_ENV);
+
                 match result {
                     Ok(_) => return Ok(()),
                     Err(e) => {
                         tracing::warn!(
-                            "failed to invoke previous handler: {e}, falling back to open_with_clean_env"
+                            "failed to invoke previous handler: {e}, trying other fallbacks"
                         );
                     }
                 }
@@ -925,8 +952,46 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
         }
 
         // Fall through to default OS handler for non-Windows or if previous handler failed
-        crate::open_with_clean_env(&path)
-            .map_err(|e| format!("failed to open with OS handler: {e}"))
+        #[cfg(target_os = "windows")]
+        {
+            let ext = std::path::Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+
+            // P0 Fix 2: Do NOT call open_with_clean_env for extensions we handle — that would
+            // cause an infinite loop since ShellExecute would find CloudMount as the handler.
+            if crate::shell_integration::is_handled_extension(&ext) {
+                tracing::error!(
+                    "open_file: no previous handler found for {ext}, refusing to use OS fallback to avoid infinite loop"
+                );
+                crate::notify::send(
+                    &app,
+                    "Cannot open file",
+                    &format!(
+                        "CloudMount could not find the original application to open {ext} files. \
+                         Please ensure Microsoft Office or another compatible application is installed."
+                    ),
+                );
+                return Err(format!(
+                    "no previous handler found for {ext} — cannot use OS fallback for handled extension"
+                ));
+            }
+
+            // For extensions we don't handle, set the recursion guard and use OS fallback
+            std::env::set_var(OPEN_GUARD_ENV, "1");
+            let result = crate::open_with_clean_env(&path)
+                .map_err(|e| format!("failed to open with OS handler: {e}"));
+            std::env::remove_var(OPEN_GUARD_ENV);
+            result
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            crate::open_with_clean_env(&path)
+                .map_err(|e| format!("failed to open with OS handler: {e}"))
+        }
     }
 }
 
