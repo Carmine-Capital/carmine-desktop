@@ -10,9 +10,9 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use tokio::runtime::Handle;
 use windows_sys::Win32::Foundation::{
-    STATUS_ACCESS_DENIED, STATUS_CANCELLED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_FULL,
-    STATUS_IO_DEVICE_ERROR, STATUS_IO_TIMEOUT, STATUS_NOT_A_DIRECTORY,
-    STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND,
+    STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_FULL, STATUS_IO_DEVICE_ERROR,
+    STATUS_IO_TIMEOUT, STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_COLLISION,
+    STATUS_OBJECT_NAME_NOT_FOUND,
 };
 use windows_sys::Win32::Storage::FileSystem::FILE_ACCESS_RIGHTS;
 use winfsp::U16CStr;
@@ -121,7 +121,6 @@ fn vfs_err_to_ntstatus(e: VfsError) -> winfsp::FspError {
         VfsError::TimedOut => STATUS_IO_TIMEOUT,
         VfsError::QuotaExceeded => STATUS_DISK_FULL,
         VfsError::IoError(_) => STATUS_IO_DEVICE_ERROR,
-        VfsError::OperationCancelled => STATUS_CANCELLED,
     };
     winfsp::FspError::NTSTATUS(code)
 }

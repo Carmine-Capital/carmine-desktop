@@ -36,20 +36,6 @@ pub struct SettingsInfo {
 }
 
 #[derive(Serialize)]
-pub struct CollabConfigInfo {
-    pub enabled: bool,
-    pub default_action: String,
-    pub timeout_seconds: u64,
-    pub extensions: Vec<ExtensionPref>,
-}
-
-#[derive(Serialize, serde::Deserialize)]
-pub struct ExtensionPref {
-    pub ext: String,
-    pub action: String,
-}
-
-#[derive(Serialize)]
 pub struct SiteInfo {
     pub id: String,
     pub display_name: String,
@@ -696,79 +682,6 @@ fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {
     };
     let mut effective = state.effective_config.lock().map_err(|e| e.to_string())?;
     *effective = new_effective;
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Collaborative Open settings
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn get_collab_config(app: AppHandle) -> Result<CollabConfigInfo, String> {
-    let state = app.state::<AppState>();
-    let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-    let c = &config.collaborative_open;
-    Ok(CollabConfigInfo {
-        enabled: c.enabled,
-        default_action: match c.default_action {
-            cloudmount_core::config::CollabDefaultAction::Ask => "ask".to_string(),
-            cloudmount_core::config::CollabDefaultAction::Online => "online".to_string(),
-            cloudmount_core::config::CollabDefaultAction::Local => "local".to_string(),
-        },
-        timeout_seconds: c.timeout_seconds,
-        extensions: c
-            .extensions
-            .iter()
-            .map(|(k, v)| ExtensionPref {
-                ext: k.clone(),
-                action: v.clone(),
-            })
-            .collect(),
-    })
-}
-
-#[tauri::command]
-pub fn update_collab_config(
-    app: AppHandle,
-    enabled: bool,
-    default_action: String,
-    timeout_seconds: u64,
-    extensions: Vec<ExtensionPref>,
-) -> Result<(), String> {
-    use cloudmount_core::config::{CollabDefaultAction, CollaborativeOpenConfig};
-
-    let action = match default_action.as_str() {
-        "online" => CollabDefaultAction::Online,
-        "local" => CollabDefaultAction::Local,
-        _ => CollabDefaultAction::Ask,
-    };
-
-    let ext_map: std::collections::HashMap<String, String> =
-        extensions.into_iter().map(|e| (e.ext, e.action)).collect();
-
-    let state = app.state::<AppState>();
-    {
-        let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
-        let general = user_config.general.get_or_insert_with(Default::default);
-        general.collaborative_open = Some(CollaborativeOpenConfig {
-            enabled,
-            default_action: action,
-            timeout_seconds,
-            shell_processes: general
-                .collaborative_open
-                .as_ref()
-                .map(|c| c.shell_processes.clone())
-                .unwrap_or_default(),
-            extensions: ext_map,
-        });
-
-        let cfg_path = cloudmount_core::config::config_file_path().map_err(|e| e.to_string())?;
-        user_config
-            .save_to_file(&cfg_path)
-            .map_err(|e| e.to_string())?;
-    }
-
-    rebuild_effective_config(&app)?;
     Ok(())
 }
 

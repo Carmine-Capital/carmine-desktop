@@ -200,37 +200,19 @@ fn default_collab_timeout() -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollaborativeOpenConfig {
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub default_action: CollabDefaultAction,
     #[serde(default = "default_collab_timeout")]
     pub timeout_seconds: u64,
     #[serde(default)]
     pub shell_processes: Vec<String>,
-    #[serde(default)]
-    pub extensions: std::collections::HashMap<String, String>,
 }
 
 impl Default for CollaborativeOpenConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
-            default_action: CollabDefaultAction::default(),
             timeout_seconds: default_collab_timeout(),
             shell_processes: Vec::new(),
-            extensions: std::collections::HashMap::new(),
         }
     }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum CollabDefaultAction {
-    #[default]
-    Ask,
-    Online,
-    Local,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

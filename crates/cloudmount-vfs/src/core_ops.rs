@@ -417,8 +417,6 @@ pub enum VfsError {
     IoError(String),
     /// CollabGate redirected the open to the browser (FUSE: EACCES, Windows: STATUS_ACCESS_DENIED)
     CollabRedirect,
-    /// User cancelled the open via CollabGate dialog (FUSE: ECANCELED, Windows: STATUS_CANCELLED)
-    OperationCancelled,
 }
 
 impl VfsError {
@@ -1025,9 +1023,7 @@ impl CoreOps {
         // CollabGate: intercept collaborative file opens from interactive shells.
         // On Windows, WinFsp doesn't expose caller PID, but all opens come from
         // userspace (Explorer, apps), so we skip the interactive-shell check.
-        if let (Some(tx), Some(path)) = (&self.collab_tx, file_path)
-            && self.collab_config.enabled
-        {
+        if let (Some(tx), Some(path)) = (&self.collab_tx, file_path) {
             let ext = std::path::Path::new(path)
                 .extension()
                 .and_then(|e| e.to_str())
@@ -1067,13 +1063,7 @@ impl CoreOps {
                         path.to_string()
                     };
 
-                    let item_id_for_collab =
-                        self.inodes.get_item_id(ino).unwrap_or_default();
-                    let has_local_changes = self.open_files.has_dirty_handles(ino)
-                        || self
-                            .cache
-                            .writeback
-                            .has_pending(&self.drive_id, &item_id_for_collab);
+                    let item_id_for_collab = self.inodes.get_item_id(ino).unwrap_or_default();
 
                     let web_url = self.lookup_item(ino).and_then(|i| i.web_url.clone());
 
@@ -1082,7 +1072,6 @@ impl CoreOps {
                         extension: ext,
                         item_id: item_id_for_collab,
                         web_url,
-                        has_local_changes,
                     };
 
                     let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
@@ -1100,16 +1089,10 @@ impl CoreOps {
                                 self.collab_cooldown.insert(ino, Instant::now());
                                 return Err(VfsError::CollabRedirect);
                             }
-                            Ok(Ok(CollabOpenResponse::Cancel)) => {
-                                self.collab_cooldown.insert(ino, Instant::now());
-                                return Err(VfsError::OperationCancelled);
-                            }
                             Ok(Err(_)) => { /* channel closed, proceed locally */ }
                             Err(_) => {
                                 // Timeout — notify the app layer and proceed locally
-                                self.send_event(VfsEvent::CollabGateTimeout {
-                                    path: full_path,
-                                });
+                                self.send_event(VfsEvent::CollabGateTimeout { path: full_path });
                             }
                         }
                     }

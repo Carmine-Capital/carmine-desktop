@@ -75,10 +75,8 @@ fn collab_config_for_test_process() -> CollaborativeOpenConfig {
         extra.push(name);
     }
     CollaborativeOpenConfig {
-        enabled: true,
         timeout_seconds: 15,
         shell_processes: extra,
-        ..Default::default()
     }
 }
 
@@ -140,11 +138,11 @@ async fn mock_file_download(server: &MockServer, content: &[u8]) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7.1: CollabGate sends request for collaborative file opened by shell
+// CollabGate sends request for collaborative file opened by shell
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_collab_gate_sends_request_for_collaborative_file() {
+async fn collab_gate_sends_request_for_collaborative_file() {
     let server = MockServer::start().await;
     mock_get_item(&server).await;
     mock_file_download(&server, b"word document content placeholder").await;
@@ -190,8 +188,6 @@ async fn test_collab_gate_sends_request_for_collaborative_file() {
         request.web_url.as_deref(),
         Some("https://example.sharepoint.com/test.docx")
     );
-    assert!(!request.has_local_changes);
-
     // OpenLocally response should let open_file succeed.
     assert!(result.is_ok(), "open_file should succeed with OpenLocally");
 
@@ -199,11 +195,11 @@ async fn test_collab_gate_sends_request_for_collaborative_file() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7.2: CollabGate skips non-collaborative files
+// CollabGate skips non-collaborative files
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_collab_gate_skips_non_collaborative_file() {
+async fn collab_gate_skips_non_collaborative_file() {
     let server = MockServer::start().await;
     mock_get_item(&server).await;
     mock_file_download(&server, b"pdf content placeholder").await;
@@ -248,11 +244,11 @@ async fn test_collab_gate_skips_non_collaborative_file() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7.3: CollabGate skips non-interactive processes
+// CollabGate skips non-interactive processes
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_collab_gate_skips_non_interactive_process() {
+async fn collab_gate_skips_non_interactive_process() {
     let server = MockServer::start().await;
     mock_get_item(&server).await;
     mock_file_download(&server, b"word document content placeholder").await;
@@ -267,10 +263,8 @@ async fn test_collab_gate_skips_non_interactive_process() {
     // Do NOT add the test process name to extra_shells — it will not be
     // recognized as an interactive shell.
     let config = CollaborativeOpenConfig {
-        enabled: true,
         timeout_seconds: 15,
         shell_processes: Vec::new(),
-        ..Default::default()
     };
     let rt = tokio::runtime::Handle::current();
 
@@ -303,11 +297,11 @@ async fn test_collab_gate_skips_non_interactive_process() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7.4: CollabGate timeout falls back to local open
+// CollabGate timeout falls back to local open
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_collab_gate_timeout_falls_back_to_local() {
+async fn collab_gate_timeout_falls_back_to_local() {
     let server = MockServer::start().await;
     mock_get_item(&server).await;
     mock_file_download(&server, b"word document content placeholder").await;
@@ -372,11 +366,11 @@ async fn test_collab_gate_timeout_falls_back_to_local() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7.5: OpenOnline response returns CollabRedirect error
+// OpenOnline response returns CollabRedirect error
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_collab_gate_open_online_returns_redirect_error() {
+async fn collab_gate_open_online_returns_redirect_error() {
     let server = MockServer::start().await;
     // No need for get_item / download mocks — the request should be
     // intercepted before they are called.
@@ -419,103 +413,6 @@ async fn test_collab_gate_open_online_returns_redirect_error() {
     assert!(
         matches!(err, cloudmount_vfs::core_ops::VfsError::CollabRedirect),
         "error should be CollabRedirect, got: {err:?}"
-    );
-
-    cleanup(&base);
-}
-
-// ---------------------------------------------------------------------------
-// Test 7.6: has_local_changes is true when dirty handles exist
-// ---------------------------------------------------------------------------
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_collab_gate_has_local_changes_when_dirty() {
-    let server = MockServer::start().await;
-    mock_get_item(&server).await;
-    mock_file_download(&server, b"word document content placeholder").await;
-
-    let (cache, base) = make_cache("collab-dirty");
-    let graph = make_graph(&server.uri());
-    let item = make_file_item("test.docx");
-    let inodes = setup_inodes_and_cache(&cache, &item);
-    let file_ino = 2u64;
-
-    // First open: use a CoreOps WITHOUT collabgate so we can open + write
-    // without triggering the dialog.
-    let rt = tokio::runtime::Handle::current();
-    let ops_no_collab = Arc::new(CoreOps::new(
-        graph.clone(),
-        cache.clone(),
-        inodes.clone(),
-        DRIVE_ID.to_string(),
-        rt.clone(),
-    ));
-
-    let ops_nc = ops_no_collab.clone();
-    let fh = tokio::task::spawn_blocking(move || ops_nc.open_file(file_ino, None, None).unwrap())
-        .await
-        .unwrap();
-
-    // Write to the handle, making it dirty.
-    let ops_nc = ops_no_collab.clone();
-    tokio::task::spawn_blocking(move || {
-        ops_nc.write_handle(fh, 0, b"modified content").unwrap();
-    })
-    .await
-    .unwrap();
-
-    // Now create a second CoreOps WITH collabgate, sharing the same cache and
-    // inodes, to trigger a second open on the same inode.
-    // Since CoreOps owns its own OpenFileTable, we need to use the same CoreOps
-    // to see the dirty handle. Rebuild with collab enabled.
-    //
-    // Actually, has_local_changes checks both open_files.has_dirty_handles AND
-    // cache.writeback.has_pending. Since we wrote to a handle in ops_no_collab,
-    // a second CoreOps won't see that dirty handle. Instead, release the file
-    // in ops_no_collab (which pushes to writeback) and then the second CoreOps
-    // will see has_pending = true.
-    let ops_nc = ops_no_collab.clone();
-    tokio::task::spawn_blocking(move || {
-        let _ = ops_nc.release_file(fh);
-    })
-    .await
-    .unwrap();
-
-    // Re-mock get_item and download for the second open.
-    // (wiremock mounts are additive, so the previous mocks still apply.)
-
-    let (collab_tx, mut collab_rx) = tokio::sync::mpsc::channel(1);
-    let config = collab_config_for_test_process();
-
-    let ops2 = Arc::new(
-        CoreOps::new(graph, cache, inodes, DRIVE_ID.to_string(), rt)
-            .with_collab_sender(collab_tx)
-            .with_collab_config(config),
-    );
-
-    // Spawn a responder that captures the request.
-    let (req_tx, req_rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        if let Some((request, reply)) = collab_rx.recv().await {
-            let _ = req_tx.send(request);
-            let _ = reply.send(CollabOpenResponse::OpenLocally);
-        }
-    });
-
-    let pid = std::process::id();
-    let ops2_clone = ops2.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        ops2_clone.open_file(file_ino, Some(pid), Some("test.docx"))
-    })
-    .await
-    .unwrap();
-
-    assert!(result.is_ok(), "second open_file should succeed");
-
-    let request = req_rx.await.expect("collab request should have been sent");
-    assert!(
-        request.has_local_changes,
-        "has_local_changes should be true when writeback has pending data"
     );
 
     cleanup(&base);

@@ -13,7 +13,7 @@ build-desktop: ## Build all targets with desktop feature
 	$(TOOLBOX) cargo build --all-targets --features desktop
 
 build-appimage:
-	toolbox run -c cloudmount-build env \
+	$(TOOLBOX) env \
 		APPIMAGE_EXTRACT_AND_RUN=1 \
 		NO_STRIP=true \
 		cargo tauri build --features desktop --bundles appimage

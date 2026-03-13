@@ -233,7 +233,6 @@ impl CloudMountFs {
             VfsError::TimedOut => Errno::ETIMEDOUT,
             VfsError::QuotaExceeded => Errno::ENOSPC,
             VfsError::IoError(_) => Errno::EIO,
-            VfsError::OperationCancelled => Errno::ECANCELED,
         }
     }
 }

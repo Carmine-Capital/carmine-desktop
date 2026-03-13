@@ -170,7 +170,6 @@ pub struct CollabOpenRequest {
     pub extension: String,
     pub item_id: String,
     pub web_url: Option<String>,
-    pub has_local_changes: bool,
 }
 
 /// Response from Tauri app indicating how to handle the file open.
@@ -178,5 +177,4 @@ pub struct CollabOpenRequest {
 pub enum CollabOpenResponse {
     OpenLocally,
     OpenOnline,
-    Cancel,
 }

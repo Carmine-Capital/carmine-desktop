@@ -173,33 +173,6 @@ pub fn collab_open_failed(app: &AppHandle, file_name: &str, reason: &str) {
     );
 }
 
-#[cfg(target_os = "linux")]
-pub fn linux_integrations_installed(app: &AppHandle) {
-    send(
-        app,
-        "Open in SharePoint",
-        "File manager integrations installed for Dolphin and Nautilus. Restart your file manager if the menu does not appear immediately.",
-    );
-}
-
-#[cfg(target_os = "linux")]
-pub fn linux_integrations_removed(app: &AppHandle) {
-    send(
-        app,
-        "Open in SharePoint",
-        "File manager integrations removed from Dolphin and Nautilus.",
-    );
-}
-
-#[cfg(target_os = "linux")]
-pub fn linux_integrations_failed(app: &AppHandle, reason: &str) {
-    send(
-        app,
-        "Open in SharePoint",
-        &format!("Could not update file manager integrations: {reason}"),
-    );
-}
-
 pub fn files_recovered(app: &AppHandle, count: usize, path: &str) {
     send(
         app,
