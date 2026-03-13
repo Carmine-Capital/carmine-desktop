@@ -494,7 +494,10 @@ pub struct CoreOps {
     mountpoint: Option<String>,
     /// Per-inode cooldown to avoid re-firing CollabGate for the same file
     /// when Explorer/apps issue multiple CreateFile calls for one user action.
-    collab_cooldown: dashmap::DashMap<u64, Instant>,
+    /// The bool tracks whether the decision was OpenOnline (`true`) so that
+    /// retries during cooldown also receive `CollabRedirect` instead of
+    /// falling through to a local open.
+    collab_cooldown: dashmap::DashMap<u64, (Instant, bool)>,
 }
 
 impl CoreOps {
@@ -1063,73 +1066,97 @@ impl CoreOps {
                 // Explorer/apps may issue multiple CreateFile calls for a single
                 // user action (preview, open, retry on ACCESS_DENIED).
                 const COLLAB_COOLDOWN_SECS: u64 = 30;
-                let on_cooldown = self
-                    .collab_cooldown
-                    .get(&ino)
-                    .is_some_and(|t| t.elapsed().as_secs() < COLLAB_COOLDOWN_SECS);
+                let cooldown_entry = self.collab_cooldown.get(&ino).and_then(|entry| {
+                    let (instant, was_online) = *entry;
+                    if instant.elapsed().as_secs() < COLLAB_COOLDOWN_SECS {
+                        Some(was_online)
+                    } else {
+                        None
+                    }
+                });
 
                 tracing::debug!(
-                    ino, on_cooldown,
+                    ino, ?cooldown_entry,
                     "CollabGate open_file: cooldown check"
                 );
 
-                if !on_cooldown {
-                    // Build a full local path by prepending the mountpoint.
-                    let full_path = if let Some(mp) = &self.mountpoint {
-                        let trimmed = path.trim_start_matches('/');
-                        std::path::PathBuf::from(mp)
-                            .join(trimmed)
-                            .to_string_lossy()
-                            .into_owned()
-                    } else {
-                        path.to_string()
-                    };
+                match cooldown_entry {
+                    // Cooldown active, last decision was OpenOnline: reject
+                    // this retry too so the file doesn't also open locally.
+                    Some(true) => {
+                        tracing::debug!(
+                            ino,
+                            "CollabGate open_file: on cooldown (was OpenOnline) → returning CollabRedirect"
+                        );
+                        return Err(VfsError::CollabRedirect);
+                    }
+                    // Cooldown active, last decision was OpenLocally: let
+                    // the file open locally (fall through).
+                    Some(false) => {}
+                    // No cooldown — fire CollabGate.
+                    None => {
+                        // Build a full local path by prepending the mountpoint.
+                        let full_path = if let Some(mp) = &self.mountpoint {
+                            let trimmed = path.trim_start_matches('/');
+                            std::path::PathBuf::from(mp)
+                                .join(trimmed)
+                                .to_string_lossy()
+                                .into_owned()
+                        } else {
+                            path.to_string()
+                        };
 
-                    let item_id_for_collab = self.inodes.get_item_id(ino).unwrap_or_default();
+                        let item_id_for_collab =
+                            self.inodes.get_item_id(ino).unwrap_or_default();
 
-                    let web_url = self.lookup_item(ino).and_then(|i| i.web_url.clone());
+                        let web_url = self.lookup_item(ino).and_then(|i| i.web_url.clone());
 
-                    tracing::debug!(
-                        ino, %full_path, %item_id_for_collab,
-                        has_web_url = web_url.is_some(),
-                        "CollabGate open_file: sending request to app"
-                    );
+                        tracing::debug!(
+                            ino, %full_path, %item_id_for_collab,
+                            has_web_url = web_url.is_some(),
+                            "CollabGate open_file: sending request to app"
+                        );
 
-                    let request = CollabOpenRequest {
-                        path: full_path.clone(),
-                        extension: ext,
-                        item_id: item_id_for_collab,
-                        web_url,
-                    };
+                        let request = CollabOpenRequest {
+                            path: full_path.clone(),
+                            extension: ext,
+                            item_id: item_id_for_collab,
+                            web_url,
+                        };
 
-                    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-                    if tx.blocking_send((request, resp_tx)).is_ok() {
-                        let timeout =
-                            std::time::Duration::from_secs(self.collab_config.timeout_seconds);
-                        match self
-                            .rt
-                            .block_on(async { tokio::time::timeout(timeout, resp_rx).await })
-                        {
-                            Ok(Ok(CollabOpenResponse::OpenLocally)) => {
-                                tracing::debug!(ino, "CollabGate open_file: response = OpenLocally");
-                                self.collab_cooldown.insert(ino, Instant::now());
+                        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                        if tx.blocking_send((request, resp_tx)).is_ok() {
+                            let timeout = std::time::Duration::from_secs(
+                                self.collab_config.timeout_seconds,
+                            );
+                            match self
+                                .rt
+                                .block_on(async { tokio::time::timeout(timeout, resp_rx).await })
+                            {
+                                Ok(Ok(CollabOpenResponse::OpenLocally)) => {
+                                    tracing::debug!(ino, "CollabGate open_file: response = OpenLocally");
+                                    self.collab_cooldown
+                                        .insert(ino, (Instant::now(), false));
+                                }
+                                Ok(Ok(CollabOpenResponse::OpenOnline)) => {
+                                    tracing::debug!(ino, "CollabGate open_file: response = OpenOnline → returning CollabRedirect");
+                                    self.collab_cooldown
+                                        .insert(ino, (Instant::now(), true));
+                                    return Err(VfsError::CollabRedirect);
+                                }
+                                Ok(Err(_)) => {
+                                    tracing::debug!(ino, "CollabGate open_file: channel closed, proceeding locally");
+                                }
+                                Err(_) => {
+                                    tracing::warn!(ino, "CollabGate open_file: TIMEOUT, proceeding locally");
+                                    self.send_event(VfsEvent::CollabGateTimeout {
+                                        path: full_path,
+                                    });
+                                }
                             }
-                            Ok(Ok(CollabOpenResponse::OpenOnline)) => {
-                                tracing::debug!(ino, "CollabGate open_file: response = OpenOnline → returning CollabRedirect");
-                                self.collab_cooldown.insert(ino, Instant::now());
-                                return Err(VfsError::CollabRedirect);
-                            }
-                            Ok(Err(_)) => {
-                                tracing::debug!(ino, "CollabGate open_file: channel closed, proceeding locally");
-                            }
-                            Err(_) => {
-                                tracing::warn!(ino, "CollabGate open_file: TIMEOUT, proceeding locally");
-                                // Timeout — notify the app layer and proceed locally
-                                self.send_event(VfsEvent::CollabGateTimeout { path: full_path });
-                            }
+                        } else {
+                            tracing::warn!(ino, "CollabGate open_file: failed to send request (channel full/closed)");
                         }
-                    } else {
-                        tracing::warn!(ino, "CollabGate open_file: failed to send request (channel full/closed)");
                     }
                 }
             }
