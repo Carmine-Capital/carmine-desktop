@@ -835,6 +835,7 @@ dependencies = [
  "tracing",
  "windows-sys 0.59.0",
  "winfsp",
+ "winfsp-sys",
  "winreg 0.52.0",
  "wiremock",
 ]
