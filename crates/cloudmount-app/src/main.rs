@@ -313,9 +313,14 @@ fn preflight_checks() -> Result<(), String> {
 
     // WinFsp driver required — Windows installer should bundle or require WinFsp.
     // See https://winfsp.dev/ for MSI installer.
+    //
+    // We also add the WinFsp bin directory to PATH so the delay-loaded
+    // winfsp-x64.dll can be found when the process is launched by Explorer
+    // (e.g. via the "Open Online" context menu) rather than from a shell
+    // where the user has manually extended PATH.
     #[cfg(target_os = "windows")]
     {
-        let winfsp_installed = (|| -> bool {
+        let winfsp_bin_dir = (|| -> Option<String> {
             // WinFsp registers under SOFTWARE\WinFsp on native-bitness installs,
             // but under SOFTWARE\WOW6432Node\WinFsp when the 32-bit installer
             // is used on 64-bit Windows. Check both.
@@ -324,8 +329,7 @@ fn preflight_checks() -> Result<(), String> {
                 let output = std::process::Command::new("reg")
                     .args(["query", key, "/v", "InstallDir"])
                     .output()
-                    .ok();
-                let Some(output) = output else { continue };
+                    .ok()?;
                 if !output.status.success() {
                     continue;
                 }
@@ -333,22 +337,35 @@ fn preflight_checks() -> Result<(), String> {
                 for line in stdout.lines() {
                     if let Some(idx) = line.find("REG_SZ") {
                         let install_dir = line[idx + "REG_SZ".len()..].trim();
-                        let dll_path = std::path::Path::new(install_dir)
-                            .join("bin")
-                            .join("winfsp-x64.dll");
-                        if dll_path.exists() {
-                            return true;
+                        let bin_dir = std::path::Path::new(install_dir).join("bin");
+                        if bin_dir.join("winfsp-x64.dll").exists() {
+                            return Some(bin_dir.to_string_lossy().into_owned());
                         }
                     }
                 }
             }
-            false
+            None
         })();
 
-        if !winfsp_installed {
-            return Err(
-                "WinFsp driver not found. Install WinFsp from https://winfsp.dev/ to enable filesystem mounts.".to_string(),
-            );
+        match winfsp_bin_dir {
+            Some(bin_dir) => {
+                // Prepend WinFsp bin to PATH so the delay-loaded DLL is found.
+                let current_path = std::env::var("PATH").unwrap_or_default();
+                if !current_path
+                    .split(';')
+                    .any(|p| p.eq_ignore_ascii_case(&bin_dir))
+                {
+                    // SAFETY: called in main() before any threads are spawned.
+                    unsafe {
+                        std::env::set_var("PATH", format!("{bin_dir};{current_path}"));
+                    }
+                }
+            }
+            None => {
+                return Err(
+                    "WinFsp driver not found. Install WinFsp from https://winfsp.dev/ to enable filesystem mounts.".to_string(),
+                );
+            }
         }
     }
 
