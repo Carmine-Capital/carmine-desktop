@@ -96,6 +96,8 @@ pub struct Drive {
     pub drive_type: Option<String>,
     pub owner: Option<serde_json::Value>,
     pub quota: Option<DriveQuota>,
+    #[serde(rename = "webUrl")]
+    pub web_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

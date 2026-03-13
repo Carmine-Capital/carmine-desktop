@@ -1070,30 +1070,15 @@ fn resolve_collab_preference(
     }
 }
 
-/// Open a file online via its SharePoint web URL.
-///
-/// Resolves the web URL from the request or falls back to `resolve_web_url`,
-/// then opens it in the default browser. SharePoint handles desktop Office
-/// handoff if the tenant is configured for it.
+/// Open a file online — try desktop Office via URI scheme, fall back to browser.
 #[cfg(feature = "desktop")]
 async fn handle_collab_open_online(
     app: &tauri::AppHandle,
     request: &cloudmount_core::types::CollabOpenRequest,
 ) -> Result<(), String> {
-    use tauri::Manager;
-
-    let state = app.state::<AppState>();
-
-    // Use web_url from the request if available, otherwise resolve via cache/Graph
-    let web_url = match &request.web_url {
-        Some(url) if !url.is_empty() => url.clone(),
-        _ => commands::resolve_web_url(&state, &request.path).await?,
-    };
-
-    tracing::info!("collab open online: opening {web_url}");
-    open_with_clean_env(&web_url).map_err(|e| format!("failed to open URL: {e}"))?;
-
-    Ok(())
+    // Delegate to the shared open_online command which handles Office URI +
+    // browser fallback.
+    commands::open_online(app.clone(), request.path.clone()).await
 }
 
 /// Spawn a task that listens on the CollabGate channel and handles requests.

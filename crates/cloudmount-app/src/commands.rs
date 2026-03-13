@@ -784,17 +784,60 @@ pub fn update_collab_config(
 #[tauri::command]
 pub async fn open_online(app: AppHandle, path: String) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let web_url = resolve_web_url(&state, &path).await?;
+    let (drive_id, item) = resolve_item_for_path(&state, &path).await?;
 
-    // The webUrl from Microsoft Graph is a SharePoint web view URL
-    // (_layouts/15/Doc.aspx?...). Open it directly in the browser — SharePoint
-    // handles launching the desktop Office app if the user's tenant is configured
-    // for it. Office URI schemes (ms-word:ofe|u|...) do NOT work with these
-    // web view URLs; they require direct document library URLs.
-    tracing::info!("open_online: opening {web_url}");
+    let extension = std::path::Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{e}"))
+        .unwrap_or_default();
+
+    // Try the Office URI scheme with a direct document URL (requires the
+    // drive's webUrl to construct).  Falls back to the browser if anything
+    // in the chain fails.
+    if let Some(direct_url) = build_direct_url(&state.graph, &drive_id, &item).await {
+        if let Some(uri) = cloudmount_core::open_online::office_uri(&extension, &direct_url) {
+            tracing::info!("open_online: launching Office URI {uri}");
+            if crate::open_with_clean_env(&uri).is_ok() {
+                return Ok(());
+            }
+            tracing::warn!("Office URI scheme failed, falling back to browser");
+        }
+    }
+
+    // Fallback: open the _layouts web view URL in the browser.
+    let web_url = item
+        .web_url
+        .or_else(|| {
+            // If cached item has no web_url, we can't make another async call here,
+            // so log a warning.  The caller should have it from the Graph response.
+            tracing::warn!("item has no web_url, cannot open in browser");
+            None
+        })
+        .ok_or_else(|| "item has no SharePoint URL".to_string())?;
+    tracing::info!("open_online: opening in browser {web_url}");
     crate::open_with_clean_env(&web_url).map_err(|e| format!("failed to open URL: {e}"))?;
 
     Ok(())
+}
+
+/// Build a direct SharePoint document URL for use with Office URI schemes.
+///
+/// Fetches the drive's `webUrl` (the document library root) and combines it
+/// with the item's parent path and name.
+async fn build_direct_url(
+    graph: &cloudmount_graph::GraphClient,
+    drive_id: &str,
+    item: &DriveItem,
+) -> Option<String> {
+    let drive = graph.get_drive(drive_id).await.ok()?;
+    let drive_web_url = drive.web_url.as_deref()?;
+    let parent_path = item.parent_reference.as_ref()?.path.as_deref()?;
+    Some(cloudmount_core::open_online::direct_document_url(
+        drive_web_url,
+        parent_path,
+        &item.name,
+    ))
 }
 
 /// Resolve a local mount path to its SharePoint `webUrl`.
@@ -804,9 +847,30 @@ pub async fn open_online(app: AppHandle, path: String) -> Result<(), String> {
 /// returns the item's web URL. Falls back to `graph.get_item()` if the cached
 /// item has no `web_url` (e.g. cached before the field was added).
 pub async fn resolve_web_url(state: &AppState, local_path: &str) -> Result<String, String> {
+    let (_drive_id, item) = resolve_item_for_path(state, local_path).await?;
+
+    match item.web_url {
+        Some(url) => Ok(url),
+        None => {
+            let fresh = state
+                .graph
+                .get_item(&_drive_id, &item.id)
+                .await
+                .map_err(|e| format!("failed to fetch item web URL: {e}"))?;
+            fresh
+                .web_url
+                .ok_or_else(|| "item has no SharePoint URL".to_string())
+        }
+    }
+}
+
+/// Resolve a local mount path to its `(drive_id, DriveItem)`.
+async fn resolve_item_for_path(
+    state: &AppState,
+    local_path: &str,
+) -> Result<(String, DriveItem), String> {
     let path = std::path::Path::new(local_path);
 
-    // Find which mount this path belongs to
     let (drive_id, mount_point) = {
         let config = state.effective_config.lock().map_err(|e| e.to_string())?;
         config
@@ -833,7 +897,6 @@ pub async fn resolve_web_url(state: &AppState, local_path: &str) -> Result<Strin
         (c.clone(), i.clone())
     };
 
-    // Strip mount prefix and collect path components
     let relative = path
         .strip_prefix(&mount_point)
         .map_err(|_| format!("failed to strip mount prefix from {local_path}"))?;
@@ -845,26 +908,8 @@ pub async fn resolve_web_url(state: &AppState, local_path: &str) -> Result<Strin
         })
         .collect();
 
-    // Walk path through cache tiers to resolve the DriveItem.
-    // This is an async reimplementation of CoreOps::resolve_path — we cannot
-    // call CoreOps directly because its find_child uses rt.block_on(), which
-    // would deadlock when called from within a tokio task.
     let item = resolve_path_to_item(&cache, &inodes, &state.graph, &drive_id, &components).await?;
-
-    // Return web_url, fetching fresh from Graph API if not cached
-    match item.web_url {
-        Some(url) => Ok(url),
-        None => {
-            let fresh = state
-                .graph
-                .get_item(&drive_id, &item.id)
-                .await
-                .map_err(|e| format!("failed to fetch item web URL: {e}"))?;
-            fresh
-                .web_url
-                .ok_or_else(|| "item has no SharePoint URL".to_string())
-        }
-    }
+    Ok((drive_id, item))
 }
 
 /// Walk path components through cache tiers (memory → SQLite → Graph API).
