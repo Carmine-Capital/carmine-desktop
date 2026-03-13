@@ -89,6 +89,7 @@ impl CloudMountFs {
         cache: Arc<CacheManager>,
         inodes: Arc<InodeTable>,
         drive_id: String,
+        mountpoint: &str,
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
         sync_handle: Option<crate::sync_processor::SyncHandle>,
@@ -112,6 +113,7 @@ impl CloudMountFs {
         });
 
         let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt);
+        ops = ops.with_mountpoint(mountpoint.to_string());
         ops = ops.with_inode_invalidator(invalidator);
         if let Some(tx) = event_tx {
             ops = ops.with_event_sender(tx);

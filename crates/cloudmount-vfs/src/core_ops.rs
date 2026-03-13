@@ -493,6 +493,7 @@ pub struct CoreOps {
     inode_invalidator: Option<InodeInvalidator>,
     collab_tx: Option<CollabSender>,
     collab_config: CollaborativeOpenConfig,
+    mountpoint: Option<String>,
 }
 
 impl CoreOps {
@@ -516,6 +517,7 @@ impl CoreOps {
             inode_invalidator: None,
             collab_tx: None,
             collab_config: CollaborativeOpenConfig::default(),
+            mountpoint: None,
         }
     }
 
@@ -541,6 +543,11 @@ impl CoreOps {
 
     pub fn with_collab_config(mut self, config: CollaborativeOpenConfig) -> Self {
         self.collab_config = config;
+        self
+    }
+
+    pub fn with_mountpoint(mut self, mountpoint: String) -> Self {
+        self.mountpoint = Some(mountpoint);
         self
     }
 
@@ -1011,8 +1018,10 @@ impl CoreOps {
         caller_pid: Option<u32>,
         file_path: Option<&str>,
     ) -> VfsResult<u64> {
-        // CollabGate: intercept collaborative file opens from interactive shells
-        if let (Some(tx), Some(path), Some(pid)) = (&self.collab_tx, file_path, caller_pid)
+        // CollabGate: intercept collaborative file opens from interactive shells.
+        // On Windows, WinFsp doesn't expose caller PID, but all opens come from
+        // userspace (Explorer, apps), so we skip the interactive-shell check.
+        if let (Some(tx), Some(path)) = (&self.collab_tx, file_path)
             && self.collab_config.enabled
         {
             let ext = std::path::Path::new(path)
@@ -1021,12 +1030,29 @@ impl CoreOps {
                 .map(|e| format!(".{e}"))
                 .unwrap_or_default();
 
-            if cloudmount_core::open_online::is_collaborative(&ext)
-                && crate::process_filter::is_interactive_shell(
+            let is_interactive = if cfg!(target_os = "windows") {
+                true
+            } else if let Some(pid) = caller_pid {
+                crate::process_filter::is_interactive_shell(
                     pid,
                     &self.collab_config.shell_processes,
                 )
-            {
+            } else {
+                false
+            };
+
+            if cloudmount_core::open_online::is_collaborative(&ext) && is_interactive {
+                // Build a full local path by prepending the mountpoint.
+                let full_path = if let Some(mp) = &self.mountpoint {
+                    let trimmed = path.trim_start_matches('/');
+                    std::path::PathBuf::from(mp)
+                        .join(trimmed)
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    path.to_string()
+                };
+
                 let item_id_for_collab = self.inodes.get_item_id(ino).unwrap_or_default();
                 let has_local_changes = self.open_files.has_dirty_handles(ino)
                     || self
@@ -1037,7 +1063,7 @@ impl CoreOps {
                 let web_url = self.lookup_item(ino).and_then(|i| i.web_url.clone());
 
                 let request = CollabOpenRequest {
-                    path: path.to_string(),
+                    path: full_path.clone(),
                     extension: ext,
                     item_id: item_id_for_collab,
                     web_url,
@@ -1063,7 +1089,7 @@ impl CoreOps {
                         Err(_) => {
                             // Timeout — notify the app layer and proceed locally
                             self.send_event(VfsEvent::CollabGateTimeout {
-                                path: path.to_string(),
+                                path: full_path,
                             });
                         }
                     }

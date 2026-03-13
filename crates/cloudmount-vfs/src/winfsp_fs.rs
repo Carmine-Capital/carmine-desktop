@@ -241,6 +241,7 @@ impl CloudMountWinFsp {
         cache: Arc<CacheManager>,
         inodes: Arc<InodeTable>,
         drive_id: String,
+        mountpoint: &str,
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
         sync_handle: Option<crate::sync_processor::SyncHandle>,
@@ -248,6 +249,7 @@ impl CloudMountWinFsp {
         collab_config: Option<cloudmount_core::config::CollaborativeOpenConfig>,
     ) -> Self {
         let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt.clone());
+        ops = ops.with_mountpoint(mountpoint.to_string());
         if let Some(tx) = event_tx.clone() {
             ops = ops.with_event_sender(tx);
         }
@@ -361,8 +363,8 @@ impl FileSystemContext for CloudMountWinFsp {
             format!("/{}", components.join("/"))
         };
 
-        // TODO: Extract caller PID from WinFsp if the Rust bindings expose
-        // FspFileSystemOperationProcessId(). Currently unavailable in winfsp-rs.
+        // WinFsp doesn't expose caller PID in the Rust bindings.
+        // CollabGate skips the interactive-shell check on Windows instead.
         let caller_pid: Option<u32> = None;
 
         // Open a file handle for regular files; directories don't need one.
@@ -1048,6 +1050,7 @@ impl WinFspMountHandle {
             cache.clone(),
             inodes.clone(),
             drive_id.clone(),
+            mountpoint,
             rt.clone(),
             event_tx,
             sync_handle,

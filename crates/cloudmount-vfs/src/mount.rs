@@ -130,6 +130,7 @@ impl MountHandle {
                     cache.clone(),
                     inodes.clone(),
                     drive_id.clone(),
+                    mountpoint,
                     rt.clone(),
                     event_tx,
                     sync_handle,
