@@ -784,7 +784,9 @@ pub fn update_collab_config(
 #[tauri::command]
 pub async fn open_online(app: AppHandle, path: String) -> Result<(), String> {
     let state = app.state::<AppState>();
+    tracing::info!("open_online: resolving path={path}");
     let web_url = resolve_web_url(&state, &path).await?;
+    tracing::info!("open_online: web_url={web_url}");
 
     // Map extension to Office URI scheme (Word/Excel/PowerPoint) or plain URL
     let extension = std::path::Path::new(&path)
@@ -793,6 +795,7 @@ pub async fn open_online(app: AppHandle, path: String) -> Result<(), String> {
         .map(|e| format!(".{e}"))
         .unwrap_or_default();
     let uri = cloudmount_core::open_online::office_uri(&extension, &web_url);
+    tracing::info!("open_online: uri={uri}");
 
     if uri != web_url {
         // Office URI — try desktop app first, fall back to browser on failure
