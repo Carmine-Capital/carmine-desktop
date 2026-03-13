@@ -1,4 +1,7 @@
 !macro NSIS_HOOK_POSTINSTALL
+  ; NSIS is 32-bit — switch to 64-bit registry view to find WinFsp
+  SetRegView 64
+
   ; Check if WinFsp is already installed via registry
   ReadRegStr $0 HKLM "SOFTWARE\WinFsp" "InstallDir"
   ${If} $0 != ""
@@ -24,4 +27,6 @@
 
   ; Clean up bundled MSI from install directory (not needed at runtime)
   Delete "$INSTDIR\resources\winfsp.msi"
+
+  SetRegView 32
 !macroend
