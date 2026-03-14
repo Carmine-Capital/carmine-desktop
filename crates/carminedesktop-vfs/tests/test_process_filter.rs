@@ -1,6 +1,6 @@
-use carminedesktop_vfs::process_filter::{
-    KNOWN_SHELLS, current_process_name, is_interactive_shell,
-};
+use carminedesktop_vfs::process_filter::{current_process_name, is_interactive_shell};
+#[cfg(target_os = "linux")]
+use carminedesktop_vfs::process_filter::KNOWN_SHELLS;
 
 #[cfg(target_os = "linux")]
 #[test]
