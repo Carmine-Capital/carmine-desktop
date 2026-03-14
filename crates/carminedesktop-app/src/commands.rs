@@ -1256,6 +1256,13 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                 .map_err(|e| format!("failed to open with OS handler: {e}"))
         }
 
+        // On Linux: no file associations, just open with OS default handler
+        #[cfg(target_os = "linux")]
+        {
+            crate::open_with_clean_env(&path)
+                .map_err(|e| format!("failed to open with OS handler: {e}"))
+        }
+
         // On macOS: try the previous handler (resolved via bundle ID → app path)
         #[cfg(target_os = "macos")]
         {
