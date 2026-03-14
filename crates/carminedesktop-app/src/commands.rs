@@ -35,6 +35,8 @@ pub struct SettingsInfo {
     pub notifications: bool,
     pub root_dir: String,
     pub account_display: Option<String>,
+    pub explorer_nav_pane: bool,
+    pub platform: String,
 }
 
 #[derive(Serialize)]
@@ -413,6 +415,8 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsInfo, String> {
         notifications: config.notifications,
         root_dir: config.root_dir.clone(),
         account_display,
+        explorer_nav_pane: config.explorer_nav_pane,
+        platform: std::env::consts::OS.to_string(),
     })
 }
 
