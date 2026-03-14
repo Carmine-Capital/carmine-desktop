@@ -164,6 +164,7 @@ fn test_user_config_save_and_load_roundtrip() -> carminedesktop_core::Result<()>
             collaborative_open: None,
             register_file_associations: None,
             file_handler_overrides: None,
+            explorer_nav_pane: None,
         }),
         mounts: vec![MountConfig {
             id: "user-mount1".to_string(),
@@ -372,6 +373,83 @@ fn test_add_sharepoint_mount_strips_trailing_sep() -> carminedesktop_core::Resul
         "stored mount_point should not have trailing /, got: {}",
         user.mounts[0].mount_point
     );
+
+    Ok(())
+}
+
+// --- explorer_nav_pane config tests ---
+
+#[test]
+fn test_config_explorer_nav_pane_default() -> carminedesktop_core::Result<()> {
+    let user = UserConfig::load("")?;
+    let effective = EffectiveConfig::build(&user);
+
+    // Default: true on Windows, false elsewhere
+    #[cfg(target_os = "windows")]
+    assert!(effective.explorer_nav_pane);
+    #[cfg(not(target_os = "windows"))]
+    assert!(!effective.explorer_nav_pane);
+
+    Ok(())
+}
+
+#[test]
+fn test_config_explorer_nav_pane_explicit_true() -> carminedesktop_core::Result<()> {
+    let user = UserConfig::load("[general]\nexplorer_nav_pane = true")?;
+    let effective = EffectiveConfig::build(&user);
+    assert!(effective.explorer_nav_pane);
+
+    Ok(())
+}
+
+#[test]
+fn test_config_explorer_nav_pane_explicit_false() -> carminedesktop_core::Result<()> {
+    let user = UserConfig::load("[general]\nexplorer_nav_pane = false")?;
+    let effective = EffectiveConfig::build(&user);
+    assert!(!effective.explorer_nav_pane);
+
+    Ok(())
+}
+
+#[test]
+fn test_config_explorer_nav_pane_reset() -> carminedesktop_core::Result<()> {
+    let mut user = UserConfig::load("[general]\nexplorer_nav_pane = true")?;
+    assert_eq!(user.general.as_ref().unwrap().explorer_nav_pane, Some(true));
+
+    user.reset_setting("explorer_nav_pane");
+    assert!(user.general.as_ref().unwrap().explorer_nav_pane.is_none());
+
+    // After reset, effective config should use platform default
+    let effective = EffectiveConfig::build(&user);
+    #[cfg(target_os = "windows")]
+    assert!(effective.explorer_nav_pane);
+    #[cfg(not(target_os = "windows"))]
+    assert!(!effective.explorer_nav_pane);
+
+    Ok(())
+}
+
+#[test]
+fn test_config_explorer_nav_pane_roundtrip() -> carminedesktop_core::Result<()> {
+    let config_path = create_temp_config_file();
+
+    let user = UserConfig {
+        general: Some(UserGeneralSettings {
+            explorer_nav_pane: Some(true),
+            ..UserGeneralSettings::default()
+        }),
+        mounts: vec![],
+        accounts: vec![],
+    };
+
+    user.save_to_file(&config_path)?;
+    let loaded = UserConfig::load_from_file(&config_path)?;
+    assert_eq!(
+        loaded.general.as_ref().unwrap().explorer_nav_pane,
+        Some(true)
+    );
+
+    let _ = std::fs::remove_file(&config_path);
 
     Ok(())
 }

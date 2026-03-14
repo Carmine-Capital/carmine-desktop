@@ -1476,3 +1476,105 @@ pub fn is_handled_extension(ext: &str) -> bool {
 pub fn discover_office_handler(ext: &str) -> Option<String> {
     macos::discover(ext)
 }
+
+// ---------------------------------------------------------------------------
+// Windows Explorer navigation pane tests
+// ---------------------------------------------------------------------------
+//
+// These tests live here (instead of crates/carminedesktop-app/tests/) because
+// carminedesktop-app is a binary crate — integration tests cannot import its
+// private modules. The functions under test (`register_nav_pane`, etc.) are
+// module-private, so inline #[cfg(test)] is the only viable option.
+
+#[cfg(test)]
+#[cfg(target_os = "windows")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shell_integration_register_and_unregister_nav_pane() -> carminedesktop_core::Result<()>
+    {
+        let cloud_root = std::env::temp_dir().join("carminedesktop_test_cloud");
+        std::fs::create_dir_all(&cloud_root).ok();
+
+        // Register
+        register_nav_pane(&cloud_root)?;
+        assert!(is_nav_pane_registered());
+
+        // Verify CLSID key exists with correct default value
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let clsid_path = format!(r"Software\Classes\CLSID\{NAV_PANE_CLSID}");
+        let clsid_key = hkcu.open_subkey_with_flags(&clsid_path, KEY_READ)?;
+        let default_val: String = clsid_key.get_value("")?;
+        assert_eq!(default_val, "Carmine Desktop");
+
+        // Verify TargetFolderPath
+        let prop_bag =
+            clsid_key.open_subkey_with_flags(r"Instance\InitPropertyBag", KEY_READ)?;
+        let target: String = prop_bag.get_value("TargetFolderPath")?;
+        assert_eq!(target, cloud_root.to_string_lossy().as_ref());
+
+        // Verify Desktop\NameSpace entry
+        let ns_path = format!(
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{NAV_PANE_CLSID}"
+        );
+        let ns_key = hkcu.open_subkey_with_flags(&ns_path, KEY_READ)?;
+        let ns_val: String = ns_key.get_value("")?;
+        assert_eq!(ns_val, "Carmine Desktop");
+
+        // Verify HideDesktopIcons value
+        let hide_path =
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel";
+        let hide_key = hkcu.open_subkey_with_flags(hide_path, KEY_READ)?;
+        let hide_val: u32 = hide_key.get_value(NAV_PANE_CLSID)?;
+        assert_eq!(hide_val, 1);
+
+        // Unregister
+        unregister_nav_pane()?;
+        assert!(!is_nav_pane_registered());
+
+        // Cleanup
+        let _ = std::fs::remove_dir(&cloud_root);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_shell_integration_update_nav_pane_target() -> carminedesktop_core::Result<()> {
+        let cloud_root = std::env::temp_dir().join("carminedesktop_test_cloud_update");
+        std::fs::create_dir_all(&cloud_root).ok();
+
+        register_nav_pane(&cloud_root)?;
+
+        let new_root = std::env::temp_dir().join("carminedesktop_test_cloud_new");
+        update_nav_pane_target(&new_root)?;
+
+        // Verify updated path
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let prop_bag = hkcu.open_subkey_with_flags(
+            &format!(r"Software\Classes\CLSID\{NAV_PANE_CLSID}\Instance\InitPropertyBag"),
+            KEY_READ,
+        )?;
+        let target: String = prop_bag.get_value("TargetFolderPath")?;
+        assert_eq!(target, new_root.to_string_lossy().as_ref());
+
+        // Cleanup
+        unregister_nav_pane()?;
+        let _ = std::fs::remove_dir(&cloud_root);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_shell_integration_unregister_nav_pane_missing_keys() -> carminedesktop_core::Result<()>
+    {
+        // Ensure not registered
+        let _ = unregister_nav_pane();
+        assert!(!is_nav_pane_registered());
+
+        // Should not error when keys don't exist
+        unregister_nav_pane()?;
+
+        Ok(())
+    }
+}
