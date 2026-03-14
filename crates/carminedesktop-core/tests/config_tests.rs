@@ -161,7 +161,7 @@ fn test_user_config_save_and_load_roundtrip() -> carminedesktop_core::Result<()>
             log_level: Some("debug".to_string()),
             notifications: Some(false),
             root_dir: None,
-            collaborative_open: None,
+
             register_file_associations: None,
             file_handler_overrides: None,
             explorer_nav_pane: None,

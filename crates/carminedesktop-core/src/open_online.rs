@@ -1,7 +1,7 @@
 /// Build an Office URI scheme string (`ms-word:ofe|u|<url>`) for the given extension
 /// and **direct** document URL (not a `_layouts/15/Doc.aspx` web view URL).
 ///
-/// Returns `None` on Linux or for non-Office file types.
+/// Returns `None` on non-Windows platforms or for non-Office file types.
 pub fn office_uri(extension: &str, direct_url: &str) -> Option<String> {
     let scheme = office_uri_scheme(extension)?;
     Some(format!("{scheme}:ofe|u|{direct_url}"))
