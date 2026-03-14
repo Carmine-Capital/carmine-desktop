@@ -157,7 +157,7 @@ fn main() {
 github.com/nyxa/cloudmount (public)
   └── Source code, defaults.toml.example, generic CI
 
-gitlab.company.com/you/cloudmount-build (private, tiny)
+gitlab.company.com/you/carminedesktop-build (private, tiny)
   ├── defaults.toml          ← SharePoint mount definitions
   ├── .gitlab-ci.yml         ← clones public repo, injects config, builds
   └── CI Variables: CLIENT_ID (masked), TENANT_ID, APP_NAME

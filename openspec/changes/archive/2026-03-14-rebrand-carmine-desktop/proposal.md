@@ -10,7 +10,7 @@ The project is being rebranded from "CloudMount" to "Carmine Desktop" to reflect
 - **BREAKING**: Release pipeline rewritten — artifacts uploaded via rsync/SSH to private server instead of published as GitHub Releases
 - Windows installer format changed from NSIS (`.exe`) to MSI (WiX) for better enterprise/GPO deployment
 - Frontend UI rebranded (app name, page titles, CSS class prefixes)
-- Build toolbox container reference updated from `cloudmount-build` to `carminedesktop-build`
+- Build toolbox container reference updated from `carminedesktop-build` to `carminedesktop-build`
 
 ## Capabilities
 
