@@ -432,6 +432,8 @@ pub fn register_nav_pane(cloud_root: &std::path::Path) -> carminedesktop_core::R
     let clsid_path = format!(r"Software\Classes\CLSID\{NAV_PANE_CLSID}");
     let (clsid_key, _) = hkcu.create_subkey(&clsid_path)?;
     clsid_key.set_value("", &"Carmine Desktop")?;
+    // Required on Windows 10+ for the entry to appear in the navigation pane
+    clsid_key.set_value("System.IsPinnedToNameSpaceTree", &1u32)?;
 
     // DefaultIcon
     let (icon_key, _) = clsid_key.create_subkey("DefaultIcon")?;
@@ -1521,6 +1523,10 @@ mod tests {
         let clsid_key = hkcu.open_subkey_with_flags(&clsid_path, KEY_READ)?;
         let default_val: String = clsid_key.get_value("")?;
         assert_eq!(default_val, "Carmine Desktop");
+
+        // Verify IsPinnedToNameSpaceTree
+        let pinned: u32 = clsid_key.get_value("System.IsPinnedToNameSpaceTree")?;
+        assert_eq!(pinned, 1);
 
         // Verify TargetFolderPath
         let prop_bag = clsid_key.open_subkey_with_flags(r"Instance\InitPropertyBag", KEY_READ)?;
