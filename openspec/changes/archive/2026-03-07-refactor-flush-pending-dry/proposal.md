@@ -4,7 +4,7 @@
 
 ## What Changes
 
-- Extract `flush_pending` into a single free async function in a new non-platform-gated module (`crates/cloudmount-vfs/src/pending.rs`).
+- Extract `flush_pending` into a single free async function in a new non-platform-gated module (`crates/carminedesktop-vfs/src/pending.rs`).
 - Remove the duplicated `flush_pending` implementations from `MountHandle` and `CfMountHandle`; both call the shared function instead.
 - No public API changes — `flush_pending` is private to both structs today and remains so.
 
@@ -20,7 +20,7 @@ _(none — no spec-level behaviour changes. The write-back flush semantics are u
 
 ## Impact
 
-- **Files changed**: `crates/cloudmount-vfs/src/mount.rs`, `crates/cloudmount-vfs/src/cfapi.rs`, `crates/cloudmount-vfs/src/lib.rs` (new module), new file `crates/cloudmount-vfs/src/pending.rs`.
+- **Files changed**: `crates/carminedesktop-vfs/src/mount.rs`, `crates/carminedesktop-vfs/src/cfapi.rs`, `crates/carminedesktop-vfs/src/lib.rs` (new module), new file `crates/carminedesktop-vfs/src/pending.rs`.
 - **No API changes**: `flush_pending` is private; callers (`unmount`) are within the same crate.
 - **No dependency changes**: `pending.rs` uses only types already in scope (`CacheManager`, `GraphClient`, `tokio`).
 - **Compile targets**: all three platforms (Linux, macOS, Windows) compile the new module; it is not `#[cfg]`-gated.

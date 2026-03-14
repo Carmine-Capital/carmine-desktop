@@ -5,15 +5,15 @@ The system SHALL store OAuth tokens in the operating system's native secure cred
 
 #### Scenario: Token storage on Linux
 - **WHEN** tokens are obtained after authentication on Linux
-- **THEN** the system stores them via the Secret Service API (GNOME Keyring or KWallet) under the service name "cloudmount"
+- **THEN** the system stores them via the Secret Service API (GNOME Keyring or KWallet) under the service name "carminedesktop"
 
 #### Scenario: Token storage on macOS
 - **WHEN** tokens are obtained after authentication on macOS
-- **THEN** the system stores them in the macOS Keychain under the service name "cloudmount"
+- **THEN** the system stores them in the macOS Keychain under the service name "carminedesktop"
 
 #### Scenario: Token storage on Windows
 - **WHEN** tokens are obtained after authentication on Windows
-- **THEN** the system stores them in Windows Credential Manager under the target "cloudmount"
+- **THEN** the system stores them in Windows Credential Manager under the target "carminedesktop"
 
 #### Scenario: Verify-after-write for credential store
 - **WHEN** the system writes tokens to the OS credential store and the write call returns success

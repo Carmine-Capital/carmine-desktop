@@ -8,7 +8,7 @@ Known interactive shells:
 - Linux: `nautilus`, `dolphin`, `thunar`, `nemo`, `pcmanfm`, `caja`
 - macOS: `Finder`
 
-The list of shell process names SHALL be configurable in the CloudMount config.
+The list of shell process names SHALL be configurable in the carminedesktop config.
 
 On Windows, the system SHALL also check the **parent process** of the caller against `KNOWN_SHELLS`. This is necessary because Windows Explorer does not call `CreateFile` directly when a user double-clicks a file — it launches the associated application (e.g., Excel), which then calls `CreateFile`. The caller PID resolves to the application, but its parent PID resolves to `explorer.exe`.
 
@@ -65,17 +65,17 @@ The `CollabOpenResponse` SHALL be one of: `OpenOnline` or `OpenLocally`.
 The CollabGate guard SHALL skip files matching transient patterns (as defined by `is_transient_file()`). Office lock files like `~$Report.xlsx` have collaborative extensions but are local-only artifacts that do not exist on OneDrive and SHALL NOT trigger online-open attempts.
 
 #### Scenario: Interactive shell opens a collaborative file
-- **WHEN** `explorer.exe` (or an app launched by Explorer) opens a `.docx` file on a CloudMount mount
+- **WHEN** `explorer.exe` (or an app launched by Explorer) opens a `.docx` file on a carminedesktop mount
 - **AND** CollabGate is enabled (channel is `Some`)
 - **THEN** the VFS sends a `CollabOpenRequest` via the channel
 - **AND** blocks on the oneshot reply
 
 #### Scenario: Non-interactive process opens a collaborative file
-- **WHEN** a non-shell process opens a `.docx` file on a CloudMount mount
+- **WHEN** a non-shell process opens a `.docx` file on a carminedesktop mount
 - **THEN** the VFS serves the file locally without sending a `CollabOpenRequest`
 
 #### Scenario: Interactive shell opens a non-collaborative file
-- **WHEN** `explorer.exe` opens a `.pdf` file on a CloudMount mount
+- **WHEN** `explorer.exe` opens a `.pdf` file on a carminedesktop mount
 - **THEN** the VFS serves the file locally without sending a `CollabOpenRequest`
 
 #### Scenario: CollabGate is disabled (headless mode)
@@ -84,12 +84,12 @@ The CollabGate guard SHALL skip files matching transient patterns (as defined by
 - **THEN** the VFS serves all files locally without CollabGate checks
 
 #### Scenario: Office lock file opened
-- **WHEN** an interactive process opens `~$Report.xlsx` on a CloudMount mount
+- **WHEN** an interactive process opens `~$Report.xlsx` on a carminedesktop mount
 - **AND** `is_transient_file("~$Report.xlsx")` returns `true`
 - **THEN** the VFS serves the file locally without sending a `CollabOpenRequest`
 
 #### Scenario: Office temp file opened
-- **WHEN** any process opens `~WRS0001.tmp` on a CloudMount mount
+- **WHEN** any process opens `~WRS0001.tmp` on a carminedesktop mount
 - **AND** `is_transient_file("~WRS0001.tmp")` returns `true`
 - **THEN** the VFS serves the file locally without sending a `CollabOpenRequest`
 

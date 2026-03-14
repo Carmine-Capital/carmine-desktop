@@ -1,8 +1,8 @@
 ## Context
 
-CloudMount is code-complete across all 6 crates with 48+ passing tests. However, the gap between "compiles" and "testable prototype" is significant. The only way to provide Azure AD credentials is editing `build/defaults.toml` and recompiling. The placeholder `DEFAULT_CLIENT_ID` (`00000000-...`) causes a silent 120s auth timeout. There are no CLI arguments, no startup validation, and no fallback for headless environments without a display server.
+carminedesktop is code-complete across all 6 crates with 48+ passing tests. However, the gap between "compiles" and "testable prototype" is significant. The only way to provide Azure AD credentials is editing `build/defaults.toml` and recompiling. The placeholder `DEFAULT_CLIENT_ID` (`00000000-...`) causes a silent 120s auth timeout. There are no CLI arguments, no startup validation, and no fallback for headless environments without a display server.
 
-Currently, configuration flows through a two-layer system: `build/defaults.toml` (compile-time, embedded via `include_str!`) merges with `~/.config/cloudmount/config.toml` (runtime user overrides) to produce `EffectiveConfig`. Tenant credentials (`client_id`, `tenant_id`) exist only in `PackagedDefaults` — there is no runtime override mechanism.
+Currently, configuration flows through a two-layer system: `build/defaults.toml` (compile-time, embedded via `include_str!`) merges with `~/.config/carminedesktop/config.toml` (runtime user overrides) to produce `EffectiveConfig`. Tenant credentials (`client_id`, `tenant_id`) exist only in `PackagedDefaults` — there is no runtime override mechanism.
 
 ## Goals / Non-Goals
 
@@ -38,19 +38,19 @@ CLI args (highest) → env vars → user config.toml → build/defaults.toml →
 
 **Decision**: Use `clap` with derive macros for CLI argument parsing.
 
-**Rationale**: `clap` is the Rust ecosystem standard, provides `--help`/`--version` for free, and supports env var fallback natively via `#[arg(env = "CLOUDMOUNT_CLIENT_ID")]`. This eliminates the need for separate env var parsing logic.
+**Rationale**: `clap` is the Rust ecosystem standard, provides `--help`/`--version` for free, and supports env var fallback natively via `#[arg(env = "carminedesktop_CLIENT_ID")]`. This eliminates the need for separate env var parsing logic.
 
 **Alternative considered**: Manual `std::env::args()` parsing. Rejected — too much boilerplate for no benefit, and we'd miss `--help` generation.
 
 **CLI structure**:
 ```
-cloudmount-app [OPTIONS]
+carminedesktop-app [OPTIONS]
 
 Options:
-  --client-id <ID>       Azure AD client ID [env: CLOUDMOUNT_CLIENT_ID]
-  --tenant-id <ID>       Azure AD tenant ID [env: CLOUDMOUNT_TENANT_ID]
-  --config <PATH>        Config file path [env: CLOUDMOUNT_CONFIG]
-  --log-level <LEVEL>    Log level (trace/debug/info/warn/error) [env: CLOUDMOUNT_LOG_LEVEL]
+  --client-id <ID>       Azure AD client ID [env: carminedesktop_CLIENT_ID]
+  --tenant-id <ID>       Azure AD tenant ID [env: carminedesktop_TENANT_ID]
+  --config <PATH>        Config file path [env: carminedesktop_CONFIG]
+  --log-level <LEVEL>    Log level (trace/debug/info/warn/error) [env: carminedesktop_LOG_LEVEL]
   --headless             Run without GUI (even if desktop feature is enabled)
   -h, --help             Print help
   -V, --version          Print version
@@ -82,7 +82,7 @@ Options:
 
 **Decision**: In `oauth.rs`, when `open::that()` fails (or when no display server is detected), print the auth URL to stdout and wait for the callback.
 
-**Rationale**: This enables headless auth in SSH sessions, Docker, and CI. The user copies the URL to any browser (even on a different machine), completes auth, and the localhost callback still works because the redirect goes to `http://localhost:{port}/callback` on the machine running CloudMount.
+**Rationale**: This enables headless auth in SSH sessions, Docker, and CI. The user copies the URL to any browser (even on a different machine), completes auth, and the localhost callback still works because the redirect goes to `http://localhost:{port}/callback` on the machine running carminedesktop.
 
 **Implementation**: The `open::that()` call already has error handling. Extend it to:
 1. Check `$DISPLAY` / `$WAYLAND_DISPLAY` (Linux) or always attempt `open::that()` (macOS/Windows)
@@ -96,27 +96,27 @@ Options:
 **Rationale**: This is the standard pattern for documenting available env vars. Developers copy it to `.env` and fill in their values.
 
 ```
-# CloudMount Development Configuration
+# carminedesktop Development Configuration
 # Copy this file to .env and fill in your values
 # See docs/azure-ad-setup.md for how to obtain these
 
-CLOUDMOUNT_CLIENT_ID=your-client-id-here
-CLOUDMOUNT_TENANT_ID=your-tenant-id-here
-# CLOUDMOUNT_LOG_LEVEL=debug
-# CLOUDMOUNT_CONFIG=/path/to/custom/config.toml
+carminedesktop_CLIENT_ID=your-client-id-here
+carminedesktop_TENANT_ID=your-tenant-id-here
+# carminedesktop_LOG_LEVEL=debug
+# carminedesktop_CONFIG=/path/to/custom/config.toml
 ```
 
 ### D7: Build-time env vars via option_env!()
 
-**Decision**: Use `option_env!()` for `CLOUDMOUNT_CLIENT_ID`, `CLOUDMOUNT_TENANT_ID`, and `CLOUDMOUNT_APP_NAME` at compile time, as an additional layer between `defaults.toml` and the hardcoded defaults.
+**Decision**: Use `option_env!()` for `carminedesktop_CLIENT_ID`, `carminedesktop_TENANT_ID`, and `carminedesktop_APP_NAME` at compile time, as an additional layer between `defaults.toml` and the hardcoded defaults.
 
 **Rationale**: CI/CD pipelines (GitHub Actions, GitLab CI) have native secret/variable management. `option_env!()` lets CI inject simple values without creating files. This is the cleanest path for credentials — secrets never touch a file, not even temporarily.
 
 **Implementation**: In `main.rs`, add:
 ```rust
-const BUILD_CLIENT_ID: Option<&str> = option_env!("CLOUDMOUNT_CLIENT_ID");
-const BUILD_TENANT_ID: Option<&str> = option_env!("CLOUDMOUNT_TENANT_ID");
-const BUILD_APP_NAME: Option<&str> = option_env!("CLOUDMOUNT_APP_NAME");
+const BUILD_CLIENT_ID: Option<&str> = option_env!("carminedesktop_CLIENT_ID");
+const BUILD_TENANT_ID: Option<&str> = option_env!("carminedesktop_TENANT_ID");
+const BUILD_APP_NAME: Option<&str> = option_env!("carminedesktop_APP_NAME");
 ```
 
 Resolution chain for `client_id` becomes:
@@ -124,13 +124,13 @@ Resolution chain for `client_id` becomes:
 CLI arg → runtime env var → build-time option_env → defaults.toml → DEFAULT_CLIENT_ID
 ```
 
-Note: runtime `CLOUDMOUNT_CLIENT_ID` (via clap env) and build-time `CLOUDMOUNT_CLIENT_ID` (via option_env) use the same variable name. This is fine because: at build time, if the var is set, it bakes in; at runtime, clap reads the current env. If both exist, the runtime value wins (clap parses it as a runtime override before we check the baked-in constant).
+Note: runtime `carminedesktop_CLIENT_ID` (via clap env) and build-time `carminedesktop_CLIENT_ID` (via option_env) use the same variable name. This is fine because: at build time, if the var is set, it bakes in; at runtime, clap reads the current env. If both exist, the runtime value wins (clap parses it as a runtime override before we check the baked-in constant).
 
-**Alternative considered**: Separate env var names for build-time (e.g., `CLOUDMOUNT_BUILD_CLIENT_ID`). Rejected — adds confusion. The same var name works naturally: set it during `cargo build` for embedding, set it at runtime for override.
+**Alternative considered**: Separate env var names for build-time (e.g., `carminedesktop_BUILD_CLIENT_ID`). Rejected — adds confusion. The same var name works naturally: set it during `cargo build` for embedding, set it at runtime for override.
 
 ### D8: defaults.toml.example + build.rs auto-copy
 
-**Decision**: Rename `build/defaults.toml` to `build/defaults.toml.example` (tracked in git), gitignore `build/defaults.toml`, and add a `build.rs` in `cloudmount-app` that copies `.example` to `defaults.toml` if the latter doesn't exist.
+**Decision**: Rename `build/defaults.toml` to `build/defaults.toml.example` (tracked in git), gitignore `build/defaults.toml`, and add a `build.rs` in `carminedesktop-app` that copies `.example` to `defaults.toml` if the latter doesn't exist.
 
 **Rationale**: Prevents accidental commit of org credentials. The `.example` file serves as documentation. `build.rs` ensures fresh clones compile without manual steps (the `include_str!` in `main.rs` still references `build/defaults.toml`, which `build.rs` creates from the template).
 
@@ -150,11 +150,11 @@ fn main() {
 
 ### D9: Config overlay pattern for org builds
 
-**Decision**: Document and support a "config overlay" pattern where a private org repo (GitLab or GitHub) clones the public CloudMount repo, injects org-specific config, and builds.
+**Decision**: Document and support a "config overlay" pattern where a private org repo (GitLab or GitHub) clones the public carminedesktop repo, injects org-specific config, and builds.
 
 **Pattern**:
 ```
-github.com/nyxa/cloudmount (public)
+github.com/nyxa/carminedesktop (public)
   └── Source code, defaults.toml.example, generic CI
 
 gitlab.company.com/you/carminedesktop-build (private, tiny)
@@ -168,7 +168,7 @@ gitlab.company.com/you/carminedesktop-build (private, tiny)
 The private repo's CI:
 1. Clones public repo at a specific tag
 2. Copies `defaults.toml` into `build/`
-3. Builds with `CLOUDMOUNT_CLIENT_ID` and `CLOUDMOUNT_TENANT_ID` env vars (picked up by `option_env!()`)
+3. Builds with `carminedesktop_CLIENT_ID` and `carminedesktop_TENANT_ID` env vars (picked up by `option_env!()`)
 4. Produces branded binary
 
 **Deliverable**: A `docs/org-build-guide.md` with step-by-step instructions and a template `.gitlab-ci.yml` and `.github/workflows/build.yml` for org builds.
@@ -187,7 +187,7 @@ The private repo's CI:
 
 **[Risk: Display detection is imperfect]** → `$DISPLAY` / `$WAYLAND_DISPLAY` covers Linux. macOS and Windows always have a display. For edge cases, the `open::that()` failure fallback catches the rest. The auth URL is always printed to debug logs regardless.
 
-**[Risk: option_env! and runtime env var name collision]** → Both use `CLOUDMOUNT_CLIENT_ID`. At build time, if set, the value is baked in. At runtime, clap reads the live env. Runtime always wins because clap resolves before we check the baked-in constant. Documented clearly in the resolution chain.
+**[Risk: option_env! and runtime env var name collision]** → Both use `carminedesktop_CLIENT_ID`. At build time, if set, the value is baked in. At runtime, clap reads the live env. Runtime always wins because clap resolves before we check the baked-in constant. Documented clearly in the resolution chain.
 
 **[Risk: build.rs adds complexity]** → The build.rs is ~10 lines and only copies a file if missing. It runs once per fresh clone, then never again (rerun-if-changed prevents re-execution). Minimal overhead.
 

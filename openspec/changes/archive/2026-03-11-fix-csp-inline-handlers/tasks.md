@@ -12,6 +12,6 @@
 
 ## 3. Verify
 
-- [x] 3.1 Confirm no `onclick=`, `onsubmit=`, or other inline `on<event>=` attributes remain in any `.html` file under `crates/cloudmount-app/dist/`
-- [x] 3.2 Run the UX reviewer agent against `crates/cloudmount-app/dist/` and confirm zero BLOCKED issues
+- [x] 3.1 Confirm no `onclick=`, `onsubmit=`, or other inline `on<event>=` attributes remain in any `.html` file under `crates/carminedesktop-app/dist/`
+- [x] 3.2 Run the UX reviewer agent against `crates/carminedesktop-app/dist/` and confirm zero BLOCKED issues
 fiolesystemsyn(0X800700A1àUNABLE_TO_MASK_PATHc

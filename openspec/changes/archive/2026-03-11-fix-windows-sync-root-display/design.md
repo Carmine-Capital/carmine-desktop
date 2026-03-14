@@ -2,12 +2,12 @@
 
 The Windows Cloud Files API requires each sync root to be registered with a `SyncRootInfo` before File Explorer will display it. That registration includes a display name (shown in the navigation pane) and an icon path (displayed next to it).
 
-Currently `register_sync_root()` in `crates/cloudmount-vfs/src/cfapi.rs` hardcodes both:
+Currently `register_sync_root()` in `crates/carminedesktop-vfs/src/cfapi.rs` hardcodes both:
 
-- **Display name**: `PROVIDER_NAME` = `"CloudMount"` for every mount, regardless of which library it represents.
+- **Display name**: `PROVIDER_NAME` = `"carminedesktop"` for every mount, regardless of which library it represents.
 - **Icon**: `%SystemRoot%\system32\imageres.dll,0` — index 0 in imageres.dll, which is a generic document icon that renders as a black square in the navigation pane on modern Windows.
 
-The `account_name` (derived from `mount_config.name`) already flows into `CfMountHandle::mount()` but is only forwarded to `build_sync_root_id()` for uniqueness; it is never passed to `register_sync_root()`, so the display name is always "CloudMount".
+The `account_name` (derived from `mount_config.name`) already flows into `CfMountHandle::mount()` but is only forwarded to `build_sync_root_id()` for uniqueness; it is never passed to `register_sync_root()`, so the display name is always "carminedesktop".
 
 A second compounding issue: the code only calls `register_sync_root()` when `is_registered` is false. Mounts already registered under the old buggy state are never corrected.
 
@@ -15,7 +15,7 @@ A second compounding issue: the code only calls `register_sync_root()` when `is_
 
 **Goals:**
 - Each mount's File Explorer label shows its user-visible name (e.g., "Adelya", "Alpha Nova (Apollo Sparks)").
-- Each mount's File Explorer icon shows the CloudMount application icon.
+- Each mount's File Explorer icon shows the carminedesktop application icon.
 - Already-registered sync roots (from prior buggy launches) are corrected on the next mount.
 
 **Non-Goals:**
@@ -37,13 +37,13 @@ A second compounding issue: the code only calls `register_sync_root()` when `is_
 
 The conditional `if !is_registered { register_sync_root(...) }` is replaced with an unconditional call. The Windows `CfRegisterSyncProvider` API is idempotent when called with `CF_REGISTER_FLAG_UPDATE`; the `cloud-filter` crate's `SyncRootId::register()` wraps this and will overwrite an existing registration with the new `SyncRootInfo`.
 
-**Why unconditional?** Users who already have broken "CloudMount" registrations from prior versions must have them corrected without needing to fully unmount and remount. Unconditional re-registration is the only way to achieve this without a migration step.
+**Why unconditional?** Users who already have broken "carminedesktop" registrations from prior versions must have them corrected without needing to fully unmount and remount. Unconditional re-registration is the only way to achieve this without a migration step.
 
 **Alternative considered**: Version-stamp the registration and re-register only when the version changes. Rejected — unnecessary complexity for a one-time correction.
 
 ### 3. Icon path resolved from the running executable
 
-The icon path is computed as `format!("{},0", current_exe_path)` where `current_exe_path` comes from `std::env::current_exe()`. Tauri embeds `icon.ico` into the Windows `.exe` at build time, so index 0 of the executable is the CloudMount icon.
+The icon path is computed as `format!("{},0", current_exe_path)` where `current_exe_path` comes from `std::env::current_exe()`. Tauri embeds `icon.ico` into the Windows `.exe` at build time, so index 0 of the executable is the carminedesktop icon.
 
 If `current_exe()` fails (unusual but possible in sandboxed environments), the code falls back to `%SystemRoot%\\system32\\shell32.dll,43` — the generic cloud folder icon in shell32 — rather than `imageres.dll,0` which renders incorrectly.
 
@@ -59,4 +59,4 @@ If `current_exe()` fails (unusual but possible in sandboxed environments), the c
 
 ## Migration Plan
 
-No migration step required. Fixes take effect on the next app launch: all mounted drives are registered (or re-registered) with the corrected display name and icon. Users already running the app will see the correct names as soon as they restart CloudMount.
+No migration step required. Fixes take effect on the next app launch: all mounted drives are registered (or re-registered) with the corrected display name and icon. Users already running the app will see the correct names as soon as they restart carminedesktop.

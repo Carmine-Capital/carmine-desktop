@@ -1,6 +1,6 @@
 ## Context
 
-After the `fix-cfapi-safety-parity` (49/54 tasks done) and `fix-vfs-residual-parity-gaps` (0/8 tasks done) changes are applied, six cross-platform defects remain unaddressed. These were found during a full review of `cloudmount-vfs/` and `cloudmount-app/`, verified against the current working tree.
+After the `fix-cfapi-safety-parity` (49/54 tasks done) and `fix-vfs-residual-parity-gaps` (0/8 tasks done) changes are applied, six cross-platform defects remain unaddressed. These were found during a full review of `carminedesktop-vfs/` and `carminedesktop-app/`, verified against the current working tree.
 
 Current state of each:
 

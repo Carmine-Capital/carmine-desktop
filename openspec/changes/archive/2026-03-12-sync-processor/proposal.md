@@ -4,7 +4,7 @@
 
 ## What Changes
 
-- New `SyncProcessor` module in `cloudmount-vfs` — a single tokio task that owns all upload lifecycle: debounce, dedup by inode, concurrency-bounded upload spawning, retry with backoff, and crash recovery on startup.
+- New `SyncProcessor` module in `carminedesktop-vfs` — a single tokio task that owns all upload lifecycle: debounce, dedup by inode, concurrency-bounded upload spawning, retry with backoff, and crash recovery on startup.
 - `flush_handle()` returns immediately after persisting to the writeback cache, sending a `SyncRequest::Flush` to the processor instead of uploading inline.
 - `flush_inode()` extracted from `CoreOps` method to a free function callable by both `CoreOps` (fallback) and the processor.
 - The `retry_pending_writes` background task (15s interval in `main.rs`) is removed — the processor's tick absorbs retry responsibility.
@@ -21,8 +21,8 @@
 
 ## Impact
 
-- **Code**: `crates/cloudmount-vfs/src/` — new `sync_processor.rs`, changes to `core_ops.rs` (extract `flush_inode`, add `SyncHandle` to `CoreOps`), changes to `pending.rs` (crash recovery reuse).
-- **Code**: `crates/cloudmount-app/src/main.rs` — processor spawned in `start_mount`, shutdown in `stop_mount`, `retry_pending_writes` task removed.
+- **Code**: `crates/carminedesktop-vfs/src/` — new `sync_processor.rs`, changes to `core_ops.rs` (extract `flush_inode`, add `SyncHandle` to `CoreOps`), changes to `pending.rs` (crash recovery reuse).
+- **Code**: `crates/carminedesktop-app/src/main.rs` — processor spawned in `start_mount`, shutdown in `stop_mount`, `retry_pending_writes` task removed.
 - **Backends**: FUSE and WinFsp backends unchanged — they already delegate to `CoreOps::flush_handle()`.
 - **Behavior change**: `flush`/`close` returns before upload completes. Applications see success immediately; upload failures surface via `VfsEvent` notifications and are retried by the processor.
 - **Dependencies**: No new crate dependencies (uses existing `tokio::sync::mpsc`, `tokio::sync::Semaphore`, `tokio::sync::watch`).

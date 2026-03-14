@@ -5,7 +5,7 @@ The system SHALL authenticate users via OAuth2 Authorization Code Flow with PKCE
 
 #### Scenario: First-time login
 - **WHEN** the user clicks "Sign In" and has no existing tokens
-- **THEN** the system invokes the injected URL opener with the Microsoft OAuth2 authorize endpoint (`login.microsoftonline.com/common/oauth2/v2.0/authorize`) with PKCE challenge, the official CloudMount client_id, redirect_uri (http://localhost:{dynamic_port}/callback), and scopes (User.Read, Files.ReadWrite.All, Sites.Read.All, offline_access); the `common` endpoint supports both M365 organizational accounts and personal Microsoft accounts (MSA)
+- **THEN** the system invokes the injected URL opener with the Microsoft OAuth2 authorize endpoint (`login.microsoftonline.com/common/oauth2/v2.0/authorize`) with PKCE challenge, the official carminedesktop client_id, redirect_uri (http://localhost:{dynamic_port}/callback), and scopes (User.Read, Files.ReadWrite.All, Sites.Read.All, offline_access); the `common` endpoint supports both M365 organizational accounts and personal Microsoft accounts (MSA)
 
 #### Scenario: Successful authentication callback
 - **WHEN** the user completes login in the browser and is redirected to the localhost callback with an authorization code
@@ -52,7 +52,7 @@ The system SHALL authenticate users via OAuth2 Authorization Code Flow with PKCE
 - **THEN** the system always attempts to open the browser via the injected opener; if it fails unexpectedly, it falls back to printing the URL to stderr
 
 ### Requirement: Client ID resolution
-The system SHALL use the official CloudMount client ID (`8ebe3ef7-f509-4146-8fef-c9b5d7c22252`) as a hardcoded constant. A `--client-id` CLI argument MAY override this value for development and testing purposes. No build-time env vars or packaged defaults participate in client ID resolution.
+The system SHALL use the official carminedesktop client ID (`8ebe3ef7-f509-4146-8fef-c9b5d7c22252`) as a hardcoded constant. A `--client-id` CLI argument MAY override this value for development and testing purposes. No build-time env vars or packaged defaults participate in client ID resolution.
 
 #### Scenario: Client ID from CLI argument (development override)
 - **WHEN** the `--client-id` CLI argument is provided
@@ -60,10 +60,10 @@ The system SHALL use the official CloudMount client ID (`8ebe3ef7-f509-4146-8fef
 
 #### Scenario: No CLI override — official client ID used
 - **WHEN** no `--client-id` CLI argument is provided
-- **THEN** the OAuth2 flow uses the hardcoded official CloudMount client ID constant
+- **THEN** the OAuth2 flow uses the hardcoded official carminedesktop client ID constant
 
 ## REMOVED Requirements
 
 ### Requirement: Client ID resolution (four-layer chain)
-**Reason**: The four-layer resolution (CLI > env var > build-time option_env! > packaged defaults > built-in default) is replaced by the simpler two-option resolution above. `CLOUDMOUNT_CLIENT_ID` env var and `option_env!()` build-time embedding are removed.
+**Reason**: The four-layer resolution (CLI > env var > build-time option_env! > packaged defaults > built-in default) is replaced by the simpler two-option resolution above. `carminedesktop_CLIENT_ID` env var and `option_env!()` build-time embedding are removed.
 **Migration**: N/A. The official client ID is now a compile-time constant.

@@ -39,7 +39,7 @@ The system SHALL resolve the client_id using a four-layer precedence chain: CLI 
 - **THEN** the OAuth2 flow uses this client_id, overriding all other sources
 
 #### Scenario: Client ID from environment variable
-- **WHEN** `CLOUDMOUNT_CLIENT_ID` is set and no `--client-id` CLI argument is provided
+- **WHEN** `carminedesktop_CLIENT_ID` is set and no `--client-id` CLI argument is provided
 - **THEN** the OAuth2 flow uses the environment variable value
 
 #### Scenario: Packaged client_id

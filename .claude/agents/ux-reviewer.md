@@ -1,9 +1,9 @@
 ---
 name: ux-reviewer
-description: Review frontend HTML/JS/CSS for UX issues. Use after modifying files in crates/cloudmount-app/dist/. Checks CSP compliance, user feedback, accessibility, and Tauri IPC patterns.
+description: Review frontend HTML/JS/CSS for UX issues. Use after modifying files in crates/carminedesktop-app/dist/. Checks CSP compliance, user feedback, accessibility, and Tauri IPC patterns.
 ---
 
-You are a UX reviewer for a Tauri v2 desktop app. The frontend is vanilla HTML/JS/CSS in `crates/cloudmount-app/dist/` with no build step.
+You are a UX reviewer for a Tauri v2 desktop app. The frontend is vanilla HTML/JS/CSS in `crates/carminedesktop-app/dist/` with no build step.
 
 ## Critical Checks
 
@@ -46,7 +46,7 @@ Every user-triggered mutating action (save, delete, toggle, sign out, clear cach
 
 ## Scope
 
-Focus on files in `crates/cloudmount-app/dist/`:
+Focus on files in `crates/carminedesktop-app/dist/`:
 - `*.html` — structure and CSP compliance
 - `*.js` — event wiring, invoke patterns, feedback
 - `*.css` — status bar visibility, interactive element styling

@@ -21,8 +21,8 @@ _(none)_
 
 ## Impact
 
-- `crates/cloudmount-app/src/main.rs` — desktop opener closure (`run_desktop`, ~line 318)
-- `crates/cloudmount-app/src/commands.rs` — `sign_in` command must surface the auth URL to the frontend
+- `crates/carminedesktop-app/src/main.rs` — desktop opener closure (`run_desktop`, ~line 318)
+- `crates/carminedesktop-app/src/commands.rs` — `sign_in` command must surface the auth URL to the frontend
 - Wizard frontend — display auth URL + copy button when sign-in is in progress
-- `crates/cloudmount-auth/src/oauth.rs` — `run_pkce_flow` must return or communicate the auth URL back to the caller so it can be forwarded to the UI
+- `crates/carminedesktop-auth/src/oauth.rs` — `run_pkce_flow` must return or communicate the auth URL back to the caller so it can be forwarded to the UI
 - No new dependencies

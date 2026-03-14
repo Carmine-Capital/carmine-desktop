@@ -33,7 +33,7 @@ The `UNMOUNT_FLUSH_TIMEOUT` constant (30 s) is also independently declared in bo
 
 ### D1 — Free async function in a new `pending.rs` module
 
-**Chosen:** Add `crates/cloudmount-vfs/src/pending.rs` exporting:
+**Chosen:** Add `crates/carminedesktop-vfs/src/pending.rs` exporting:
 
 ```rust
 pub(crate) async fn flush_pending(

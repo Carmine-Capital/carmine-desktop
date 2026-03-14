@@ -1,6 +1,6 @@
 ## Context
 
-CloudMount is a system tray app (Tauri v2) that mounts OneDrive/SharePoint as local filesystems. Branded builds (e.g., Carmine Drive) are produced by private overlay repos that inject org config and build with `cargo tauri build`. Currently, the build pipeline produces raw debug binaries with `cargo build --release` — no installers, no signing, no update mechanism.
+carminedesktop is a system tray app (Tauri v2) that mounts OneDrive/SharePoint as local filesystems. Branded builds (e.g., Carmine Drive) are produced by private overlay repos that inject org config and build with `cargo tauri build`. Currently, the build pipeline produces raw debug binaries with `cargo build --release` — no installers, no signing, no update mechanism.
 
 The primary deployment target is Carmine Capital (~40 users, Windows/macOS/Linux). Updates must be seamless — no manual downloads, no walking to desks.
 
@@ -35,7 +35,7 @@ Tauri v2's built-in updater plugin handles the complete update lifecycle: endpoi
 
 ### D2: Update checks from Rust backend (not JavaScript frontend)
 
-CloudMount is primarily a system tray app. The settings/wizard webview is shown rarely. Update checks must run even when no webview is open. The `tauri-plugin-updater` exposes a Rust API via `UpdaterExt` trait that works without any frontend.
+carminedesktop is primarily a system tray app. The settings/wizard webview is shown rarely. Update checks must run even when no webview is open. The `tauri-plugin-updater` exposes a Rust API via `UpdaterExt` trait that works without any frontend.
 
 ```rust
 use tauri_plugin_updater::UpdaterExt;
@@ -105,9 +105,9 @@ Tauri uses ed25519 signatures (not OS code signing). Each branded build has its 
 
 The `cargo tauri build` command automatically signs bundles when these env vars are set, producing `.sig` files alongside each installer.
 
-### D8: New `update.rs` module in `cloudmount-app`
+### D8: New `update.rs` module in `carminedesktop-app`
 
-Update logic lives in a new `crates/cloudmount-app/src/update.rs` module (gated behind `#[cfg(feature = "desktop")]`):
+Update logic lives in a new `crates/carminedesktop-app/src/update.rs` module (gated behind `#[cfg(feature = "desktop")]`):
 - `check_for_update(app: &AppHandle)` — polls the endpoint, returns update info
 - `spawn_update_checker(app: AppHandle)` — background task: startup delay + periodic checks
 - Integration with tray menu for manual check and "Restart to Update" item

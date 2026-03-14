@@ -24,7 +24,7 @@ Silent failures and missing confirmations across all async and destructive opera
 
 ## Impact
 
-- `crates/cloudmount-app/dist/settings.html`: all JavaScript functions (`saveGeneral`, `saveAdvanced`, `toggleMount`, `removeMount`, `signOut`, `clearCache`) plus new CSS and toast/status DOM.
-- `crates/cloudmount-app/src/tray.rs`: `handle_menu_event` `"sign_out"` branch — add Tauri `dialog::blocking::confirm` (or async equivalent) before spawning `sign_out`.
+- `crates/carminedesktop-app/dist/settings.html`: all JavaScript functions (`saveGeneral`, `saveAdvanced`, `toggleMount`, `removeMount`, `signOut`, `clearCache`) plus new CSS and toast/status DOM.
+- `crates/carminedesktop-app/src/tray.rs`: `handle_menu_event` `"sign_out"` branch — add Tauri `dialog::blocking::confirm` (or async equivalent) before spawning `sign_out`.
 - No new Rust dependencies required if using Tauri's built-in dialog plugin (`tauri-plugin-dialog`); confirm that it is already in scope or add it to workspace dependencies.
 - No changes to backend commands, cache, Graph, or VFS layers.

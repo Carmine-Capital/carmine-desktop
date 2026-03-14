@@ -1,10 +1,10 @@
 ## Why
 
-CloudMount branded builds (like Carmine Drive) need to deliver updates to ~40 users without manual intervention. Currently the build pipeline produces raw binaries with no installer packaging and no update mechanism. Users would need to manually download and replace binaries for every release. Adding auto-update support is a prerequisite for production deployment.
+carminedesktop branded builds (like Carmine Drive) need to deliver updates to ~40 users without manual intervention. Currently the build pipeline produces raw binaries with no installer packaging and no update mechanism. Users would need to manually download and replace binaries for every release. Adding auto-update support is a prerequisite for production deployment.
 
 ## What Changes
 
-- Add `tauri-plugin-updater` dependency to `cloudmount-app`
+- Add `tauri-plugin-updater` dependency to `carminedesktop-app`
 - Configure the Tauri updater in `tauri.conf.json` with a placeholder endpoint URL (branded builds override this)
 - Register the updater plugin in the Tauri builder setup
 - Add update check logic: check on launch + periodic checks
@@ -25,7 +25,7 @@ CloudMount branded builds (like Carmine Drive) need to deliver updates to ~40 us
 
 ## Impact
 
-- **Dependencies**: `tauri-plugin-updater` added to workspace and `cloudmount-app`
+- **Dependencies**: `tauri-plugin-updater` added to workspace and `carminedesktop-app`
 - **Code**: `main.rs` (plugin registration), `tray.rs` (menu item), new update check module
 - **Config**: `tauri.conf.json` gains `plugins.updater` section
 - **Build pipeline**: Branded repos switch from `cargo build` to `cargo tauri build`, add signing key management

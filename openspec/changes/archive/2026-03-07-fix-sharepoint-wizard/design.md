@@ -1,6 +1,6 @@
 ## Context
 
-CloudMount's backend for SharePoint is complete: `search_sites`, `list_drives`, and `add_mount` commands are all implemented, registered in `invoke_handler!`, and tested. The gap is entirely in the frontend.
+carminedesktop's backend for SharePoint is complete: `search_sites`, `list_drives`, and `add_mount` commands are all implemented, registered in `invoke_handler!`, and tested. The gap is entirely in the frontend.
 
 Two entry points for adding a mount exist, both broken:
 

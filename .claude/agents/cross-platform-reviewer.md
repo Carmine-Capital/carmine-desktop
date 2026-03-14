@@ -29,4 +29,4 @@ When reviewing changes to platform-gated code (`winfsp_fs.rs`, Windows-only modu
 - **collapsible_if / collapsible_else_if** — nested if statements that can be collapsed
 - **single_match** — `match` with one arm + wildcard that should be `if let`
 
-Focus on `crates/cloudmount-vfs/` and `crates/cloudmount-app/`. Report issues concisely.
+Focus on `crates/carminedesktop-vfs/` and `crates/carminedesktop-app/`. Report issues concisely.

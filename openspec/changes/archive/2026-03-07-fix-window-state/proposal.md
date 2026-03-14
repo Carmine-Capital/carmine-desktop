@@ -22,7 +22,7 @@ None.
 
 ## Impact
 
-- `crates/cloudmount-app/src/tray.rs` — `open_or_focus_window` function
-- `crates/cloudmount-app/src/commands.rs` — `sign_out` function (line 169)
-- `crates/cloudmount-app/dist/wizard.html` — `cancelSignIn` function
+- `crates/carminedesktop-app/src/tray.rs` — `open_or_focus_window` function
+- `crates/carminedesktop-app/src/commands.rs` — `sign_out` function (line 169)
+- `crates/carminedesktop-app/dist/wizard.html` — `cancelSignIn` function
 - `openspec/specs/tray-app/spec.md` — window refresh and sign-out reload requirements

@@ -1,6 +1,6 @@
 ## Context
 
-CloudMount has a working multi-platform CI (`ci.yml`) that checks, builds, and tests on Linux, macOS, and Windows. The Tauri configuration already declares bundle targets (deb, AppImage, DMG, MSI) and includes `tauri-plugin-updater` with empty endpoint/pubkey fields. The auto-updater application code is fully implemented but inert — it needs a real endpoint and signing key to function.
+carminedesktop has a working multi-platform CI (`ci.yml`) that checks, builds, and tests on Linux, macOS, and Windows. The Tauri configuration already declares bundle targets (deb, AppImage, DMG, MSI) and includes `tauri-plugin-updater` with empty endpoint/pubkey fields. The auto-updater application code is fully implemented but inert — it needs a real endpoint and signing key to function.
 
 The repository is being made public, so GitHub Releases on the same repo can serve as the distribution channel.
 
@@ -67,5 +67,5 @@ The repository is being made public, so GitHub Releases on the same repo can ser
 
 - **Unsigned binaries trigger OS warnings** → Document the "how to install unsigned" flow per platform in release notes. Plan OS signing as a follow-up change.
 - **macFUSE not bundled in DMG** → macFUSE has redistribution restrictions. Users must install macFUSE separately. Document this as a prerequisite in release notes.
-- **AppImage + FUSE tension** → AppImage traditionally requires FUSE2 to mount itself, while CloudMount uses FUSE3. Test that AppImage works on systems with only FUSE3. Fallback: `--appimage-extract-and-run` flag.
+- **AppImage + FUSE tension** → AppImage traditionally requires FUSE2 to mount itself, while carminedesktop uses FUSE3. Test that AppImage works on systems with only FUSE3. Fallback: `--appimage-extract-and-run` flag.
 - **Tag/version mismatch** → The workflow should verify that the git tag matches `tauri.conf.json` version to catch mistakes early. Fail the build if they don't match.

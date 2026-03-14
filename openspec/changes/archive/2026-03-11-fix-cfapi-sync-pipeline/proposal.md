@@ -1,6 +1,6 @@
 ## Why
 
-On Windows, local file operations in the CloudMount sync root (create, modify, copy-in, internal copy, rename) never synchronize to OneDrive. The sync-pending icon appears in Explorer but uploads never happen, making the Windows mount effectively read-only for all local mutations. Five independent bugs in the CfApi sync pipeline compound to produce this failure.
+On Windows, local file operations in the carminedesktop sync root (create, modify, copy-in, internal copy, rename) never synchronize to OneDrive. The sync-pending icon appears in Explorer but uploads never happen, making the Windows mount effectively read-only for all local mutations. Five independent bugs in the CfApi sync pipeline compound to produce this failure.
 
 ## What Changes
 
@@ -22,8 +22,8 @@ On Windows, local file operations in the CloudMount sync root (create, modify, c
 
 ## Impact
 
-- **Code**: `crates/cloudmount-vfs/src/cfapi.rs` (watcher, timer, unmod fix, ticket fix, placeholder conversion), `crates/cloudmount-vfs/src/core_ops.rs` (placeholder conversion hook after flush_inode)
-- **Tests**: New integration tests in `crates/cloudmount-vfs/tests/cfapi_integration.rs` for copy-in, internal copy, and rename sync scenarios
+- **Code**: `crates/carminedesktop-vfs/src/cfapi.rs` (watcher, timer, unmod fix, ticket fix, placeholder conversion), `crates/carminedesktop-vfs/src/core_ops.rs` (placeholder conversion hook after flush_inode)
+- **Tests**: New integration tests in `crates/carminedesktop-vfs/tests/cfapi_integration.rs` for copy-in, internal copy, and rename sync scenarios
 - **Dependencies**: No new external dependencies; uses `windows-sys` already available transitively
 - **Platforms**: All changes gated with `#[cfg(target_os = "windows")]`; no impact on FUSE (Linux/macOS)
 - **Supersedes**: The existing `fix-windows-cfapi-local-sync` change, which partially addressed this problem

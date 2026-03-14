@@ -28,10 +28,10 @@ None.
 
 ## Impact
 
-- **cloudmount-core** (config.rs, types.rs): Remove `CollabDefaultAction` enum, `CollabOpenResponse::Cancel`, `has_local_changes` from `CollabOpenRequest`, simplify `CollaborativeOpenConfig`
-- **cloudmount-vfs** (core_ops.rs, fuse_fs.rs, winfsp_fs.rs): Remove `OperationCancelled` error variant and mappings, remove `Cancel` arm in CollabGate, stop computing `has_local_changes`
-- **cloudmount-app** (main.rs, commands.rs, tray.rs, notify.rs): Remove `show_collab_dialog()`, `resolve_collab_preference()`, collab config commands, integration toggle, integration notifications. Simplify `spawn_collab_handler()` to always-online path.
-- **cloudmount-app** (linux_integrations.rs, windows_integrations.rs, macos_integrations.rs): Delete modules entirely
-- **cloudmount-app/scripts/**: Delete all 7 context menu scripts
-- **cloudmount-app/dist/** (settings.html, settings.js): Remove "Collaborative Editing" settings section
-- **cloudmount-vfs/tests/**: Update CollabGate tests to remove Cancel/dialog/preference scenarios
+- **carminedesktop-core** (config.rs, types.rs): Remove `CollabDefaultAction` enum, `CollabOpenResponse::Cancel`, `has_local_changes` from `CollabOpenRequest`, simplify `CollaborativeOpenConfig`
+- **carminedesktop-vfs** (core_ops.rs, fuse_fs.rs, winfsp_fs.rs): Remove `OperationCancelled` error variant and mappings, remove `Cancel` arm in CollabGate, stop computing `has_local_changes`
+- **carminedesktop-app** (main.rs, commands.rs, tray.rs, notify.rs): Remove `show_collab_dialog()`, `resolve_collab_preference()`, collab config commands, integration toggle, integration notifications. Simplify `spawn_collab_handler()` to always-online path.
+- **carminedesktop-app** (linux_integrations.rs, windows_integrations.rs, macos_integrations.rs): Delete modules entirely
+- **carminedesktop-app/scripts/**: Delete all 7 context menu scripts
+- **carminedesktop-app/dist/** (settings.html, settings.js): Remove "Collaborative Editing" settings section
+- **carminedesktop-vfs/tests/**: Update CollabGate tests to remove Cancel/dialog/preference scenarios

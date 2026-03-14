@@ -1,9 +1,9 @@
 ## 1. Rust: open_wizard command
 
-- [x] 1.1 Ensure `open_or_focus_window` in `crates/cloudmount-app/src/tray.rs` is `pub(crate)` (or `pub`) so it can be called from `commands.rs`
-- [x] 1.2 Add `#[tauri::command] pub async fn open_wizard(app: tauri::AppHandle) -> Result<(), String>` to `crates/cloudmount-app/src/commands.rs` that calls `crate::tray::open_or_focus_window(&app, "wizard", "Setup", "wizard.html").map_err(|e| e.to_string())`
-- [x] 1.3 Register `open_wizard` in the `invoke_handler!` macro in `crates/cloudmount-app/src/main.rs`
-- [x] 1.4 Run `cargo build -p cloudmount-app --features desktop` and confirm it compiles cleanly
+- [x] 1.1 Ensure `open_or_focus_window` in `crates/carminedesktop-app/src/tray.rs` is `pub(crate)` (or `pub`) so it can be called from `commands.rs`
+- [x] 1.2 Add `#[tauri::command] pub async fn open_wizard(app: tauri::AppHandle) -> Result<(), String>` to `crates/carminedesktop-app/src/commands.rs` that calls `crate::tray::open_or_focus_window(&app, "wizard", "Setup", "wizard.html").map_err(|e| e.to_string())`
+- [x] 1.3 Register `open_wizard` in the `invoke_handler!` macro in `crates/carminedesktop-app/src/main.rs`
+- [x] 1.4 Run `cargo build -p carminedesktop-app --features desktop` and confirm it compiles cleanly
 
 ## 2. settings.html — Fix addMount() stub
 

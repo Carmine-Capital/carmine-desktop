@@ -1,6 +1,6 @@
 ## Context
 
-All three bugs live exclusively in `crates/cloudmount-app/src/tray.rs`. The file is ~240 lines and already holds the `AppState` atomics (`authenticated`, `auth_degraded`) that are needed for the fixes. No new state, no new crates, no schema migrations.
+All three bugs live exclusively in `crates/carminedesktop-app/src/tray.rs`. The file is ~240 lines and already holds the `AppState` atomics (`authenticated`, `auth_degraded`) that are needed for the fixes. No new state, no new crates, no schema migrations.
 
 Current behavior:
 

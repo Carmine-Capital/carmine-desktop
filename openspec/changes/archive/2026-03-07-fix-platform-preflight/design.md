@@ -1,6 +1,6 @@
 ## Context
 
-CloudMount runs on Linux, macOS, and Windows. Each platform has a distinct class of startup failures that the current code either swallows silently or emits only to the logger:
+carminedesktop runs on Linux, macOS, and Windows. Each platform has a distinct class of startup failures that the current code either swallows silently or emits only to the logger:
 
 1. **Windows + `windows_subsystem = "windows"`**: The `#![cfg_attr(all(not(debug_assertions), feature = "desktop"), windows_subsystem = "windows")]` attribute detaches the process from its console in release builds. Any `eprintln!` call at the `preflight_checks` failure site writes to a handle that does not exist. The process exits with code 1 and the window vanishes with no trace visible to the user.
 

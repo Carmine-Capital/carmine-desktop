@@ -1,6 +1,6 @@
 ## Context
 
-CfApi integration tests share a single sync root ID (`CloudMount!<SID>!`) across all 6 tests. When `cargo test` runs them in parallel, only the first test to call `register()` gets a working sync root. The remaining tests call `is_registered()`, see `true`, skip registration, and connect to their own paths — but Windows never dispatches callbacks for those paths because the sync root is registered elsewhere. `Session::connect()` succeeds silently on non-registered paths, making the failure invisible at mount time and only surfacing as empty placeholders or "file not found" errors downstream.
+CfApi integration tests share a single sync root ID (`carminedesktop!<SID>!`) across all 6 tests. When `cargo test` runs them in parallel, only the first test to call `register()` gets a working sync root. The remaining tests call `is_registered()`, see `true`, skip registration, and connect to their own paths — but Windows never dispatches callbacks for those paths because the sync root is registered elsewhere. `Session::connect()` succeeds silently on non-registered paths, making the failure invisible at mount time and only surfacing as empty placeholders or "file not found" errors downstream.
 
 The `cloud-filter` crate's `SyncRootIdBuilder` supports an `account_name` field that's currently unused. The sync root ID format is `provider-id!security-id!account-name`. By setting a unique `account_name` per mount, each mount gets its own sync root registration.
 
@@ -20,7 +20,7 @@ The `cloud-filter` crate's `SyncRootIdBuilder` supports an `account_name` field 
 
 ### D1: Use `account_name` field for sync root discrimination
 
-The `SyncRootIdBuilder` already supports `.account_name()` which becomes the third component of the sync root ID: `CloudMount!<SID>!<account_name>`.
+The `SyncRootIdBuilder` already supports `.account_name()` which becomes the third component of the sync root ID: `carminedesktop!<SID>!<account_name>`.
 
 **Alternatives considered:**
 - **Separate provider name per mount** — Would work but provider name has a 255-char limit and is meant to identify the application, not individual mounts
@@ -46,6 +46,6 @@ The `cfapi_browse_populates_placeholders` test has no delay between `read_dir` a
 
 ## Risks / Trade-offs
 
-- [API surface change] `CfMountHandle::mount()` gains a required `account_name` parameter → callers in `cloudmount-app` must be updated. Low risk since there's only one call site.
+- [API surface change] `CfMountHandle::mount()` gains a required `account_name` parameter → callers in `carminedesktop-app` must be updated. Low risk since there's only one call site.
 - [Sync root cleanup] Each test now registers a unique sync root that must be unregistered on teardown. Current teardown already calls `unmount()` → `unregister()`, so this is handled. Risk: if a test panics before teardown, orphaned sync roots accumulate. Mitigation: the `Drop` impl on `CfTestFixture` already handles this.
 - [Polling in tests] The retry loop adds complexity but is strictly better than fixed sleeps or no-waits. Timeout is generous (2s) to avoid flakiness.

@@ -23,10 +23,10 @@ Three UI interactions are silently broken: Sign Out and Remove Mount buttons do 
 
 ## Impact
 
-- `crates/cloudmount-app/dist/settings.js` — replace `window.confirm()` calls
-- `crates/cloudmount-app/dist/wizard.js` — add auth check in `init()`, expose `goToAddMount()` helper
-- `crates/cloudmount-app/src/commands.rs` — add `is_authenticated` command, register in invoke handler
-- `crates/cloudmount-app/src/main.rs` — register new command in `invoke_handler!`
-- `crates/cloudmount-app/src/tray.rs` — call `win.eval("goToAddMount()")` when focusing existing wizard for add-mount
-- `crates/cloudmount-app/capabilities/default.json` — add `dialog:allow-confirm`
+- `crates/carminedesktop-app/dist/settings.js` — replace `window.confirm()` calls
+- `crates/carminedesktop-app/dist/wizard.js` — add auth check in `init()`, expose `goToAddMount()` helper
+- `crates/carminedesktop-app/src/commands.rs` — add `is_authenticated` command, register in invoke handler
+- `crates/carminedesktop-app/src/main.rs` — register new command in `invoke_handler!`
+- `crates/carminedesktop-app/src/tray.rs` — call `win.eval("goToAddMount()")` when focusing existing wizard for add-mount
+- `crates/carminedesktop-app/capabilities/default.json` — add `dialog:allow-confirm`
 - No new dependencies; `tauri-plugin-dialog` is already a workspace dependency

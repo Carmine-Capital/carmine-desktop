@@ -62,7 +62,7 @@ The inode is still needed for `read_range_direct`. After extracting the item ID 
 
 ## Migration Plan
 
-1. Change `fetch_data` in `crates/cloudmount-vfs/src/cfapi.rs`:
+1. Change `fetch_data` in `crates/carminedesktop-vfs/src/cfapi.rs`:
    - Replace the `resolve_path` lookup with `file_blob()` decode + inode table lookup.
    - Change all `return Ok(())` error returns to `return Err(CloudErrorKind::Unsuccessful)`.
    - Keep the `write_at` loop; on loop error, return `Err(CloudErrorKind::Unsuccessful)`.

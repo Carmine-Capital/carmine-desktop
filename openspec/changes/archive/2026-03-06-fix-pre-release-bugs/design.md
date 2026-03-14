@@ -1,6 +1,6 @@
 ## Context
 
-CloudMount's 6 crates are implemented and tested, but a pre-release audit revealed 5 issues blocking CI and packaging. The fixes span 3 crates (`cloudmount-auth`, `cloudmount-cache`, `cloudmount-app`) plus build assets. The most architecturally interesting decisions are the token storage verification strategy and how headless mode reuses the desktop lifecycle without Tauri.
+carminedesktop's 6 crates are implemented and tested, but a pre-release audit revealed 5 issues blocking CI and packaging. The fixes span 3 crates (`carminedesktop-auth`, `carminedesktop-cache`, `carminedesktop-app`) plus build assets. The most architecturally interesting decisions are the token storage verification strategy and how headless mode reuses the desktop lifecycle without Tauri.
 
 ## Goals / Non-Goals
 
@@ -105,7 +105,7 @@ run_headless(packaged, user_config, effective)
 
 **Problem**: `tauri.conf.json` references 4 icon files in `icons/` that don't exist. The Tauri bundler requires them to build installers.
 
-**Decision**: The user provided a source SVG icon at `crates/cloudmount-app/icons/icon.svg`. Convert it to the required platform formats:
+**Decision**: The user provided a source SVG icon at `crates/carminedesktop-app/icons/icon.svg`. Convert it to the required platform formats:
 - `icons/32x32.png` — 32×32 PNG (tray icon, small contexts)
 - `icons/128x128.png` — 128×128 PNG (app list, about dialogs)
 - `icons/icon.icns` — macOS app icon (multi-resolution bundle)

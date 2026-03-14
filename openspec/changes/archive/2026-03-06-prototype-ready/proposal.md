@@ -1,12 +1,12 @@
 ## Why
 
-CloudMount's code is functionally complete — all 6 crates compile, 48+ tests pass, headless and desktop modes are fully implemented. But a developer cloning the repo today cannot actually test the application. The placeholder client ID (`00000000-...`) causes a silent 120s auth timeout, there are no CLI arguments (not even `--help`), system dependencies aren't validated at startup, and there's no runtime way to provide Azure AD credentials without recompiling. The gap between "compiles" and "testable prototype" must be closed.
+carminedesktop's code is functionally complete — all 6 crates compile, 48+ tests pass, headless and desktop modes are fully implemented. But a developer cloning the repo today cannot actually test the application. The placeholder client ID (`00000000-...`) causes a silent 120s auth timeout, there are no CLI arguments (not even `--help`), system dependencies aren't validated at startup, and there's no runtime way to provide Azure AD credentials without recompiling. The gap between "compiles" and "testable prototype" must be closed.
 
 ## What Changes
 
 - **Runtime configuration override chain**: Add a 4-layer config resolution — CLI args > env vars > user config.toml > build/defaults.toml > hardcoded defaults — so developers can provide client_id/tenant_id without recompiling.
 - **CLI argument parsing**: Add `clap`-based CLI with `--help`, `--version`, `--client-id`, `--tenant-id`, `--config`, `--log-level`, and `--headless` flags.
-- **`.env` file support**: Load `CLOUDMOUNT_*` env vars from a `.env` file in the working directory (or `build/.env`) via `dotenvy`, for developer convenience.
+- **`.env` file support**: Load `carminedesktop_*` env vars from a `.env` file in the working directory (or `build/.env`) via `dotenvy`, for developer convenience.
 - **Startup validation**: Detect placeholder client ID before attempting auth and exit with a clear error message pointing to setup docs. Check FUSE availability on Linux/macOS at startup.
 - **Auth URL fallback**: When no display server is detected (SSH, Docker, CI), print the OAuth URL to stdout instead of silently failing to open a browser.
 - **Developer documentation**: Add `DEVELOPING.md` with system deps, Azure AD setup, build commands, and first-run expectations.
@@ -30,9 +30,9 @@ CloudMount's code is functionally complete — all 6 crates compile, 48+ tests p
 
 ## Impact
 
-- **cloudmount-app**: Major changes — new `clap` CLI, `.env` loading, startup validation, `build.rs` for defaults.toml auto-copy, `option_env!()` for build-time injection, restructured `main()` flow.
-- **cloudmount-core**: Config system gains env var and CLI override merging in `EffectiveConfig::build()`.
-- **cloudmount-auth**: `oauth.rs` gains display detection and URL-to-stdout fallback.
+- **carminedesktop-app**: Major changes — new `clap` CLI, `.env` loading, startup validation, `build.rs` for defaults.toml auto-copy, `option_env!()` for build-time injection, restructured `main()` flow.
+- **carminedesktop-core**: Config system gains env var and CLI override merging in `EffectiveConfig::build()`.
+- **carminedesktop-auth**: `oauth.rs` gains display detection and URL-to-stdout fallback.
 - **New dependencies**: `clap` (CLI parsing), `dotenvy` (`.env` file loading) — both added to workspace root.
-- **New files**: `DEVELOPING.md` (developer guide), `.env.example` (template for credentials), `build/defaults.toml.example` (replaces tracked `defaults.toml`), `cloudmount-app/build.rs` (auto-copy defaults), `docs/org-build-guide.md` (private repo setup guide).
+- **New files**: `DEVELOPING.md` (developer guide), `.env.example` (template for credentials), `build/defaults.toml.example` (replaces tracked `defaults.toml`), `carminedesktop-app/build.rs` (auto-copy defaults), `docs/org-build-guide.md` (private repo setup guide).
 - **Documentation**: `CLAUDE.md` updated to fix stale headless mode notes and document new build patterns.

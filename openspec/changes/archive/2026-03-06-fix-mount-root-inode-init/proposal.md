@@ -19,8 +19,8 @@ When a drive is mounted, the FUSE root inode (inode 1) is never associated with 
 
 ## Impact
 
-- `crates/cloudmount-vfs/src/mount.rs` — `MountHandle::mount` gains a Graph call before `spawn_mount2`
-- `crates/cloudmount-vfs/src/cfapi.rs` — `CfMountHandle::mount` gains the same initialization
-- `crates/cloudmount-graph/src/client.rs` — may need a `get_drive_root` helper if not already present
-- `crates/cloudmount-app/src/main.rs` — `start_mount` signature may change to propagate initialization errors
+- `crates/carminedesktop-vfs/src/mount.rs` — `MountHandle::mount` gains a Graph call before `spawn_mount2`
+- `crates/carminedesktop-vfs/src/cfapi.rs` — `CfMountHandle::mount` gains the same initialization
+- `crates/carminedesktop-graph/src/client.rs` — may need a `get_drive_root` helper if not already present
+- `crates/carminedesktop-app/src/main.rs` — `start_mount` signature may change to propagate initialization errors
 - No new dependencies required

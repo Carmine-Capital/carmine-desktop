@@ -1,12 +1,12 @@
 ## Context
 
-CloudMount's settings UI exposes a "Start on login" toggle. When the user saves the setting, `save_settings` in `commands.rs` writes `auto_start = true/false` to `~/.config/cloudmount/config.toml` and rebuilds `EffectiveConfig` — but stops there. The OS-level registration is never performed. As a result, the toggle has been a no-op since the feature was first wired up.
+carminedesktop's settings UI exposes a "Start on login" toggle. When the user saves the setting, `save_settings` in `commands.rs` writes `auto_start = true/false` to `~/.config/carminedesktop/config.toml` and rebuilds `EffectiveConfig` — but stops there. The OS-level registration is never performed. As a result, the toggle has been a no-op since the feature was first wired up.
 
-The platform implementation already exists and is complete: `cloudmount_core::config::autostart` contains `set_enabled(enabled, app_path)` with correct, tested backends for all three target OSes:
+The platform implementation already exists and is complete: `carminedesktop_core::config::autostart` contains `set_enabled(enabled, app_path)` with correct, tested backends for all three target OSes:
 
-- **Linux**: Writes `~/.config/systemd/user/cloudmount.service` then runs `systemctl --user enable cloudmount.service`. Disable removes the file and runs `systemctl --user disable`.
-- **macOS**: Writes a LaunchAgent plist to `~/Library/LaunchAgents/com.cloudmount.agent.plist`. Disable removes the file (the `launchd` daemon picks up the change automatically on next login).
-- **Windows**: Calls `reg add HKCU\...\Run /v CloudMount /d <path>`. Disable calls `reg delete`.
+- **Linux**: Writes `~/.config/systemd/user/carminedesktop.service` then runs `systemctl --user enable carminedesktop.service`. Disable removes the file and runs `systemctl --user disable`.
+- **macOS**: Writes a LaunchAgent plist to `~/Library/LaunchAgents/com.carminedesktop.agent.plist`. Disable removes the file (the `launchd` daemon picks up the change automatically on next login).
+- **Windows**: Calls `reg add HKCU\...\Run /v carminedesktop /d <path>`. Disable calls `reg delete`.
 
 The only gap is that `save_settings` and `setup_after_launch` never call this module.
 
@@ -21,14 +21,14 @@ The only gap is that `save_settings` and `setup_after_launch` never call this mo
 
 **Non-Goals:**
 
-- Replacing or rewriting the `autostart` module in `cloudmount-core` — it is correct as-is.
+- Replacing or rewriting the `autostart` module in `carminedesktop-core` — it is correct as-is.
 - Supporting `tauri-plugin-autostart` — the native module already covers all three platforms without an additional dependency.
 - Auto-start for headless mode — headless invocations are out of scope; the auto-start feature is desktop-only (gated behind `#[cfg(feature = "desktop")]`).
 - Handling systemd socket activation or launchd on-demand launch — a simple `ExecStart` / `RunAtLoad` is sufficient.
 
 ## Decisions
 
-### D1: Use existing `cloudmount_core::config::autostart` rather than adding `tauri-plugin-autostart`
+### D1: Use existing `carminedesktop_core::config::autostart` rather than adding `tauri-plugin-autostart`
 
 **Decision**: Call the already-implemented `autostart::set_enabled()` from `commands.rs` and `main.rs` rather than adding `tauri-plugin-autostart` as a new workspace dependency.
 

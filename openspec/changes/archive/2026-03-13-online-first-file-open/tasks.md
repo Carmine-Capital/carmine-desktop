@@ -1,31 +1,31 @@
 ## 1. Simplify core types and config
 
-- [x] 1.1 Remove `CollabOpenResponse::Cancel` variant from `cloudmount-core/src/types.rs`
-- [x] 1.2 Remove `has_local_changes` field from `CollabOpenRequest` in `cloudmount-core/src/types.rs`
-- [x] 1.3 Remove `CollabDefaultAction` enum from `cloudmount-core/src/config.rs`
-- [x] 1.4 Simplify `CollaborativeOpenConfig` to only `timeout_seconds` and `shell_processes` in `cloudmount-core/src/config.rs`
+- [x] 1.1 Remove `CollabOpenResponse::Cancel` variant from `carminedesktop-core/src/types.rs`
+- [x] 1.2 Remove `has_local_changes` field from `CollabOpenRequest` in `carminedesktop-core/src/types.rs`
+- [x] 1.3 Remove `CollabDefaultAction` enum from `carminedesktop-core/src/config.rs`
+- [x] 1.4 Simplify `CollaborativeOpenConfig` to only `timeout_seconds` and `shell_processes` in `carminedesktop-core/src/config.rs`
 - [x] 1.5 Update `EffectiveConfig` to use the simplified `CollaborativeOpenConfig`
 
 ## 2. Simplify VFS CollabGate
 
-- [x] 2.1 Remove `VfsError::OperationCancelled` variant from `cloudmount-vfs/src/core_ops.rs`
-- [x] 2.2 Remove `OperationCancelled` → `ECANCELED` mapping from `cloudmount-vfs/src/fuse_fs.rs`
-- [x] 2.3 Remove `OperationCancelled` → `STATUS_CANCELLED` mapping from `cloudmount-vfs/src/winfsp_fs.rs`
+- [x] 2.1 Remove `VfsError::OperationCancelled` variant from `carminedesktop-vfs/src/core_ops.rs`
+- [x] 2.2 Remove `OperationCancelled` → `ECANCELED` mapping from `carminedesktop-vfs/src/fuse_fs.rs`
+- [x] 2.3 Remove `OperationCancelled` → `STATUS_CANCELLED` mapping from `carminedesktop-vfs/src/winfsp_fs.rs`
 - [x] 2.4 Remove `Cancel` arm from CollabGate match in `CoreOps::open_file()`
 - [x] 2.5 Remove `has_local_changes` computation from CollabGate request construction in `CoreOps::open_file()`
 
 ## 3. Simplify Tauri CollabGate handler
 
-- [x] 3.1 Remove `resolve_collab_preference()` function from `cloudmount-app/src/main.rs`
-- [x] 3.2 Remove `show_collab_dialog()` function from `cloudmount-app/src/main.rs`
+- [x] 3.1 Remove `resolve_collab_preference()` function from `carminedesktop-app/src/main.rs`
+- [x] 3.2 Remove `show_collab_dialog()` function from `carminedesktop-app/src/main.rs`
 - [x] 3.3 Simplify `spawn_collab_handler()` to unconditionally open online with local fallback on error
 
 ## 4. Delete integration modules and scripts
 
-- [x] 4.1 Delete `cloudmount-app/src/linux_integrations.rs` and remove `mod linux_integrations` from `main.rs`
-- [x] 4.2 Delete `cloudmount-app/src/windows_integrations.rs` and remove `mod windows_integrations` from `main.rs`
-- [x] 4.3 Delete `cloudmount-app/src/macos_integrations.rs` and remove `mod macos_integrations` from `main.rs`
-- [x] 4.4 Delete all context menu scripts from `cloudmount-app/scripts/` (keep `README.md` only if still relevant, otherwise delete)
+- [x] 4.1 Delete `carminedesktop-app/src/linux_integrations.rs` and remove `mod linux_integrations` from `main.rs`
+- [x] 4.2 Delete `carminedesktop-app/src/windows_integrations.rs` and remove `mod windows_integrations` from `main.rs`
+- [x] 4.3 Delete `carminedesktop-app/src/macos_integrations.rs` and remove `mod macos_integrations` from `main.rs`
+- [x] 4.4 Delete all context menu scripts from `carminedesktop-app/scripts/` (keep `README.md` only if still relevant, otherwise delete)
 - [x] 4.5 Remove `reconcile_existing_installation()` call from `setup_after_launch()` in `main.rs`
 - [x] 4.6 Remove `register_context_menus()` call from Windows mount path in `main.rs`
 - [x] 4.7 Remove `unregister_context_menus()` call from Windows unmount path in `main.rs`

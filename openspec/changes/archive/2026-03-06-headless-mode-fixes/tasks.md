@@ -1,12 +1,12 @@
 ## 0. Fix token storage key mismatch (D0)
 
-- [x] 0.1 In `crates/cloudmount-auth/src/manager.rs`, change `try_restore()` (line 43) from `crate::storage::load_tokens(account_id)` to `crate::storage::load_tokens(&self.client_id)` — this makes the load key match the store key used by `exchange_code()` and `refresh()`
+- [x] 0.1 In `crates/carminedesktop-auth/src/manager.rs`, change `try_restore()` (line 43) from `crate::storage::load_tokens(account_id)` to `crate::storage::load_tokens(&self.client_id)` — this makes the load key match the store key used by `exchange_code()` and `refresh()`
 - [x] 0.2 Verify `sign_out()` (line 83) already uses `self.client_id` for `delete_tokens` — no change needed, just confirm consistency
-- [x] 0.3 Run `cargo test -p cloudmount-auth` — existing auth tests should still pass (they use consistent keys)
+- [x] 0.3 Run `cargo test -p carminedesktop-auth` — existing auth tests should still pass (they use consistent keys)
 
 ## 1. Extract shared initialization (D1)
 
-- [x] 1.1 Define `Components` struct in `crates/cloudmount-app/src/main.rs` (ungated, no `#[cfg]`) holding `auth: Arc<AuthManager>`, `graph: Arc<GraphClient>`, `cache: Arc<CacheManager>`, `inodes: Arc<InodeTable>`
+- [x] 1.1 Define `Components` struct in `crates/carminedesktop-app/src/main.rs` (ungated, no `#[cfg]`) holding `auth: Arc<AuthManager>`, `graph: Arc<GraphClient>`, `cache: Arc<CacheManager>`, `inodes: Arc<InodeTable>`
 - [x] 1.2 Extract `fn init_components(packaged: &PackagedDefaults, effective: &EffectiveConfig) -> Components` from the duplicated initialization logic (currently at lines 126-157 and 582-613) — creates AuthManager with client_id/tenant_id, GraphClient with token provider closure, CacheManager with cache dir/db/max_size/ttl, InodeTable
 - [x] 1.3 Update `run_desktop()` to call `init_components()` and destructure into `AppState` fields
 - [x] 1.4 Update `run_headless()` to call `init_components()` and destructure into local variables

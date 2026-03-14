@@ -23,9 +23,9 @@ The "Add Mount" button in Settings and the SharePoint source selection in the se
 
 ## Impact
 
-- **`crates/cloudmount-app/dist/wizard.html`**: New `step-sharepoint` DOM step, `selectSource()` rewrite, new JS functions (`searchSites`, `selectSite`, `selectLibrary`, `confirmMount`), CSS additions for search input, results list, back button, loading/error states.
-- **`crates/cloudmount-app/dist/settings.html`**: `addMount()` rewrite to open wizard window via Tauri API or a new `open_wizard` command.
-- **`crates/cloudmount-app/src/commands.rs`**: Possibly a new `open_wizard` command if the JS WebviewWindow API is not sufficient to focus/open the wizard from the settings window context. No changes to existing commands.
+- **`crates/carminedesktop-app/dist/wizard.html`**: New `step-sharepoint` DOM step, `selectSource()` rewrite, new JS functions (`searchSites`, `selectSite`, `selectLibrary`, `confirmMount`), CSS additions for search input, results list, back button, loading/error states.
+- **`crates/carminedesktop-app/dist/settings.html`**: `addMount()` rewrite to open wizard window via Tauri API or a new `open_wizard` command.
+- **`crates/carminedesktop-app/src/commands.rs`**: Possibly a new `open_wizard` command if the JS WebviewWindow API is not sufficient to focus/open the wizard from the settings window context. No changes to existing commands.
 - **No backend changes**: `search_sites`, `list_drives`, and `add_mount` commands are already implemented and registered.
 
 ## Dependencies

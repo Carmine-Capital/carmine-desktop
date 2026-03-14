@@ -1,12 +1,12 @@
 ## Purpose
-Defines the runtime lifecycle of the CloudMount application: component initialization, mount management, authentication state handling, crash recovery, and graceful shutdown.
+Defines the runtime lifecycle of the carminedesktop application: component initialization, mount management, authentication state handling, crash recovery, and graceful shutdown.
 ## Requirements
 ### Requirement: Component initialization
 The system SHALL initialize all service components in dependency order during application startup, before accepting user interactions. Startup SHALL begin with .env file loading, CLI argument parsing, and pre-flight validation before proceeding to component creation.
 
 #### Scenario: Initialization sequence
 - **WHEN** the application starts
-- **THEN** it initializes in this order: (1) load .env file if present, (2) parse CLI arguments (including env var fallbacks), (3) load user config → derive effective config with built-in defaults, (4) run pre-flight validation (client ID sanity check, FUSE availability on Linux/macOS, WinFsp version on Windows), (5) create AuthManager with the official CloudMount client_id (overridden by `--client-id` CLI arg if provided), (6) create GraphClient with AuthManager's token provider, (7) create CacheManager with cache directory and SQLite database, (8) create shared InodeTable, (9) assemble AppState with all components, (10) register `tauri-plugin-updater` in the Tauri builder (desktop mode only)
+- **THEN** it initializes in this order: (1) load .env file if present, (2) parse CLI arguments (including env var fallbacks), (3) load user config → derive effective config with built-in defaults, (4) run pre-flight validation (client ID sanity check, FUSE availability on Linux/macOS, WinFsp version on Windows), (5) create AuthManager with the official carminedesktop client_id (overridden by `--client-id` CLI arg if provided), (6) create GraphClient with AuthManager's token provider, (7) create CacheManager with cache directory and SQLite database, (8) create shared InodeTable, (9) assemble AppState with all components, (10) register `tauri-plugin-updater` in the Tauri builder (desktop mode only)
 
 #### Scenario: Initialization failure in config
 - **WHEN** the user config cannot be loaded
@@ -188,7 +188,7 @@ On Windows, headless mode is supported via WinFsp. The `run_headless` function S
 
 #### Scenario: Headless startup with existing tokens
 - **WHEN** the application starts in headless mode and valid tokens are found in the credential store
-- **THEN** the system restores tokens, runs crash recovery for pending writes, starts all enabled mounts, starts the periodic delta sync loop, and logs "CloudMount headless mode running — N mount(s) active"
+- **THEN** the system restores tokens, runs crash recovery for pending writes, starts all enabled mounts, starts the periodic delta sync loop, and logs "carminedesktop headless mode running — N mount(s) active"
 
 #### Scenario: Headless startup without tokens
 - **WHEN** the application starts in headless mode and no valid tokens are found in the credential store

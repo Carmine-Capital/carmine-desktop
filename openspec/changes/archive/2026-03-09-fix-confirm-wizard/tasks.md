@@ -1,15 +1,15 @@
 ## 1. Capabilities: Add dialog permission
 
-- [x] 1.1 Add `"dialog:allow-confirm"` to `crates/cloudmount-app/capabilities/default.json`
+- [x] 1.1 Add `"dialog:allow-confirm"` to `crates/carminedesktop-app/capabilities/default.json`
 
 ## 2. Backend: Add `is_authenticated` command
 
-- [x] 2.1 Add `pub fn is_authenticated(app: AppHandle) -> bool` to `crates/cloudmount-app/src/commands.rs`, reading `app.state::<AppState>().authenticated.load(Ordering::Relaxed)`
-- [x] 2.2 Register `is_authenticated` in the `invoke_handler!` macro in `crates/cloudmount-app/src/main.rs`
+- [x] 2.1 Add `pub fn is_authenticated(app: AppHandle) -> bool` to `crates/carminedesktop-app/src/commands.rs`, reading `app.state::<AppState>().authenticated.load(Ordering::Relaxed)`
+- [x] 2.2 Register `is_authenticated` in the `invoke_handler!` macro in `crates/carminedesktop-app/src/main.rs`
 
 ## 3. Backend: Add `open_or_focus_wizard` helper
 
-- [x] 3.1 Add `pub fn open_or_focus_wizard(app: &AppHandle, add_mount: bool)` to `crates/cloudmount-app/src/tray.rs`: if window exists and `add_mount` is true, call `win.eval("goToAddMount()")` before focusing; otherwise call existing focus logic; if window does not exist, create it normally
+- [x] 3.1 Add `pub fn open_or_focus_wizard(app: &AppHandle, add_mount: bool)` to `crates/carminedesktop-app/src/tray.rs`: if window exists and `add_mount` is true, call `win.eval("goToAddMount()")` before focusing; otherwise call existing focus logic; if window does not exist, create it normally
 - [x] 3.2 Update `handle_menu_event` in `tray.rs` to call `open_or_focus_wizard(app, false)` for `"sign_in"` and `"re_authenticate"`, and `open_or_focus_wizard(app, true)` for `"add_mount"`
 - [x] 3.3 Update `open_wizard` command in `commands.rs` to call `open_or_focus_wizard(&app, true)` so the settings "Add Mount" button also navigates to `step-sources`
 
@@ -26,7 +26,7 @@
 
 ## 6. Verify
 
-- [x] 6.1 Build with `cargo build -p cloudmount-app --features desktop` — zero warnings
+- [x] 6.1 Build with `cargo build -p carminedesktop-app --features desktop` — zero warnings
 - [x] 6.2 Manually verify: Sign Out button in Account tab shows OS dialog and signs out on confirm
 - [x] 6.3 Manually verify: Remove mount button shows OS dialog and removes on confirm
 - [x] 6.4 Manually verify: Settings "Add Mount" opens wizard at sources step (not sign-in screen)

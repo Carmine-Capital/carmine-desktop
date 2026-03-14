@@ -1,10 +1,10 @@
 ## Context
 
-CloudMount's config layer was built around `PackagedDefaults` — a TOML file embedded at compile time via `include_str!()` that let organizations ship pre-configured binaries with baked-in credentials and mount definitions. This model is being abandoned. CloudMount is now a multi-tenant product with official releases. The cleanup removes ~200 lines from `config.rs`, the entire `build/defaults.toml` mechanism, and several docs. The wizard is redesigned to let users self-configure their OneDrive and SharePoint mounts.
+carminedesktop's config layer was built around `PackagedDefaults` — a TOML file embedded at compile time via `include_str!()` that let organizations ship pre-configured binaries with baked-in credentials and mount definitions. This model is being abandoned. carminedesktop is now a multi-tenant product with official releases. The cleanup removes ~200 lines from `config.rs`, the entire `build/defaults.toml` mechanism, and several docs. The wizard is redesigned to let users self-configure their OneDrive and SharePoint mounts.
 
 Key facts from code exploration:
-- `cloudmount-auth/src/oauth.rs:17` already does `tenant_id.unwrap_or("common")` — the auth endpoint is already multi-tenant-capable
-- `cloudmount-graph` already has `search_sites()`, `get_followed_sites()`, `list_site_drives()` — no new Graph calls needed
+- `carminedesktop-auth/src/oauth.rs:17` already does `tenant_id.unwrap_or("common")` — the auth endpoint is already multi-tenant-capable
+- `carminedesktop-graph` already has `search_sites()`, `get_followed_sites()`, `list_site_drives()` — no new Graph calls needed
 - The Tauri commands wrapping these (`get_followed_sites`, `search_sites`) were implemented by the preceding `fix-sharepoint-wizard` change
 - Existing `config.toml` files with `mount_overrides`/`dismissed_packaged_mounts` fields are silently ignored by serde — no migration needed
 
@@ -12,13 +12,13 @@ Key facts from code exploration:
 
 **Goals:**
 - Remove all branded-build infrastructure from code, build system, and docs
-- Hardcode the official CloudMount client ID as a Rust constant
+- Hardcode the official carminedesktop client ID as a Rust constant
 - Support personal Microsoft accounts (MSA) in addition to M365 org accounts
 - Redesign the first-run wizard to let users add OneDrive and SharePoint sources themselves
 - Simplify `EffectiveConfig` and `UserConfig` (remove fields that only existed to support packaged builds)
 
 **Non-Goals:**
-- No changes to `cloudmount-auth`, `cloudmount-graph`, `cloudmount-cache`, or `cloudmount-vfs`
+- No changes to `carminedesktop-auth`, `carminedesktop-graph`, `carminedesktop-cache`, or `carminedesktop-vfs`
 - No new Tauri commands — the wizard uses commands from `fix-sharepoint-wizard`
 - No Tauri auto-updater setup (separate concern)
 - No change to how existing mounts are persisted or mounted at startup
@@ -36,7 +36,7 @@ const CLIENT_ID: &str = "8ebe3ef7-f509-4146-8fef-c9b5d7c22252";
 The `--client-id` CLI argument is kept for developer/testing overrides. The `--tenant-id` CLI argument is also kept to allow testing against specific tenants during development.
 
 **Alternatives considered:**
-- Keep `option_env!(CLOUDMOUNT_CLIENT_ID)` as a build-time override — adds complexity with no benefit for a single-product model
+- Keep `option_env!(carminedesktop_CLIENT_ID)` as a build-time override — adds complexity with no benefit for a single-product model
 - Move client ID to a runtime config file — wrong layer; it's an app identity, not user config
 
 ### D2 — Remove PackagedDefaults entirely, not simplify
@@ -49,7 +49,7 @@ Removed from `UserConfig`: `mount_overrides`, `dismissed_packaged_mounts`, `rest
 
 ### D3 — EffectiveConfig simplified to user-only fields
 
-**Decision:** Remove `tenant_id`, `client_id`, and `app_name` from `EffectiveConfig`. These were sourced from `PackagedDefaults`; without it, they have no meaningful source. `app_name` is hardcoded as "CloudMount" where needed (e.g., notifications). `EffectiveConfig::build()` no longer takes a `PackagedDefaults` parameter.
+**Decision:** Remove `tenant_id`, `client_id`, and `app_name` from `EffectiveConfig`. These were sourced from `PackagedDefaults`; without it, they have no meaningful source. `app_name` is hardcoded as "carminedesktop" where needed (e.g., notifications). `EffectiveConfig::build()` no longer takes a `PackagedDefaults` parameter.
 
 ### D4 — AAD app registration: AzureADandPersonalMicrosoftAccount
 

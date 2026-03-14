@@ -1,6 +1,6 @@
 ## Context
 
-The `CloudMountCfFilter::fetch_placeholders` callback in `cfapi.rs` populates a directory with placeholder files by calling `ticket.pass_with_placeholder(&mut placeholders)`. The current implementation filters out already-existing items using `.filter(|..| !dir_path.join(&item.name).exists())` before building the batch, then passes the whole batch in a single call.
+The `carminedesktopCfFilter::fetch_placeholders` callback in `cfapi.rs` populates a directory with placeholder files by calling `ticket.pass_with_placeholder(&mut placeholders)`. The current implementation filters out already-existing items using `.filter(|..| !dir_path.join(&item.name).exists())` before building the batch, then passes the whole batch in a single call.
 
 `pass_with_placeholder` wraps `CfCreatePlaceholders` (via `CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS`). If a placeholder already exists on disk at call time — due to a race between the `.exists()` check and the actual Windows API call — `CfCreatePlaceholders` returns `ERROR_CLOUD_FILE_INVALID_REQUEST` (HRESULT `0x8007017C`).
 
@@ -13,7 +13,7 @@ Key constraint: `cloud-filter 0.0.6` is an external crate. Its `proxy.rs` cannot
 **Goals:**
 - Make TOCTOU collisions during `FetchPlaceholders` non-fatal: log a warning and continue to the next item.
 - Preserve correct error propagation for genuine API failures (non-TOCTOU errors from `CfCreatePlaceholders`).
-- Keep the change entirely within `crates/cloudmount-vfs/src/cfapi.rs`.
+- Keep the change entirely within `crates/carminedesktop-vfs/src/cfapi.rs`.
 
 **Non-Goals:**
 - Eliminate the TOCTOU window itself (impossible without OS-level atomic create-or-skip semantics from `CfCreatePlaceholders`).

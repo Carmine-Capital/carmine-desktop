@@ -41,5 +41,5 @@
 
 ## 9. Tests
 
-- [x] 9.1 Update integration tests in `cloudmount-app/tests/integration_tests.rs` for handle-based read/write/flush semantics
+- [x] 9.1 Update integration tests in `carminedesktop-app/tests/integration_tests.rs` for handle-based read/write/flush semantics
 - [x] 9.2 Add unit tests for `OpenFileTable`: open returns unique handles, read slices correctly, write mutates in-place, flush pushes to writeback, release cleans up, truncate on open file works

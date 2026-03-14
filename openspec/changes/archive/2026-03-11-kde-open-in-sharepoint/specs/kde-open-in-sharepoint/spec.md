@@ -4,7 +4,7 @@
 The system SHALL provide a KDE Dolphin context menu action named `Open in SharePoint` that is available through the Dolphin Service Menu mechanism.
 
 #### Scenario: Service menu is installed
-- **WHEN** CloudMount Linux integration assets are installed on a KDE system
+- **WHEN** carminedesktop Linux integration assets are installed on a KDE system
 - **THEN** Dolphin discovers a Service Menu entry labeled `Open in SharePoint` for file selections
 
 #### Scenario: User triggers action for one file
@@ -12,7 +12,7 @@ The system SHALL provide a KDE Dolphin context menu action named `Open in ShareP
 - **THEN** Dolphin invokes the configured helper command with the selected absolute file path
 
 ### Requirement: Deep-link invocation from Dolphin selection
-The Dolphin integration SHALL transform each selected file path into a percent-encoded `cloudmount://open-online?path=<encoded>` URL and dispatch it through the system opener.
+The Dolphin integration SHALL transform each selected file path into a percent-encoded `carminedesktop://open-online?path=<encoded>` URL and dispatch it through the system opener.
 
 #### Scenario: Path contains spaces or unicode
 - **WHEN** a selected path contains spaces or non-ASCII characters
@@ -28,14 +28,14 @@ The Dolphin integration SHALL transform each selected file path into a percent-e
 - **THEN** the integration treats app instance behavior as best-effort and documents that multiple launches/windows may occur depending on environment
 
 ### Requirement: Reuse existing Open in SharePoint behavior
-The KDE integration SHALL reuse the existing `cloudmount://open-online` flow so that path validation, SharePoint URL resolution, and Office/browser fallback behavior remain consistent with other entry points.
+The KDE integration SHALL reuse the existing `carminedesktop://open-online` flow so that path validation, SharePoint URL resolution, and Office/browser fallback behavior remain consistent with other entry points.
 
-#### Scenario: Selected file is inside a CloudMount mount
-- **WHEN** a deep-link generated from Dolphin references a path under an active CloudMount mount
+#### Scenario: Selected file is inside a carminedesktop mount
+- **WHEN** a deep-link generated from Dolphin references a path under an active carminedesktop mount
 - **THEN** the application resolves the file and opens the corresponding SharePoint URL using platform-specific `open_online` behavior
 
-#### Scenario: Selected file is outside CloudMount mounts
-- **WHEN** a deep-link generated from Dolphin references a path not managed by CloudMount
+#### Scenario: Selected file is outside carminedesktop mounts
+- **WHEN** a deep-link generated from Dolphin references a path not managed by carminedesktop
 - **THEN** the application rejects the request and shows an error notification to the user
 
 ### Requirement: KDE installation guidance

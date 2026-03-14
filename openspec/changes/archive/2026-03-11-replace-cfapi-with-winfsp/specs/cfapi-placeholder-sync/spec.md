@@ -13,7 +13,7 @@
 **Migration**: Delta sync updates cache entries by item ID. The `apply_delta_placeholder_updates` function and its path resolution helpers are removed.
 
 ### Requirement: Platform-gated placeholder update function
-**Reason**: The `apply_delta_placeholder_updates` public function in `cloudmount-vfs` is removed along with all CfApi code. WinFsp delta sync is handled entirely through cache updates and the `DeltaSyncObserver` trait.
+**Reason**: The `apply_delta_placeholder_updates` public function in `carminedesktop-vfs` is removed along with all CfApi code. WinFsp delta sync is handled entirely through cache updates and the `DeltaSyncObserver` trait.
 **Migration**: Remove the `#[cfg(target_os = "windows")]` block in `main.rs` `start_delta_sync()` that calls `apply_delta_placeholder_updates`. The delta sync loop becomes platform-uniform.
 
 ### Requirement: Mount drive as native filesystem

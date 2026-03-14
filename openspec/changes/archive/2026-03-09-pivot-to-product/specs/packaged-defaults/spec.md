@@ -1,11 +1,11 @@
 ## REMOVED Requirements
 
 ### Requirement: Build-time defaults file
-**Reason**: Branded build model abandoned. CloudMount is now a multi-tenant product with official releases; embedding org-specific credentials and mounts at compile time is no longer supported.
+**Reason**: Branded build model abandoned. carminedesktop is now a multi-tenant product with official releases; embedding org-specific credentials and mounts at compile time is no longer supported.
 **Migration**: No end-user migration required. Config files with unknown fields (e.g., `mount_overrides`, `dismissed_packaged_mounts`) are silently ignored by serde.
 
 ### Requirement: Updater endpoint configuration for branded builds
-**Reason**: Branded builds are no longer supported. CloudMount ships a single official binary with its own update channel.
+**Reason**: Branded builds are no longer supported. carminedesktop ships a single official binary with its own update channel.
 **Migration**: N/A.
 
 ### Requirement: Packaged mount definitions
@@ -29,7 +29,7 @@
 **Migration**: N/A.
 
 ### Requirement: Packaged tenant and branding
-**Reason**: The OAuth2 flow always uses the official CloudMount client ID and the `common` endpoint. Branding is fixed as "CloudMount".
+**Reason**: The OAuth2 flow always uses the official carminedesktop client ID and the `common` endpoint. Branding is fixed as "carminedesktop".
 **Migration**: N/A.
 
 ### Requirement: Build-time defaults file template

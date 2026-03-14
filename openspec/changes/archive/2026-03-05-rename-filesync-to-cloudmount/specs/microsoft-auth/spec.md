@@ -5,15 +5,15 @@ The system SHALL store OAuth tokens in the operating system's native secure cred
 
 #### Scenario: Token storage on Linux
 - **WHEN** tokens are obtained after authentication on Linux
-- **THEN** the system stores them via the Secret Service API (GNOME Keyring or KWallet) under the service name "cloudmount"
+- **THEN** the system stores them via the Secret Service API (GNOME Keyring or KWallet) under the service name "carminedesktop"
 
 #### Scenario: Token storage on macOS
 - **WHEN** tokens are obtained after authentication on macOS
-- **THEN** the system stores them in the macOS Keychain under the service name "cloudmount"
+- **THEN** the system stores them in the macOS Keychain under the service name "carminedesktop"
 
 #### Scenario: Token storage on Windows
 - **WHEN** tokens are obtained after authentication on Windows
-- **THEN** the system stores them in Windows Credential Manager under the target "cloudmount"
+- **THEN** the system stores them in Windows Credential Manager under the target "carminedesktop"
 
 #### Scenario: Keychain unavailable fallback
 - **WHEN** the OS credential store is unavailable (e.g., no keyring daemon on Linux)
@@ -28,4 +28,4 @@ The system SHALL use the packaged client_id if available, falling back to a buil
 
 #### Scenario: No packaged client_id
 - **WHEN** no client_id is configured in packaged defaults
-- **THEN** the OAuth2 flow uses the built-in CloudMount default app registration client_id
+- **THEN** the OAuth2 flow uses the built-in carminedesktop default app registration client_id

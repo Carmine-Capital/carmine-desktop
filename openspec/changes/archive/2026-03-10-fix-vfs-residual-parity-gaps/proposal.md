@@ -20,5 +20,5 @@ _None._
 
 ## Impact
 
-- **`crates/cloudmount-vfs/src/cfapi.rs`** — Three targeted edits: `fetch_data` tracing fix, `closed()` flush error handling, `state_changed()` parent invalidation.
+- **`crates/carminedesktop-vfs/src/cfapi.rs`** — Three targeted edits: `fetch_data` tracing fix, `closed()` flush error handling, `state_changed()` parent invalidation.
 - No API changes, no dependency changes, no spec-level behavior changes (these are bug fixes bringing CfApi up to the safety guarantees already documented in the `virtual-filesystem` spec).

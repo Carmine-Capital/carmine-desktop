@@ -23,8 +23,8 @@ None.
 
 ## Impact
 
-- `crates/cloudmount-app/src/tray.rs` — `update_tray_menu`, `handle_menu_event`
-- `crates/cloudmount-app/src/main.rs` — `on_window_event`
-- `crates/cloudmount-app/src/commands.rs` — `sign_out`, `get_settings`, `SettingsInfo`
-- `crates/cloudmount-app/dist/settings.html` — Account tab display, `signOut()` handler
+- `crates/carminedesktop-app/src/tray.rs` — `update_tray_menu`, `handle_menu_event`
+- `crates/carminedesktop-app/src/main.rs` — `on_window_event`
+- `crates/carminedesktop-app/src/commands.rs` — `sign_out`, `get_settings`, `SettingsInfo`
+- `crates/carminedesktop-app/dist/settings.html` — Account tab display, `signOut()` handler
 - No new dependencies, no API surface changes, no breaking changes

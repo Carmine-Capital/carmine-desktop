@@ -1,10 +1,10 @@
 ## Context
 
-CloudMount mounts OneDrive/SharePoint drives as local filesystems. When a user opens an Office document from the mount, it opens as a local file — no co-authoring, no auto-save to server. Conflicts are detected after the fact via eTag comparison, producing `.conflict` copies.
+carminedesktop mounts OneDrive/SharePoint drives as local filesystems. When a user opens an Office document from the mount, it opens as a local file — no co-authoring, no auto-save to server. Conflicts are detected after the fact via eTag comparison, producing `.conflict` copies.
 
-Microsoft Office supports co-authoring natively when files are opened via SharePoint URLs. The Graph API returns a `webUrl` field on every `DriveItem`, but CloudMount currently excludes it from `$select` queries and doesn't have the field on `DriveItem`. The data is available at zero cost — it just isn't captured.
+Microsoft Office supports co-authoring natively when files are opened via SharePoint URLs. The Graph API returns a `webUrl` field on every `DriveItem`, but carminedesktop currently excludes it from `$select` queries and doesn't have the field on `DriveItem`. The data is available at zero cost — it just isn't captured.
 
-CloudMount already has URL-opening infrastructure (`open_with_clean_env` / `open::that` in `main.rs:29-47`) and a Tauri command system. No deep-link plugin is currently installed (current plugins: dialog, notification, updater, process, opener).
+carminedesktop already has URL-opening infrastructure (`open_with_clean_env` / `open::that` in `main.rs:29-47`) and a Tauri command system. No deep-link plugin is currently installed (current plugins: dialog, notification, updater, process, opener).
 
 ## Goals / Non-Goals
 
@@ -51,17 +51,17 @@ On Linux, always fall back to the browser URL since desktop Office isn't availab
 
 ### 3. Tauri deep-link protocol for shell integration
 
-**Decision:** Register a `cloudmount://` URL protocol handler via the Tauri `deep-link` plugin. The Windows context menu entry invokes `cloudmount://open-online?path=<encoded-path>`, which the running Tauri app handles.
+**Decision:** Register a `carminedesktop://` URL protocol handler via the Tauri `deep-link` plugin. The Windows context menu entry invokes `carminedesktop://open-online?path=<encoded-path>`, which the running Tauri app handles.
 
 **Rationale:** This avoids building a separate companion binary or COM DLL for the context menu. The Tauri app is always running (tray), so it can handle the request immediately. The deep-link plugin is a standard Tauri v2 plugin. The same protocol works across platforms.
 
-**Alternative considered:** A standalone `cloudmount-open.exe` CLI tool. Would work without the Tauri app running, but requires a separate binary, its own way to resolve paths to `webUrl` (either IPC or direct cache access), and additional build/packaging complexity. Deferred as unnecessary for v1.
+**Alternative considered:** A standalone `carminedesktop-open.exe` CLI tool. Would work without the Tauri app running, but requires a separate binary, its own way to resolve paths to `webUrl` (either IPC or direct cache access), and additional build/packaging complexity. Deferred as unnecessary for v1.
 
 ### 4. Windows context menu via registry, not COM shell extension
 
-**Decision:** Register a context menu entry for files inside CfApi sync roots using Windows registry keys. The entry runs `start cloudmount://open-online?path=%1`.
+**Decision:** Register a context menu entry for files inside CfApi sync roots using Windows registry keys. The entry runs `start carminedesktop://open-online?path=%1`.
 
-**Rationale:** A full `IContextMenu` COM shell extension would allow dynamic visibility (only show for CloudMount files), but adds significant complexity — a separate DLL, COM registration, in-process loading into Explorer. A registry-based entry is a few registry writes during mount setup and can be scoped to the CloudMount sync root directory using `Directory\Background\shell` or applied to specific file types. The trade-off is that the entry may appear outside CloudMount directories, but the deep-link handler validates the path and shows an error if the file isn't in a mount.
+**Rationale:** A full `IContextMenu` COM shell extension would allow dynamic visibility (only show for carminedesktop files), but adds significant complexity — a separate DLL, COM registration, in-process loading into Explorer. A registry-based entry is a few registry writes during mount setup and can be scoped to the carminedesktop sync root directory using `Directory\Background\shell` or applied to specific file types. The trade-off is that the entry may appear outside carminedesktop directories, but the deep-link handler validates the path and shows an error if the file isn't in a mount.
 
 **Alternative considered:** CfApi custom actions. The `cloud-filter` crate (v0.0.6) does not expose custom action APIs, so this would require raw `windows` crate COM calls. Deferred until the crate supports it or Option A (`IStorageProviderUriSource`) is pursued.
 
@@ -75,10 +75,10 @@ On Linux, always fall back to the browser URL since desktop Office isn't availab
 
 **[Risk] Office URI scheme not installed** → On systems without Office installed, `ms-word:ofe|u|...` will fail to open. Mitigation: detect failure from `open::that()` and fall back to the plain `webUrl` (opens in browser/Office Online). The browser fallback always works.
 
-**[Risk] Context menu appears outside CloudMount directories** → Registry-based context menus can't be perfectly scoped to a single directory tree. Mitigation: the deep-link handler validates that the path is inside a known mount point and shows a notification error if not. The menu entry text ("Open in SharePoint") provides a contextual hint. Can be refined later with a proper shell extension.
+**[Risk] Context menu appears outside carminedesktop directories** → Registry-based context menus can't be perfectly scoped to a single directory tree. Mitigation: the deep-link handler validates that the path is inside a known mount point and shows a notification error if not. The menu entry text ("Open in SharePoint") provides a contextual hint. Can be refined later with a proper shell extension.
 
 **[Risk] `webUrl` not populated for cached items** → Items cached before the field was added won't have `webUrl` until re-fetched (delta sync or TTL expiry). Mitigation: the memory cache TTL is 60 seconds, and delta sync runs periodically. Worst case, the Tauri command falls back to `get_item()` which always returns `webUrl`. Freshly-opened directories will have it immediately.
 
-**[Risk] Tauri app not running when context menu is clicked** → The deep-link protocol handler requires the app to be running. Mitigation: CloudMount is designed to run as a persistent tray app. If not running, the OS will attempt to launch it (protocol handler registration points to the app binary). Acceptable for v1.
+**[Risk] Tauri app not running when context menu is clicked** → The deep-link protocol handler requires the app to be running. Mitigation: carminedesktop is designed to run as a persistent tray app. If not running, the OS will attempt to launch it (protocol handler registration points to the app binary). Acceptable for v1.
 
-**[Risk] Deep-link URL encoding edge cases** → File paths with unicode, spaces, or special characters must be properly encoded in the `cloudmount://` URL. Mitigation: use percent-encoding on the path parameter and decode on receipt. Standard URL encoding, well-supported in Rust.
+**[Risk] Deep-link URL encoding edge cases** → File paths with unicode, spaces, or special characters must be properly encoded in the `carminedesktop://` URL. Mitigation: use percent-encoding on the path parameter and decode on receipt. Standard URL encoding, well-supported in Rust.

@@ -1,9 +1,9 @@
 ## 1. Dependency: Add tauri-plugin-dialog
 
 - [x] 1.1 Add `tauri-plugin-dialog = "2"` to `[workspace.dependencies]` in the root `Cargo.toml`
-- [x] 1.2 Add `tauri-plugin-dialog` to the `desktop` feature list and optional deps in `crates/cloudmount-app/Cargo.toml`
-- [x] 1.3 Register `tauri_plugin_dialog::init()` in `crates/cloudmount-app/src/main.rs` alongside the other plugin registrations
-- [x] 1.4 Verify `cargo build -p cloudmount-app --features desktop` compiles cleanly with the new plugin
+- [x] 1.2 Add `tauri-plugin-dialog` to the `desktop` feature list and optional deps in `crates/carminedesktop-app/Cargo.toml`
+- [x] 1.3 Register `tauri_plugin_dialog::init()` in `crates/carminedesktop-app/src/main.rs` alongside the other plugin registrations
+- [x] 1.4 Verify `cargo build -p carminedesktop-app --features desktop` compiles cleanly with the new plugin
 
 ## 2. settings.html — Toast notification infrastructure
 

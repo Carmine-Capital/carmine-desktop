@@ -1,6 +1,6 @@
 ## Context
 
-`settings.html` renders the mount list by building HTML strings and assigning them to `innerHTML`. The data (`m.name`, `m.mount_point`, `m.id`) arrives from the Tauri IPC call `list_mounts`, which reads the user's config file at `~/.config/cloudmount/config.toml`. Because the config file is writable by any process running as the same user, any value in it can be attacker-controlled. When that value contains HTML or JavaScript, assigning it via `innerHTML` causes the browser engine to parse and execute it.
+`settings.html` renders the mount list by building HTML strings and assigning them to `innerHTML`. The data (`m.name`, `m.mount_point`, `m.id`) arrives from the Tauri IPC call `list_mounts`, which reads the user's config file at `~/.config/carminedesktop/config.toml`. Because the config file is writable by any process running as the same user, any value in it can be attacker-controlled. When that value contains HTML or JavaScript, assigning it via `innerHTML` causes the browser engine to parse and execute it.
 
 The attack is further amplified by the `onclick` handler construction pattern:
 

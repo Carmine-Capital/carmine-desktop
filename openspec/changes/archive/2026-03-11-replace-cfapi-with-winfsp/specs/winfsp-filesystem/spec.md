@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: WinFsp FileSystemContext implementation
-On Windows, the system SHALL implement the WinFsp `FileSystemContext` trait in a `CloudMountWinFsp` struct that delegates all filesystem operations to `CoreOps`. The `FileSystemContext::FileContext` associated type SHALL be a `WinFspFileContext` struct containing the resolved inode number (`ino: u64`), an optional CoreOps file handle (`fh: Option<u64>`), and a directory flag (`is_dir: bool`). The struct SHALL hold an `Arc<CoreOps>` instance and a `tokio::runtime::Handle` for bridging async operations via `rt.block_on()`.
+On Windows, the system SHALL implement the WinFsp `FileSystemContext` trait in a `carminedesktopWinFsp` struct that delegates all filesystem operations to `CoreOps`. The `FileSystemContext::FileContext` associated type SHALL be a `WinFspFileContext` struct containing the resolved inode number (`ino: u64`), an optional CoreOps file handle (`fh: Option<u64>`), and a directory flag (`is_dir: bool`). The struct SHALL hold an `Arc<CoreOps>` instance and a `tokio::runtime::Handle` for bridging async operations via `rt.block_on()`.
 
-#### Scenario: CloudMountWinFsp created with CoreOps
+#### Scenario: carminedesktopWinFsp created with CoreOps
 - **WHEN** a WinFsp filesystem is initialized for a mounted drive
-- **THEN** the system creates a `CloudMountWinFsp` instance holding a shared `CoreOps`, a Tokio runtime handle, and a shared `OpenFileTable` reference
+- **THEN** the system creates a `carminedesktopWinFsp` instance holding a shared `CoreOps`, a Tokio runtime handle, and a shared `OpenFileTable` reference
 
 #### Scenario: FileContext returned on open
 - **WHEN** WinFsp dispatches an `open` callback for a file
@@ -195,18 +195,18 @@ The system SHALL implement the `rename` callback by resolving source and destina
 - **THEN** the system returns `STATUS_OBJECT_NAME_COLLISION` without calling CoreOps
 
 ### Requirement: WinFsp volume information
-The system SHALL implement the `get_volume_info` callback by calling `CoreOps::get_quota()` to retrieve drive capacity and remaining space. The volume label SHALL be "CloudMount" and the filesystem name SHALL be "cloudmount".
+The system SHALL implement the `get_volume_info` callback by calling `CoreOps::get_quota()` to retrieve drive capacity and remaining space. The volume label SHALL be "carminedesktop" and the filesystem name SHALL be "carminedesktop".
 
 #### Scenario: Volume info with quota available
 - **WHEN** WinFsp dispatches a `get_volume_info` callback and the drive has quota information
-- **THEN** the system returns `total_size` and `free_size` from `CoreOps::get_quota()` with volume label "CloudMount"
+- **THEN** the system returns `total_size` and `free_size` from `CoreOps::get_quota()` with volume label "carminedesktop"
 
 #### Scenario: Volume info without quota
 - **WHEN** `CoreOps::get_quota()` returns `None` (quota not yet fetched)
 - **THEN** the system returns a large fallback value (1 TB total, 1 TB free) so applications do not refuse writes
 
 ### Requirement: WinFsp set_basic_info and set_file_size
-The system SHALL implement `set_basic_info` as a no-op that returns the current file attributes (CloudMount does not support setting timestamps or attributes from the client). The system SHALL implement `set_file_size` by delegating to `CoreOps::truncate(ino, new_size)`.
+The system SHALL implement `set_basic_info` as a no-op that returns the current file attributes (carminedesktop does not support setting timestamps or attributes from the client). The system SHALL implement `set_file_size` by delegating to `CoreOps::truncate(ino, new_size)`.
 
 #### Scenario: Application sets file timestamps
 - **WHEN** WinFsp dispatches `set_basic_info` with new timestamps
@@ -228,9 +228,9 @@ The system SHALL provide a `WinFspMountHandle` struct with the same public API s
 
 `mount()` SHALL:
 1. Fetch the drive root item from the Graph API and seed it into caches as ROOT_INODE
-2. Create a `CloudMountWinFsp` filesystem context
+2. Create a `carminedesktopWinFsp` filesystem context
 3. Create a `WinFspDeltaObserver` sharing the `OpenFileTable`
-4. Configure `VolumeParams` with filesystem name "cloudmount" and `FileInfoTimeout` of 5000ms
+4. Configure `VolumeParams` with filesystem name "carminedesktop" and `FileInfoTimeout` of 5000ms
 5. Create a `FileSystemHost`, mount it at the configured path, and start it
 6. Return the `WinFspMountHandle`
 
@@ -275,7 +275,7 @@ The system SHALL implement `DeltaSyncObserver` for WinFsp via a `WinFspDeltaObse
 
 #### Scenario: Observer created before mount
 - **WHEN** `WinFspMountHandle::mount()` creates the filesystem
-- **THEN** it creates the `WinFspDeltaObserver` sharing the same `OpenFileTable` as the `CloudMountWinFsp` instance, and the observer is accessible via `delta_observer()`
+- **THEN** it creates the `WinFspDeltaObserver` sharing the same `OpenFileTable` as the `carminedesktopWinFsp` instance, and the observer is accessible via `delta_observer()`
 
 ### Requirement: WinFsp driver availability check
 On Windows, the `preflight_checks()` function SHALL verify WinFsp driver availability instead of the CfApi version check. The check SHALL query the registry key `HKLM\SOFTWARE\WinFsp\InstallDir`. If the key exists, the system SHALL verify the WinFsp DLL (`winfsp-x64.dll` on 64-bit systems) is present in the install directory's `bin` subdirectory. If either check fails, the function SHALL return an error with a message directing the user to install WinFsp.
@@ -297,10 +297,10 @@ On first run after upgrading from a CfApi-based version, the system SHALL detect
 
 #### Scenario: First launch after upgrade from CfApi version
 - **WHEN** the application starts on Windows and `cfapi_migrated` is not set in the config
-- **THEN** the system enumerates CfApi sync roots registered by CloudMount, unregisters each one, sets `cfapi_migrated: true` in the config, and logs the number of sync roots cleaned up
+- **THEN** the system enumerates CfApi sync roots registered by carminedesktop, unregisters each one, sets `cfapi_migrated: true` in the config, and logs the number of sync roots cleaned up
 
 #### Scenario: No orphaned sync roots found
-- **WHEN** the migration step runs and no CloudMount-registered sync roots exist
+- **WHEN** the migration step runs and no carminedesktop-registered sync roots exist
 - **THEN** the system sets `cfapi_migrated: true` and continues without error
 
 #### Scenario: Migration already completed
@@ -315,7 +315,7 @@ On first run after upgrading from a CfApi-based version, the system SHALL detect
 On Windows with the WinFsp backend, the system SHALL support `--headless` mode. The `run_headless()` function SHALL NOT reject Windows builds. WinFsp mounts SHALL work without a desktop session because `FileSystemHost::start()` operates independently of Explorer or any GUI components.
 
 #### Scenario: Headless mode on Windows
-- **WHEN** the user runs `cloudmount --headless` on Windows
+- **WHEN** the user runs `carminedesktop --headless` on Windows
 - **THEN** the system initializes WinFsp mounts, starts delta sync, and runs until terminated by a signal
 - **AND** the mounted drives are accessible by all processes on the system
 

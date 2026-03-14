@@ -32,26 +32,26 @@ The system SHALL parse command-line arguments using `clap` with derive macros, p
 - **THEN** the system runs in headless mode (no Tauri GUI) despite the desktop feature being available
 
 ### Requirement: Environment variable configuration
-The system SHALL support `CLOUDMOUNT_*` environment variables as a configuration override layer between CLI arguments and the user config file.
+The system SHALL support `carminedesktop_*` environment variables as a configuration override layer between CLI arguments and the user config file.
 
 #### Scenario: Client ID from environment
-- **WHEN** `CLOUDMOUNT_CLIENT_ID` is set and no `--client-id` CLI argument is provided
+- **WHEN** `carminedesktop_CLIENT_ID` is set and no `--client-id` CLI argument is provided
 - **THEN** the system uses the environment variable value for authentication
 
 #### Scenario: Tenant ID from environment
-- **WHEN** `CLOUDMOUNT_TENANT_ID` is set and no `--tenant-id` CLI argument is provided
+- **WHEN** `carminedesktop_TENANT_ID` is set and no `--tenant-id` CLI argument is provided
 - **THEN** the system uses the environment variable value for authentication
 
 #### Scenario: Log level from environment
-- **WHEN** `CLOUDMOUNT_LOG_LEVEL` is set and no `--log-level` CLI argument is provided
+- **WHEN** `carminedesktop_LOG_LEVEL` is set and no `--log-level` CLI argument is provided
 - **THEN** the system uses the environment variable value for the tracing filter
 
 #### Scenario: Config path from environment
-- **WHEN** `CLOUDMOUNT_CONFIG` is set and no `--config` CLI argument is provided
+- **WHEN** `carminedesktop_CONFIG` is set and no `--config` CLI argument is provided
 - **THEN** the system loads user configuration from the path specified in the environment variable
 
 #### Scenario: CLI overrides environment
-- **WHEN** both `--client-id` CLI argument and `CLOUDMOUNT_CLIENT_ID` environment variable are set
+- **WHEN** both `--client-id` CLI argument and `carminedesktop_CLIENT_ID` environment variable are set
 - **THEN** the CLI argument value takes precedence
 
 ### Requirement: .env file support
@@ -74,7 +74,7 @@ The system SHALL perform validation checks after configuration resolution but be
 
 #### Scenario: Placeholder client ID detected
 - **WHEN** the resolved client ID equals the placeholder value `00000000-0000-0000-0000-000000000000`
-- **THEN** the system prints an error message to stderr explaining that a valid Azure AD client ID is required, references `docs/azure-ad-setup.md` for setup instructions, mentions the `--client-id` flag and `CLOUDMOUNT_CLIENT_ID` env var as alternatives, and exits with code 1 without attempting authentication
+- **THEN** the system prints an error message to stderr explaining that a valid Azure AD client ID is required, references `docs/azure-ad-setup.md` for setup instructions, mentions the `--client-id` flag and `carminedesktop_CLIENT_ID` env var as alternatives, and exits with code 1 without attempting authentication
 
 #### Scenario: FUSE not available on Linux
 - **WHEN** the system is running on Linux and `fusermount3` is not found in PATH
@@ -99,19 +99,19 @@ The repository SHALL include a `.env.example` file documenting all supported env
 The build system SHALL support injecting `client_id`, `tenant_id`, and `app_name` at compile time via environment variables, so CI pipelines can produce branded binaries without managing configuration files.
 
 #### Scenario: CI sets client ID at build time
-- **WHEN** the environment variable `CLOUDMOUNT_CLIENT_ID` is set during `cargo build`
+- **WHEN** the environment variable `carminedesktop_CLIENT_ID` is set during `cargo build`
 - **THEN** the value is baked into the binary via `option_env!()` and used as a fallback when no runtime CLI arg or env var provides a client_id
 
 #### Scenario: CI sets tenant ID at build time
-- **WHEN** the environment variable `CLOUDMOUNT_TENANT_ID` is set during `cargo build`
+- **WHEN** the environment variable `carminedesktop_TENANT_ID` is set during `cargo build`
 - **THEN** the value is baked into the binary and used as a fallback for tenant_id resolution
 
 #### Scenario: CI sets app name at build time
-- **WHEN** the environment variable `CLOUDMOUNT_APP_NAME` is set during `cargo build`
+- **WHEN** the environment variable `carminedesktop_APP_NAME` is set during `cargo build`
 - **THEN** the value is baked into the binary and used as the application display name (tray tooltip, window titles, notifications)
 
 #### Scenario: No build-time env vars set
-- **WHEN** no `CLOUDMOUNT_*` environment variables are set during `cargo build`
+- **WHEN** no `carminedesktop_*` environment variables are set during `cargo build`
 - **THEN** the build succeeds and the binary falls back to `defaults.toml` values or hardcoded defaults
 
 #### Scenario: Runtime override takes precedence over build-time
@@ -134,7 +134,7 @@ The repository SHALL track `build/defaults.toml.example` as a template and gitig
 - **THEN** the file does not appear as untracked or modified because it is listed in `.gitignore`
 
 ### Requirement: Org build guide
-The repository SHALL include `docs/org-build-guide.md` with instructions for setting up a private config overlay repo that builds org-branded CloudMount binaries.
+The repository SHALL include `docs/org-build-guide.md` with instructions for setting up a private config overlay repo that builds org-branded carminedesktop binaries.
 
 #### Scenario: Setting up a GitLab org build
 - **WHEN** an org admin reads `docs/org-build-guide.md`
@@ -144,8 +144,8 @@ The repository SHALL include `docs/org-build-guide.md` with instructions for set
 - **WHEN** an org admin reads `docs/org-build-guide.md`
 - **THEN** they find equivalent instructions using a private GitHub repo with `.github/workflows/build.yml` and GitHub Secrets/Variables
 
-#### Scenario: Updating to a new CloudMount version
-- **WHEN** the org admin wants to update to a new CloudMount release
+#### Scenario: Updating to a new carminedesktop version
+- **WHEN** the org admin wants to update to a new carminedesktop release
 - **THEN** they change the version tag variable in their CI config (one-line change) and trigger a new build; no merge conflicts or source code changes needed
 
 ### Requirement: Developer documentation

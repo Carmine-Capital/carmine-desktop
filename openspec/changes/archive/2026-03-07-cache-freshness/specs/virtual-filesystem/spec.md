@@ -39,7 +39,7 @@ The FUSE mount must configure kernel-level performance options to maximize I/O t
 
 #### Scenario: Mount includes max_read option
 
-- **WHEN** CloudMountFs mounts on Linux or macOS
+- **WHEN** carminedesktopFs mounts on Linux or macOS
 - **THEN** the mount options include `max_read=1048576` (1MB)
 - **AND** the kernel sends read requests up to 1MB instead of the default 128KB
 
@@ -58,7 +58,7 @@ The FUSE mount must configure kernel-level performance options to maximize I/O t
 
 #### Scenario: NoAtime reduces unnecessary metadata updates
 
-- **WHEN** CloudMountFs mounts
+- **WHEN** carminedesktopFs mounts
 - **THEN** the mount options include `NoAtime`
 - **AND** file access times are not updated on read
 

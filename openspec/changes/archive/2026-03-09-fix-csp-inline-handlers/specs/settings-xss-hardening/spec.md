@@ -8,7 +8,7 @@ All interactive elements in settings and wizard HTML pages SHALL have their even
 - **THEN** all action buttons (Save General, Save Advanced, Add Mount, Sign Out, Clear Cache) execute their associated handler functions when clicked
 
 #### Scenario: Inline onclick attribute is absent from all HTML
-- **WHEN** any HTML file in `crates/cloudmount-app/dist/` is inspected
+- **WHEN** any HTML file in `crates/carminedesktop-app/dist/` is inspected
 - **THEN** no element contains an `onclick`, `onsubmit`, `onchange`, or other inline `on<event>` attribute
 
 #### Scenario: New button added with inline handler is caught

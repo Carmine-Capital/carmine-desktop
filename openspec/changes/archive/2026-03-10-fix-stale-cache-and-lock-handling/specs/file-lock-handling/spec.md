@@ -40,11 +40,11 @@ When `flush_inode` receives a 423 Locked error from the Graph API upload, the sy
 - **AND** each save emits a `VfsEvent::FileLocked` event
 
 ### Requirement: Distinct error for 423 Locked HTTP response
-The Graph client SHALL map HTTP 423 Locked responses to a distinct `Error::Locked` variant in `cloudmount_core::Error`, analogous to the existing `Error::PreconditionFailed` for HTTP 412. This allows callers to match on the specific error type and handle locked files differently from generic API errors.
+The Graph client SHALL map HTTP 423 Locked responses to a distinct `Error::Locked` variant in `carminedesktop_core::Error`, analogous to the existing `Error::PreconditionFailed` for HTTP 412. This allows callers to match on the specific error type and handle locked files differently from generic API errors.
 
 #### Scenario: Graph API returns 423
 - **WHEN** the Graph client receives a 423 status code from any API call
-- **THEN** it returns `Err(cloudmount_core::Error::Locked)`
+- **THEN** it returns `Err(carminedesktop_core::Error::Locked)`
 
 #### Scenario: Graph API returns other 4xx errors
 - **WHEN** the Graph client receives a 4xx status code other than 412 or 423

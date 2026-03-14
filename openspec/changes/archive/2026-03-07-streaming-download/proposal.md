@@ -24,7 +24,7 @@ _(none — this is an internal performance optimization within existing capabili
 
 ## Impact
 
-- **Code**: `crates/cloudmount-vfs/src/core_ops.rs` (major — `OpenFile`, `OpenFileTable`, `open_file`, `read_handle`, `release_file`), `crates/cloudmount-vfs/src/fuse_fs.rs` (minor — no API change, just different blocking behavior), `crates/cloudmount-vfs/src/cfapi.rs` (minor — `fetch_data` benefits from range-aware reads), `crates/cloudmount-graph/src/client.rs` (minor — add streaming download helper alongside existing `download_content`/`download_range`).
+- **Code**: `crates/carminedesktop-vfs/src/core_ops.rs` (major — `OpenFile`, `OpenFileTable`, `open_file`, `read_handle`, `release_file`), `crates/carminedesktop-vfs/src/fuse_fs.rs` (minor — no API change, just different blocking behavior), `crates/carminedesktop-vfs/src/cfapi.rs` (minor — `fetch_data` benefits from range-aware reads), `crates/carminedesktop-graph/src/client.rs` (minor — add streaming download helper alongside existing `download_content`/`download_range`).
 - **Tests**: New unit tests for `DownloadState` progress tracking, integration tests for streaming open/read/release lifecycle, tests for cancellation and error propagation.
 - **Dependencies**: None added. Uses existing `tokio::sync` primitives (`watch`, `Notify`), `bytes`, and `dashmap`.
 - **Backwards compatibility**: External FUSE/CfApi behavior is improved (faster open), not broken. Write path is unchanged.

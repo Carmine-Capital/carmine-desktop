@@ -5,7 +5,7 @@ The system SHALL initialize all service components in dependency order during ap
 
 #### Scenario: Initialization sequence
 - **WHEN** the application starts
-- **THEN** it initializes in this order: (1) load .env file if present, (2) parse CLI arguments (including env var fallbacks), (3) load user config → derive effective config with built-in defaults, (4) run pre-flight validation (client ID sanity check, FUSE availability on Linux/macOS, CfApi version on Windows), (5) create AuthManager with the official CloudMount client_id (overridden by `--client-id` CLI arg if provided), (6) create GraphClient with AuthManager's token provider, (7) create CacheManager with cache directory and SQLite database, (8) create shared InodeTable, (9) assemble AppState with all components, (10) register `tauri-plugin-updater` in the Tauri builder (desktop mode only)
+- **THEN** it initializes in this order: (1) load .env file if present, (2) parse CLI arguments (including env var fallbacks), (3) load user config → derive effective config with built-in defaults, (4) run pre-flight validation (client ID sanity check, FUSE availability on Linux/macOS, CfApi version on Windows), (5) create AuthManager with the official carminedesktop client_id (overridden by `--client-id` CLI arg if provided), (6) create GraphClient with AuthManager's token provider, (7) create CacheManager with cache directory and SQLite database, (8) create shared InodeTable, (9) assemble AppState with all components, (10) register `tauri-plugin-updater` in the Tauri builder (desktop mode only)
 
 #### Scenario: Initialization failure in config
 - **WHEN** the user config cannot be loaded

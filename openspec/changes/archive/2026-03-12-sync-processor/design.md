@@ -1,6 +1,6 @@
 ## Context
 
-CloudMount's VFS layer (FUSE on Linux/macOS, WinFsp on Windows) processes file uploads synchronously on the OS callback thread. When an application closes a modified file, `flush_handle()` blocks until the entire upload pipeline completes: writeback persist, conflict detection (Graph API call), and upload (Graph API call). This ties up OS threads and blocks applications unnecessarily.
+carminedesktop's VFS layer (FUSE on Linux/macOS, WinFsp on Windows) processes file uploads synchronously on the OS callback thread. When an application closes a modified file, `flush_handle()` blocks until the entire upload pipeline completes: writeback persist, conflict detection (Graph API call), and upload (Graph API call). This ties up OS threads and blocks applications unnecessarily.
 
 Both FUSE and WinFsp backends delegate all filesystem logic to `CoreOps` in `core_ops.rs` (1856 lines). The upload path (`flush_inode`, lines 913-1104) lives inside `CoreOps` as an async method. A separate 15-second retry task in `main.rs` handles failed uploads by scanning the writeback cache.
 
@@ -26,11 +26,11 @@ There is no concurrency control, deduplication, or centralized observability for
 
 ### 1. Processor as a separate module (`sync_processor.rs`)
 
-**Decision**: New file `crates/cloudmount-vfs/src/sync_processor.rs`, not added to `core_ops.rs`.
+**Decision**: New file `crates/carminedesktop-vfs/src/sync_processor.rs`, not added to `core_ops.rs`.
 
 **Alternatives considered**:
 - *Add to `core_ops.rs`*: Already 1856 lines. Adding ~300 lines of processor logic would make it harder to reason about. The processor has a distinct responsibility (upload scheduling) vs `core_ops` (filesystem operations).
-- *Put in `cloudmount-app`*: Would break crate boundaries — VFS should own its upload pipeline without depending on the app layer.
+- *Put in `carminedesktop-app`*: Would break crate boundaries — VFS should own its upload pipeline without depending on the app layer.
 
 **Rationale**: Single-responsibility module. The processor is a self-contained unit with a clear interface (`SyncHandle` to send, `spawn_sync_processor()` to start). Testable independently with mocked dependencies.
 

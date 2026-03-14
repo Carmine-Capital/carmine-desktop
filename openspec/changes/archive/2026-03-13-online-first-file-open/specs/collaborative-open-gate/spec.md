@@ -8,17 +8,17 @@ The `CollabOpenRequest` SHALL include: local path, file extension, DriveItem id,
 The `CollabOpenResponse` SHALL be one of: `OpenOnline` or `OpenLocally`.
 
 #### Scenario: Interactive shell opens a collaborative file
-- **WHEN** `explorer.exe` opens a `.docx` file on a CloudMount mount
+- **WHEN** `explorer.exe` opens a `.docx` file on a carminedesktop mount
 - **AND** CollabGate is enabled (channel is `Some`)
 - **THEN** the VFS sends a `CollabOpenRequest` via the channel
 - **AND** blocks on the oneshot reply
 
 #### Scenario: Non-interactive process opens a collaborative file
-- **WHEN** a non-shell process opens a `.docx` file on a CloudMount mount
+- **WHEN** a non-shell process opens a `.docx` file on a carminedesktop mount
 - **THEN** the VFS serves the file locally without sending a `CollabOpenRequest`
 
 #### Scenario: Interactive shell opens a non-collaborative file
-- **WHEN** `explorer.exe` opens a `.pdf` file on a CloudMount mount
+- **WHEN** `explorer.exe` opens a `.pdf` file on a carminedesktop mount
 - **THEN** the VFS serves the file locally without sending a `CollabOpenRequest`
 
 #### Scenario: CollabGate is disabled (headless mode)
@@ -61,7 +61,7 @@ The Tauri app SHALL listen for `CollabOpenRequest` messages and unconditionally 
 - **AND** responds `OpenLocally` as fallback
 
 ### Requirement: Collaborative open config (TOML-only)
-The CloudMount config SHALL support a `[collaborative_open]` section with:
+The carminedesktop config SHALL support a `[collaborative_open]` section with:
 - `timeout_seconds`: u64 (default `15`) — CollabGate timeout
 - `shell_processes`: list of additional interactive shell process names
 

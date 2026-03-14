@@ -9,7 +9,7 @@ get_my_drive()                 → first Graph call, discovers drive.id
 auth.set_account_id(drive.id)  → updates in-memory only
 ```
 
-**Storage backends involved:** OS keyring (primary) with AES-256-GCM encrypted file fallback (`tokens_{key}.enc`). Both are keyed by a string identifier. The migration must run against both backends transparently — `store_tokens`/`delete_tokens` in `cloudmount-auth::storage` already handle this.
+**Storage backends involved:** OS keyring (primary) with AES-256-GCM encrypted file fallback (`tokens_{key}.enc`). Both are keyed by a string identifier. The migration must run against both backends transparently — `store_tokens`/`delete_tokens` in `carminedesktop-auth::storage` already handle this.
 
 ## Goals / Non-Goals
 

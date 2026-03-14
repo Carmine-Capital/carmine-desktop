@@ -8,6 +8,6 @@
 
 ## 2. Verification
 
-- [x] 2.1 Run `cargo clippy -p cloudmount-vfs --all-targets --all-features` (Windows target cross-check via `cargo check --target x86_64-pc-windows-msvc -p cloudmount-vfs`) and confirm zero warnings
+- [x] 2.1 Run `cargo clippy -p carminedesktop-vfs --all-targets --all-features` (Windows target cross-check via `cargo check --target x86_64-pc-windows-msvc -p carminedesktop-vfs`) and confirm zero warnings
 - [x] 2.2 Run `cargo fmt --all -- --check` and confirm no formatting issues
 - [x] 2.3 Confirm the modified function compiles under `#[cfg(target_os = "windows")]` and no Linux/macOS code is affected

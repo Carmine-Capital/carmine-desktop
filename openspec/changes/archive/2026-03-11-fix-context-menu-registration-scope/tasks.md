@@ -1,6 +1,6 @@
 ## 1. Windows Lifecycle State Management
 
-- [x] 1.1 Add a Windows-only process-wide active-mount tracker in `crates/cloudmount-vfs/src/cfapi.rs` (atomic counter or mutex-guarded state).
+- [x] 1.1 Add a Windows-only process-wide active-mount tracker in `crates/carminedesktop-vfs/src/cfapi.rs` (atomic counter or mutex-guarded state).
 - [x] 1.2 Add helper functions that handle 0->1 and 1->0 transitions for context-menu registration lifecycle.
 
 ## 2. Registry Helper Hardening

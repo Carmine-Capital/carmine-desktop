@@ -17,6 +17,6 @@ The WinFsp backend is missing the `flush` trait callback, causing two user-visib
 
 ## Impact
 
-- `crates/cloudmount-vfs/src/winfsp_fs.rs` — add `flush` method to `FileSystemContext` impl, fix stale item in `open`
-- `crates/cloudmount-vfs/src/core_ops.rs` — add temp-file name check in `flush_inode` before upload
+- `crates/carminedesktop-vfs/src/winfsp_fs.rs` — add `flush` method to `FileSystemContext` impl, fix stale item in `open`
+- `crates/carminedesktop-vfs/src/core_ops.rs` — add temp-file name check in `flush_inode` before upload
 - No dependency changes, no API changes, no breaking changes

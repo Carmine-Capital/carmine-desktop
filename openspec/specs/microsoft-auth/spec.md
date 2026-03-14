@@ -6,7 +6,7 @@ The system SHALL authenticate users via OAuth2 Authorization Code Flow with PKCE
 
 #### Scenario: First-time login
 - **WHEN** the user clicks "Sign In" and has no existing tokens
-- **THEN** the system invokes the injected URL opener with the Microsoft OAuth2 authorize endpoint (`login.microsoftonline.com/common/oauth2/v2.0/authorize`) with PKCE challenge, the official CloudMount client_id, redirect_uri (http://localhost:{dynamic_port}/callback), and scopes (User.Read, Files.ReadWrite.All, Sites.Read.All, offline_access); the `common` endpoint supports both M365 organizational accounts and personal Microsoft accounts (MSA)
+- **THEN** the system invokes the injected URL opener with the Microsoft OAuth2 authorize endpoint (`login.microsoftonline.com/common/oauth2/v2.0/authorize`) with PKCE challenge, the official carminedesktop client_id, redirect_uri (http://localhost:{dynamic_port}/callback), and scopes (User.Read, Files.ReadWrite.All, Sites.Read.All, offline_access); the `common` endpoint supports both M365 organizational accounts and personal Microsoft accounts (MSA)
 
 #### Scenario: Successful authentication callback
 - **WHEN** the user completes login in the browser and is redirected to the localhost callback with an authorization code
@@ -87,15 +87,15 @@ The system SHALL store OAuth tokens in the operating system's native secure cred
 
 #### Scenario: Token storage on Linux
 - **WHEN** tokens are obtained after authentication on Linux
-- **THEN** the system stores them via the Secret Service API (GNOME Keyring or KWallet) under the service name "cloudmount"
+- **THEN** the system stores them via the Secret Service API (GNOME Keyring or KWallet) under the service name "carminedesktop"
 
 #### Scenario: Token storage on macOS
 - **WHEN** tokens are obtained after authentication on macOS
-- **THEN** the system stores them in the macOS Keychain under the service name "cloudmount"
+- **THEN** the system stores them in the macOS Keychain under the service name "carminedesktop"
 
 #### Scenario: Token storage on Windows
 - **WHEN** tokens are obtained after authentication on Windows
-- **THEN** the system stores them in Windows Credential Manager under the target "cloudmount"
+- **THEN** the system stores them in Windows Credential Manager under the target "carminedesktop"
 
 #### Scenario: Verify-after-write for credential store
 - **WHEN** the system writes tokens to the OS credential store and the write call returns success
@@ -124,7 +124,7 @@ The system SHALL request the minimum necessary permission scopes for its functio
 - **THEN** the system requests exactly these scopes: `User.Read` (user profile), `Files.ReadWrite.All` (OneDrive file access), `Sites.Read.All` (SharePoint site discovery), `offline_access` (refresh token)
 
 ### Requirement: Client ID resolution
-The system SHALL use the official CloudMount client ID (`8ebe3ef7-f509-4146-8fef-c9b5d7c22252`) as a hardcoded constant. A `--client-id` CLI argument MAY override this value for development and testing purposes. No build-time env vars or packaged defaults participate in client ID resolution.
+The system SHALL use the official carminedesktop client ID (`8ebe3ef7-f509-4146-8fef-c9b5d7c22252`) as a hardcoded constant. A `--client-id` CLI argument MAY override this value for development and testing purposes. No build-time env vars or packaged defaults participate in client ID resolution.
 
 #### Scenario: Client ID from CLI argument (development override)
 - **WHEN** the `--client-id` CLI argument is provided
@@ -132,7 +132,7 @@ The system SHALL use the official CloudMount client ID (`8ebe3ef7-f509-4146-8fef
 
 #### Scenario: No CLI override — official client ID used
 - **WHEN** no `--client-id` CLI argument is provided
-- **THEN** the OAuth2 flow uses the hardcoded official CloudMount client ID constant
+- **THEN** the OAuth2 flow uses the hardcoded official carminedesktop client ID constant
 
 ### Requirement: Sign-in cancellation API
 The system SHALL expose a `cancel()` method on `AuthManager` that, when called, immediately terminates any active PKCE flow. This method SHALL be callable from any context (including from a Tauri command handler) and SHALL be a no-op if no flow is currently active.

@@ -1,6 +1,6 @@
 ## Why
 
-Users must manually install WinFsp before using CloudMount on Windows. This creates a poor first-run experience — the app fails with a cryptic DLL error or a preflight dialog directing users to an external download. Bundling WinFsp with the NSIS installer eliminates this friction and matches what other WinFsp-based apps (Cryptomator, Parsec) do.
+Users must manually install WinFsp before using carminedesktop on Windows. This creates a poor first-run experience — the app fails with a cryptic DLL error or a preflight dialog directing users to an external download. Bundling WinFsp with the NSIS installer eliminates this friction and matches what other WinFsp-based apps (Cryptomator, Parsec) do.
 
 ## What Changes
 
@@ -8,7 +8,7 @@ Users must manually install WinFsp before using CloudMount on Windows. This crea
 - CI workflows download a pinned WinFsp MSI from GitHub releases during the Windows build
 - Tauri NSIS configuration adds an installer hook for the pre-install phase
 - WinFsp copyright attribution is added to the settings page (redistribution license requirement)
-- WinFsp is **not** removed on CloudMount uninstall (other apps may depend on it)
+- WinFsp is **not** removed on carminedesktop uninstall (other apps may depend on it)
 - The existing runtime preflight check in `main.rs` is preserved as a safety net for manual/portable installs
 
 ## Capabilities
@@ -24,6 +24,6 @@ Users must manually install WinFsp before using CloudMount on Windows. This crea
 
 - **CI**: `release.yml` and `build-installer.yml` gain a WinFsp MSI download step (Windows jobs only)
 - **Installer size**: Increases by ~1.5 MB (WinFsp MSI)
-- **New files**: `crates/cloudmount-app/windows/hooks.nsh`, updated `tauri.conf.json`
+- **New files**: `crates/carminedesktop-app/windows/hooks.nsh`, updated `tauri.conf.json`
 - **Dependencies**: WinFsp MSI version pinned in CI — must be updated when upgrading the `winfsp` crate
-- **Legal**: WinFsp GPLv3 redistribution exception applies (CloudMount is MIT); requires copyright notice in UI
+- **Legal**: WinFsp GPLv3 redistribution exception applies (carminedesktop is MIT); requires copyright notice in UI

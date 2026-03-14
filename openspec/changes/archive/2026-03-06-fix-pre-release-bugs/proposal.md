@@ -23,11 +23,11 @@ _(none — all changes fit within existing capability boundaries)_
 
 ## Impact
 
-- **`crates/cloudmount-auth/src/storage.rs`**: Modify `store_tokens()` to verify-after-write on keyring path
-- **`crates/cloudmount-auth/tests/auth_integration.rs`**: Fix clippy warnings (`nonminimal_bool`)
-- **`crates/cloudmount-app/src/main.rs`**: Rewrite `run_headless()` with full lifecycle
-- **`crates/cloudmount-app/src/commands.rs`**: Add `clear_cache` Tauri command
-- **`crates/cloudmount-app/dist/settings.html`**: Wire `clearCache()` to invoke backend
-- **`crates/cloudmount-app/icons/`**: Convert source SVG to 4 platform formats (PNG, ICNS, ICO)
-- **`crates/cloudmount-app/tauri.conf.json`**: No changes needed (already references correct paths)
+- **`crates/carminedesktop-auth/src/storage.rs`**: Modify `store_tokens()` to verify-after-write on keyring path
+- **`crates/carminedesktop-auth/tests/auth_integration.rs`**: Fix clippy warnings (`nonminimal_bool`)
+- **`crates/carminedesktop-app/src/main.rs`**: Rewrite `run_headless()` with full lifecycle
+- **`crates/carminedesktop-app/src/commands.rs`**: Add `clear_cache` Tauri command
+- **`crates/carminedesktop-app/dist/settings.html`**: Wire `clearCache()` to invoke backend
+- **`crates/carminedesktop-app/icons/`**: Convert source SVG to 4 platform formats (PNG, ICNS, ICO)
+- **`crates/carminedesktop-app/tauri.conf.json`**: No changes needed (already references correct paths)
 - **CI**: All existing checks should pass after fixes (fmt, clippy, tests)

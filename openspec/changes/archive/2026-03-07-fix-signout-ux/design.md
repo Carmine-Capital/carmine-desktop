@@ -42,7 +42,7 @@ When `commands::sign_out` needs to show the wizard, if the window already exists
 The `wizard + !authenticated → exit(0)` branch was added to handle first-run abandonment. With the new design:
 - Closing the wizard always hides it (same as every other window)
 - The tray always has "Sign In…" when unauthenticated, giving the user a path back
-- Users can quit via "Quit CloudMount" from the tray at any time
+- Users can quit via "Quit carminedesktop" from the tray at any time
 
 This is a behavior change: previously, closing the wizard on first run exited the process. Now the app stays alive. This is acceptable because the tray is always present and functional.
 

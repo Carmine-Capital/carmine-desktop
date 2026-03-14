@@ -1,6 +1,6 @@
 ## Purpose
 
-Developer experience capabilities for CloudMount: CLI argument parsing, environment variable configuration, .env file support, startup pre-flight validation, build-time configuration injection, defaults.toml template pattern, org build guide, and developer documentation.
+Developer experience capabilities for carminedesktop: CLI argument parsing, environment variable configuration, .env file support, startup pre-flight validation, build-time configuration injection, defaults.toml template pattern, org build guide, and developer documentation.
 
 ## Requirements
 
@@ -138,14 +138,14 @@ The repository SHALL track `build/defaults.toml.example` as a template and gitig
 - **THEN** the file does not appear as untracked or modified because it is listed in `.gitignore`
 
 ### Requirement: Org build guide
-The repository SHALL include `docs/org-build-guide.md` with instructions for setting up a private config overlay repo that builds org-branded CloudMount binaries.
+The repository SHALL include `docs/org-build-guide.md` with instructions for setting up a private config overlay repo that builds org-branded carminedesktop binaries.
 
 #### Scenario: Setting up a GitHub org build
 - **WHEN** an org admin reads `docs/org-build-guide.md`
 - **THEN** they find step-by-step instructions for: creating a private GitHub repo with `defaults.toml` and `.github/workflows/build.yml`, configuring Secrets (CLIENT_ID) and Variables (TENANT_ID, APP_NAME, VERSION), and the workflow that clones the public repo at a pinned version, injects config, and builds
 
-#### Scenario: Updating to a new CloudMount version
-- **WHEN** the org admin wants to update to a new CloudMount release
+#### Scenario: Updating to a new carminedesktop version
+- **WHEN** the org admin wants to update to a new carminedesktop release
 - **THEN** they change the version tag variable in their CI config (one-line change) and trigger a new build; no merge conflicts or source code changes needed
 
 ### Requirement: Developer documentation

@@ -1,6 +1,6 @@
 ## Context
 
-Headless mode (`#[cfg(not(feature = "desktop"))]`) was implemented in the `fix-pre-release-bugs` change as a full lifecycle — auth, crash recovery, mount startup, delta sync, signal-based shutdown. A detailed audit against the app-lifecycle spec and the desktop code path uncovered 7 issues. The most critical is a token storage key mismatch in `cloudmount-auth` that breaks token restoration in both modes. Two further bugs break headless first-time-use, two are behavioral defects, and two are structural improvements. Fixes span `crates/cloudmount-auth/src/manager.rs` (1-line key fix) and `crates/cloudmount-app/src/main.rs` (the rest).
+Headless mode (`#[cfg(not(feature = "desktop"))]`) was implemented in the `fix-pre-release-bugs` change as a full lifecycle — auth, crash recovery, mount startup, delta sync, signal-based shutdown. A detailed audit against the app-lifecycle spec and the desktop code path uncovered 7 issues. The most critical is a token storage key mismatch in `carminedesktop-auth` that breaks token restoration in both modes. Two further bugs break headless first-time-use, two are behavioral defects, and two are structural improvements. Fixes span `crates/carminedesktop-auth/src/manager.rs` (1-line key fix) and `crates/carminedesktop-app/src/main.rs` (the rest).
 
 **Token storage key mismatch** (affects both modes): In `AuthManager`, `exchange_code()` (manager.rs:114) and `refresh()` (manager.rs:138) store tokens via `store_tokens(&self.client_id, &tokens)` where `client_id` is the Azure AD app ID (e.g., `"00000000-0000-0000-0000-000000000000"`). But `try_restore(account_id)` (manager.rs:43) calls `load_tokens(account_id)` where `account_id` comes from `AccountMetadata.id` in the user config — which is set to `drive.id` (e.g., `"b!xYzAbCdEfGhIjK..."`) in commands.rs:70. These are completely different strings, so tokens are never found on restart. The `sign_out()` method (manager.rs:83) correctly uses `self.client_id` for deletion, consistent with store.
 
@@ -33,16 +33,16 @@ Without steps 1-4, headless sign-in produces valid tokens with no persisted acco
 
 ### D0: Fix token storage key in `try_restore()`
 
-**Decision**: Change `try_restore()` in `crates/cloudmount-auth/src/manager.rs` to use `self.client_id` as the storage lookup key instead of the caller-provided `account_id` parameter:
+**Decision**: Change `try_restore()` in `crates/carminedesktop-auth/src/manager.rs` to use `self.client_id` as the storage lookup key instead of the caller-provided `account_id` parameter:
 
 ```rust
 // Before (broken):
-pub async fn try_restore(&self, account_id: &str) -> cloudmount_core::Result<bool> {
+pub async fn try_restore(&self, account_id: &str) -> carminedesktop_core::Result<bool> {
     let tokens = match crate::storage::load_tokens(account_id)? {
 //                                                  ^^^^^^^^^^  drive.id → NOT FOUND
 
 // After (fixed):
-pub async fn try_restore(&self, account_id: &str) -> cloudmount_core::Result<bool> {
+pub async fn try_restore(&self, account_id: &str) -> carminedesktop_core::Result<bool> {
     let tokens = match crate::storage::load_tokens(&self.client_id)? {
 //                                                  ^^^^^^^^^^^^^^  same key as store/refresh/delete
 ```
@@ -58,13 +58,13 @@ This makes all four storage operations consistent:
 
 The `account_id` parameter is retained for logging purposes (to identify which account is being restored) but is no longer used as the storage key.
 
-**Why this is correct for the current design**: CloudMount supports a single authenticated user per instance. The `AuthManager` is constructed once with one `client_id`. Tokens for that session are stored under `client_id`. There is exactly one token set per application instance. The `account_id` (drive.id) is a user-domain concept that belongs in `AccountMetadata`, not as a storage key.
+**Why this is correct for the current design**: carminedesktop supports a single authenticated user per instance. The `AuthManager` is constructed once with one `client_id`. Tokens for that session are stored under `client_id`. There is exactly one token set per application instance. The `account_id` (drive.id) is a user-domain concept that belongs in `AccountMetadata`, not as a storage key.
 
 **Alternative considered**: Store tokens under `drive.id` (change store to match restore). Rejected — `drive.id` is not known at sign-in time (it's discovered AFTER sign-in via `graph.get_my_drive()`), so `exchange_code()` cannot use it. The `client_id` is available from construction.
 
 **Alternative considered**: Store tokens under both keys. Rejected — wasteful duplication, confusing semantics, and both copies need cleanup on sign-out.
 
-**Future multi-account note**: If CloudMount ever supports multiple simultaneous accounts, token storage will need a redesign (e.g., per-account AuthManager instances, or a composite key like `{client_id}:{user_oid}`). That's a separate change.
+**Future multi-account note**: If carminedesktop ever supports multiple simultaneous accounts, token storage will need a redesign (e.g., per-account AuthManager instances, or a composite key like `{client_id}:{user_oid}`). That's a separate change.
 
 ### D1: Shared `init_components()` function
 

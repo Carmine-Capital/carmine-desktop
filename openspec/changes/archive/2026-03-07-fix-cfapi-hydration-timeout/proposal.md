@@ -20,7 +20,7 @@ None.
 
 ## Impact
 
-- `crates/cloudmount-vfs/src/cfapi.rs` — `fetch_data` method rewritten
+- `crates/carminedesktop-vfs/src/cfapi.rs` — `fetch_data` method rewritten
 - No API surface changes; behavior change is internal to the Windows CfApi path only
-- `crates/cloudmount-vfs/tests/cfapi_integration.rs` — `cfapi_hydrate_file_on_read` and `cfapi_edit_and_sync_file` tests must pass after fix
+- `crates/carminedesktop-vfs/tests/cfapi_integration.rs` — `cfapi_hydrate_file_on_read` and `cfapi_edit_and_sync_file` tests must pass after fix
 - No new dependencies required

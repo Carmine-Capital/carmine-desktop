@@ -4,11 +4,11 @@
 
 ## 2. VFS — Root Inode Initialization
 
-- [x] 2.1 In `MountHandle::mount` (`crates/cloudmount-vfs/src/mount.rs`): call `rt.block_on(graph.get_item(drive_id, "root"))` before `spawn_mount2`; return `Err` if it fails
+- [x] 2.1 In `MountHandle::mount` (`crates/carminedesktop-vfs/src/mount.rs`): call `rt.block_on(graph.get_item(drive_id, "root"))` before `spawn_mount2`; return `Err` if it fails
 - [x] 2.2 Call `inodes.set_root(&root_item.id)` with the fetched item
 - [x] 2.3 Seed the root item into `cache.memory.insert(ROOT_INODE, root_item.clone())`
 - [x] 2.4 Seed the root item into `cache.sqlite` (upsert with inode = ROOT_INODE and parent = None)
-- [x] 2.5 Apply the same initialization to `CfMountHandle::mount` (`crates/cloudmount-vfs/src/cfapi.rs`)
+- [x] 2.5 Apply the same initialization to `CfMountHandle::mount` (`crates/carminedesktop-vfs/src/cfapi.rs`)
 
 ## 3. Tests
 

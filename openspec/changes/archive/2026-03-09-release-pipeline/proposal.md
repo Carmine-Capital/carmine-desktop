@@ -1,6 +1,6 @@
 ## Why
 
-CloudMount can be built and tested on all three platforms via CI, but there is no way to produce distributable packages (installers, disk images, AppImages) or publish them as releases. Users currently have no way to install the application without building from source.
+carminedesktop can be built and tested on all three platforms via CI, but there is no way to produce distributable packages (installers, disk images, AppImages) or publish them as releases. Users currently have no way to install the application without building from source.
 
 ## What Changes
 
@@ -23,7 +23,7 @@ CloudMount can be built and tested on all three platforms via CI, but there is n
 ## Impact
 
 - **New file**: `.github/workflows/release.yml`
-- **Modified file**: `crates/cloudmount-app/tauri.conf.json` — updater endpoint, pubkey, switch WiX → NSIS
+- **Modified file**: `crates/carminedesktop-app/tauri.conf.json` — updater endpoint, pubkey, switch WiX → NSIS
 - **GitHub secrets required**: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 - **No code changes** — all application code (updater, bundler config) already exists; this change wires configuration and CI.
 - **Existing CI unchanged** — `ci.yml` continues to run on push/PR to main.

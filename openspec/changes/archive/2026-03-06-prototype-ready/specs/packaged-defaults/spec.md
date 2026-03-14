@@ -25,16 +25,16 @@ The system SHALL resolve the effective configuration by merging four layers: CLI
 
 #### Scenario: Full precedence chain for client_id
 - **WHEN** the system resolves client_id
-- **THEN** it checks in order: (1) `--client-id` CLI arg, (2) `CLOUDMOUNT_CLIENT_ID` runtime env var, (3) `CLOUDMOUNT_CLIENT_ID` build-time `option_env!()`, (4) `packaged_defaults.tenant.client_id` from `defaults.toml`, (5) built-in `DEFAULT_CLIENT_ID` constant
+- **THEN** it checks in order: (1) `--client-id` CLI arg, (2) `carminedesktop_CLIENT_ID` runtime env var, (3) `carminedesktop_CLIENT_ID` build-time `option_env!()`, (4) `packaged_defaults.tenant.client_id` from `defaults.toml`, (5) built-in `DEFAULT_CLIENT_ID` constant
 
 #### Scenario: Full precedence chain for tenant_id
 - **WHEN** the system resolves tenant_id
-- **THEN** it checks in order: (1) `--tenant-id` CLI arg, (2) `CLOUDMOUNT_TENANT_ID` runtime env var, (3) `CLOUDMOUNT_TENANT_ID` build-time `option_env!()`, (4) `packaged_defaults.tenant.id` from `defaults.toml`, (5) None (common endpoint used)
+- **THEN** it checks in order: (1) `--tenant-id` CLI arg, (2) `carminedesktop_TENANT_ID` runtime env var, (3) `carminedesktop_TENANT_ID` build-time `option_env!()`, (4) `packaged_defaults.tenant.id` from `defaults.toml`, (5) None (common endpoint used)
 
 ## ADDED Requirements
 
 ### Requirement: Build-time defaults file template
-The repository SHALL track `build/defaults.toml.example` as a documented template and gitignore `build/defaults.toml`. A `build.rs` script in `cloudmount-app` SHALL copy the template to `defaults.toml` if the file is missing, ensuring compilation succeeds on fresh clones.
+The repository SHALL track `build/defaults.toml.example` as a documented template and gitignore `build/defaults.toml`. A `build.rs` script in `carminedesktop-app` SHALL copy the template to `defaults.toml` if the file is missing, ensuring compilation succeeds on fresh clones.
 
 #### Scenario: Fresh clone compilation
 - **WHEN** a developer clones the repository and `build/defaults.toml` does not exist
@@ -46,4 +46,4 @@ The repository SHALL track `build/defaults.toml.example` as a documented templat
 
 #### Scenario: Rebuild after defaults.toml change
 - **WHEN** the contents of `build/defaults.toml` change
-- **THEN** `build.rs` triggers a recompile of `cloudmount-app` via `cargo::rerun-if-changed`
+- **THEN** `build.rs` triggers a recompile of `carminedesktop-app` via `cargo::rerun-if-changed`

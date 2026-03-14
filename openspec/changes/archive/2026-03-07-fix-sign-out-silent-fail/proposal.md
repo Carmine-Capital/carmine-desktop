@@ -21,7 +21,7 @@ None.
 
 ## Impact
 
-- `crates/cloudmount-app/src/tray.rs` — `update_tray_menu`: replace `unwrap()` with graceful handling
-- `crates/cloudmount-app/src/commands.rs` — `sign_out`: restructure to always execute state reset and UI recovery
+- `crates/carminedesktop-app/src/tray.rs` — `update_tray_menu`: replace `unwrap()` with graceful handling
+- `crates/carminedesktop-app/src/commands.rs` — `sign_out`: restructure to always execute state reset and UI recovery
 - `openspec/specs/tray-app/spec.md` (delta) — sign-out robustness requirements
 - `openspec/specs/app-lifecycle/spec.md` (delta) — sign-out lifecycle requirements

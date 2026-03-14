@@ -1,7 +1,7 @@
 ## 1. Types and Configuration
 
-- [x] 1.1 Create `sync_processor.rs` module in `crates/cloudmount-vfs/src/` with `SyncRequest` enum (`Flush { ino }`, `Shutdown`), `SyncHandle` struct, `SyncProcessorConfig` struct with defaults, `SyncMetrics` struct, and `SyncProcessorDeps` struct
-- [x] 1.2 Add `mod sync_processor` to `crates/cloudmount-vfs/src/lib.rs` and export public types (`SyncHandle`, `SyncRequest`, `SyncProcessorConfig`, `SyncMetrics`, `SyncProcessorDeps`)
+- [x] 1.1 Create `sync_processor.rs` module in `crates/carminedesktop-vfs/src/` with `SyncRequest` enum (`Flush { ino }`, `Shutdown`), `SyncHandle` struct, `SyncProcessorConfig` struct with defaults, `SyncMetrics` struct, and `SyncProcessorDeps` struct
+- [x] 1.2 Add `mod sync_processor` to `crates/carminedesktop-vfs/src/lib.rs` and export public types (`SyncHandle`, `SyncRequest`, `SyncProcessorConfig`, `SyncMetrics`, `SyncProcessorDeps`)
 
 ## 2. Extract flush_inode
 

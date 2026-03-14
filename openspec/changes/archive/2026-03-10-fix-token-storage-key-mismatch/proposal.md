@@ -20,8 +20,8 @@ After a successful sign-in, tokens are stored under the OAuth client ID because 
 
 ## Impact
 
-- `crates/cloudmount-auth/src/manager.rs`: new `finalize_sign_in` method, modified `try_restore`
-- `crates/cloudmount-app/src/commands.rs`: one-line change in `complete_sign_in` (`set_account_id` → `finalize_sign_in`)
-- No public API changes visible outside `cloudmount-auth`
+- `crates/carminedesktop-auth/src/manager.rs`: new `finalize_sign_in` method, modified `try_restore`
+- `crates/carminedesktop-app/src/commands.rs`: one-line change in `complete_sign_in` (`set_account_id` → `finalize_sign_in`)
+- No public API changes visible outside `carminedesktop-auth`
 - No storage format changes — same keyring/encrypted-file backends, same key derivation
 - Fixes all existing Linux AppImage installations where tokens are stranded under the client ID key

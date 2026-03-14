@@ -46,7 +46,7 @@ The system SHALL support running without the `desktop` feature flag, performing 
 
 #### Scenario: Headless startup with existing tokens
 - **WHEN** the application starts in headless mode and valid tokens are found in the credential store
-- **THEN** the system restores tokens, runs crash recovery for pending writes, starts all enabled mounts, starts the periodic delta sync loop, and logs "CloudMount headless mode running — N mount(s) active"
+- **THEN** the system restores tokens, runs crash recovery for pending writes, starts all enabled mounts, starts the periodic delta sync loop, and logs "carminedesktop headless mode running — N mount(s) active"
 
 #### Scenario: Headless startup without tokens
 - **WHEN** the application starts in headless mode and no valid tokens are found in the credential store
@@ -70,7 +70,7 @@ The system SHALL support running without the `desktop` feature flag, performing 
 
 #### Scenario: Headless mode on Windows exits with error
 - **WHEN** the application starts in headless mode on Windows
-- **THEN** the system prints "Error: headless mode is not supported on Windows. Cloud Files API requires desktop mode. Use 'cloudmount' without --headless." to stderr and exits with exit code 1
+- **THEN** the system prints "Error: headless mode is not supported on Windows. Cloud Files API requires desktop mode. Use 'carminedesktop' without --headless." to stderr and exits with exit code 1
 
 #### Scenario: Headless via --headless flag
 - **WHEN** the application is compiled with the `desktop` feature and started with `--headless`

@@ -25,7 +25,7 @@ The system SHALL return file size from the open file handle's content buffer whe
 - **AND** inodes without open handles continue to use the standard FILE_TTL (5 seconds)
 
 ### Requirement: Delta sync observer notification for open handles
-The system SHALL define a `DeltaSyncObserver` trait in `cloudmount-core` with a method `on_inode_content_changed(ino: u64)`. When delta sync detects an eTag change for a file inode, and a `DeltaSyncObserver` is registered on the `CacheManager`, the system SHALL call `on_inode_content_changed` for that inode. The VFS layer SHALL implement this trait to mark open handles as stale and invalidate the kernel page cache.
+The system SHALL define a `DeltaSyncObserver` trait in `carminedesktop-core` with a method `on_inode_content_changed(ino: u64)`. When delta sync detects an eTag change for a file inode, and a `DeltaSyncObserver` is registered on the `CacheManager`, the system SHALL call `on_inode_content_changed` for that inode. The VFS layer SHALL implement this trait to mark open handles as stale and invalidate the kernel page cache.
 
 #### Scenario: Delta sync notifies observer on eTag change
 - **WHEN** `run_delta_sync` detects that a file's eTag has changed on the server, and a `DeltaSyncObserver` is registered on `CacheManager`

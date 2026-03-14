@@ -19,7 +19,7 @@ _(none)_
 
 ## Impact
 
-- `crates/cloudmount-vfs/src/cfapi.rs` — `build_sync_root_id` and `CfMountHandle::mount` signature
-- `crates/cloudmount-app/src/main.rs` — Windows `start_mount` call site (pass sanitized account name)
+- `crates/carminedesktop-vfs/src/cfapi.rs` — `build_sync_root_id` and `CfMountHandle::mount` signature
+- `crates/carminedesktop-app/src/main.rs` — Windows `start_mount` call site (pass sanitized account name)
 - No dependency changes
 - **Migration**: Users who somehow had a successful prior registration with a malformed ID would need to unregister the old sync root. Not a concern here since this is the first Windows test.

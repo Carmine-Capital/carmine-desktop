@@ -81,7 +81,7 @@
 
 ## 13. Minor cleanups
 
-- [x] 13.1 Remove `open = { workspace = true }` from `crates/cloudmount-auth/Cargo.toml`
+- [x] 13.1 Remove `open = { workspace = true }` from `crates/carminedesktop-auth/Cargo.toml`
 - [x] 13.2 Fix `DEFAULT_CONFIG_TOML` comment to be platform-agnostic (e.g., "Location: see --print-config-path")
 - [x] 13.3 Add comment on the `cache_dir` import explaining the cfg union rationale
 - [x] 13.4 Make CfApi SyncFilter callbacks use `block_on_compat()` consistently instead of mixing `rt().block_on()`

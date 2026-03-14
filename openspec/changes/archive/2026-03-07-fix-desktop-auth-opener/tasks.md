@@ -1,7 +1,7 @@
 ## 1. Dependencies
 
 - [x] 1.1 Add `tauri-plugin-opener` to workspace `[workspace.dependencies]` in root `Cargo.toml`
-- [x] 1.2 Add `tauri-plugin-opener` to `cloudmount-app/Cargo.toml` under the `desktop` feature
+- [x] 1.2 Add `tauri-plugin-opener` to `carminedesktop-app/Cargo.toml` under the `desktop` feature
 
 ## 2. Auth crate: injectable opener
 

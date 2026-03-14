@@ -32,7 +32,7 @@ The following specs are entirely CfApi-specific and have no equivalent in WinFsp
 
 ## Impact
 
-- **Code**: `crates/cloudmount-vfs/src/cfapi.rs` (~1700 lines) replaced by `winfsp_fs.rs`. `crates/cloudmount-app/src/main.rs` mount lifecycle changes for Windows. CfApi-specific tests removed/replaced.
+- **Code**: `crates/carminedesktop-vfs/src/cfapi.rs` (~1700 lines) replaced by `winfsp_fs.rs`. `crates/carminedesktop-app/src/main.rs` mount lifecycle changes for Windows. CfApi-specific tests removed/replaced.
 - **Dependencies**: Remove `cloud-filter` crate. Add `winfsp` (GPLv3) + `winfsp-sys` as Windows-only workspace dependencies. Add `winfsp` to build-dependencies for delay-load linking.
 - **Licensing**: Windows binary distribution changes from MIT to GPLv3 due to `winfsp-rs` static linking. Source files remain MIT. Must comply with WinFsp FLOSS exception (attribution in UI/docs).
 - **User experience**: Windows mounts appear as drive letters (e.g., `Z:\`) or junction points instead of Explorer cloud sync roots. No sync status badges or "Free up space" context menu. Files always show fresh content on open. No indexing storms on large libraries.

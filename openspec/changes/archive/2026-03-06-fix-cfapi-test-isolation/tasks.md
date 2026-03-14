@@ -6,7 +6,7 @@
 
 ## 2. Update callers
 
-- [x] 2.1 Update `CfMountHandle::mount()` call in `cloudmount-app/src/main.rs` to pass drive ID (or mount label) as `account_name`
+- [x] 2.1 Update `CfMountHandle::mount()` call in `carminedesktop-app/src/main.rs` to pass drive ID (or mount label) as `account_name`
 
 ## 3. Fix test isolation
 

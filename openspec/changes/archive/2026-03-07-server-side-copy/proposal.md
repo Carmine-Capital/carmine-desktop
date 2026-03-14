@@ -6,9 +6,9 @@ Copying a file within the mount (e.g., `cp bigfile.docx bigfile-backup.docx`) do
 
 - Add a `copy_item()` method to `GraphClient` that POSTs to the Graph API copy endpoint and returns a monitor URL for the async server-side operation.
 - Add a `poll_copy_status()` method to `GraphClient` that polls the monitor URL until the copy completes, fails, or times out.
-- Add `CopyMonitorResponse` type to `cloudmount-core` for deserializing the monitor URL JSON responses.
+- Add `CopyMonitorResponse` type to `carminedesktop-core` for deserializing the monitor URL JSON responses.
 - Add `copy_file_range()` to `CoreOps` with detection logic: use server-side copy when both source and destination are remote items and the copy covers the full file; fall back to in-memory buffer copy otherwise.
-- Implement the FUSE `copy_file_range` trait method in `CloudMountFs`, delegating to `CoreOps`.
+- Implement the FUSE `copy_file_range` trait method in `carminedesktopFs`, delegating to `CoreOps`.
 - After a successful server-side copy, reassign the destination inode from its temporary `local:` ID to the real server item ID and update all caches.
 
 ## Capabilities
@@ -24,7 +24,7 @@ _(none -- this extends existing Graph client and VFS capabilities)_
 
 ## Impact
 
-- **Code**: `crates/cloudmount-graph/src/client.rs` (new methods), `crates/cloudmount-core/src/types.rs` (new type), `crates/cloudmount-vfs/src/core_ops.rs` (new method), `crates/cloudmount-vfs/src/fuse_fs.rs` (new trait impl).
+- **Code**: `crates/carminedesktop-graph/src/client.rs` (new methods), `crates/carminedesktop-core/src/types.rs` (new type), `crates/carminedesktop-vfs/src/core_ops.rs` (new method), `crates/carminedesktop-vfs/src/fuse_fs.rs` (new trait impl).
 - **Tests**: New integration tests for the Graph copy endpoint (wiremock), unit tests for eligibility detection and fallback logic.
 - **Dependencies**: None added. Uses existing `reqwest`, `serde`, `fuser`.
 - **Backwards compatibility**: Additive change. Existing read+write copy path remains as the fallback. No config or API changes.

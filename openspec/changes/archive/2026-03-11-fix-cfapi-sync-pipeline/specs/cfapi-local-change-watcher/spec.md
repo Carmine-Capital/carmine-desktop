@@ -39,7 +39,7 @@ The filesystem watcher SHALL debounce events per file path with a 500ms window. 
 - **THEN** the watcher makes two separate `ingest_local_change()` calls, one for each modification
 
 ### Requirement: Watcher thread isolation
-The filesystem watcher SHALL run on a dedicated OS thread (`std::thread::spawn`), separate from CfApi callback threads and the Tokio runtime. The watcher thread SHALL hold an `Arc` reference to the `CloudMountCfFilter` to invoke `ingest_local_change()`. The watcher SHALL NOT block or interfere with CfApi callback processing.
+The filesystem watcher SHALL run on a dedicated OS thread (`std::thread::spawn`), separate from CfApi callback threads and the Tokio runtime. The watcher thread SHALL hold an `Arc` reference to the `carminedesktopCfFilter` to invoke `ingest_local_change()`. The watcher SHALL NOT block or interfere with CfApi callback processing.
 
 #### Scenario: CfApi callback fires during watcher processing
 - **WHEN** a CfApi callback (e.g., `closed()`) fires while the watcher is processing an event batch

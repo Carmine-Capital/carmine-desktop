@@ -1,8 +1,8 @@
 ## Context
 
-On Windows, CloudMount uses the Cloud Files API (CfApi) to present OneDrive/SharePoint files as NTFS placeholders. Placeholder metadata (size, timestamps) is set once during `fetch_placeholders()` and updated only after writeback in `closed()` via `mark_placeholder_synced()`. Delta sync (`run_delta_sync` in `cloudmount-cache`) detects remote changes and updates internal caches, but has no mechanism to propagate those changes to the NTFS placeholder layer.
+On Windows, carminedesktop uses the Cloud Files API (CfApi) to present OneDrive/SharePoint files as NTFS placeholders. Placeholder metadata (size, timestamps) is set once during `fetch_placeholders()` and updated only after writeback in `closed()` via `mark_placeholder_synced()`. Delta sync (`run_delta_sync` in `carminedesktop-cache`) detects remote changes and updates internal caches, but has no mechanism to propagate those changes to the NTFS placeholder layer.
 
-The architecture creates a gap: `cloudmount-cache` owns the sync loop and knows what changed, but `cloudmount-vfs` owns the CfApi placeholder operations. There is currently no cross-crate notification path between them. The app orchestration layer (`cloudmount-app`) has access to both, making it the natural bridge point.
+The architecture creates a gap: `carminedesktop-cache` owns the sync loop and knows what changed, but `carminedesktop-vfs` owns the CfApi placeholder operations. There is currently no cross-crate notification path between them. The app orchestration layer (`carminedesktop-app`) has access to both, making it the natural bridge point.
 
 Key existing infrastructure:
 - `Placeholder::open(path)` + `UpdateOptions::metadata().dehydrate().mark_in_sync().blob()` — the `cloud_filter` crate already supports atomic metadata update + dehydration in a single `CfUpdatePlaceholder` call.
@@ -31,7 +31,7 @@ Key existing infrastructure:
 
 **Alternatives considered**:
 - *Async channel (mpsc)*: Would require `run_delta_sync` to accept a sender, adding complexity and a new dependency pattern. Overkill since the caller already awaits the result synchronously.
-- *Callback trait*: Would create a trait in `cloudmount-cache` that `cloudmount-vfs` implements, but this inverts the dependency direction unnecessarily. The cache crate should not know about VFS concepts.
+- *Callback trait*: Would create a trait in `carminedesktop-cache` that `carminedesktop-vfs` implements, but this inverts the dependency direction unnecessarily. The cache crate should not know about VFS concepts.
 - *Event bus*: Too complex for a single consumer.
 
 **Rationale**: The sync loop in `start_delta_sync` already calls `run_delta_sync` and handles the result. Returning structured data is the simplest approach — no new async primitives, no trait objects, no cross-crate dependency inversion. The app layer applies the results to the appropriate platform layer.
@@ -52,13 +52,13 @@ Key existing infrastructure:
 
 **Rationale**: If the user modified a file locally and the writeback hasn't completed yet, dehydrating would discard their local changes. The writeback will eventually upload and reconcile via conflict detection. This is a safety guard, not a common path.
 
-### Decision 4: Place the placeholder update logic as a public function in `cloudmount-vfs`
+### Decision 4: Place the placeholder update logic as a public function in `carminedesktop-vfs`
 
-**Choice**: Add `pub fn apply_delta_updates(mount_path: &Path, items: &[(PathBuf, DriveItem)], deleted_paths: &[PathBuf])` to `cloudmount-vfs` (gated with `#[cfg(target_os = "windows")]`).
+**Choice**: Add `pub fn apply_delta_updates(mount_path: &Path, items: &[(PathBuf, DriveItem)], deleted_paths: &[PathBuf])` to `carminedesktop-vfs` (gated with `#[cfg(target_os = "windows")]`).
 
 **Alternatives considered**:
 - *Method on `CfMountHandle`*: Would work, but `CfMountHandle` is behind a `Mutex` in the app state, and we'd need to hold the lock for the duration of placeholder updates. A free function taking `mount_path` avoids lock contention.
-- *Inline in `cloudmount-app`*: Would put CfApi-specific code in the app crate, violating the separation of concerns.
+- *Inline in `carminedesktop-app`*: Would put CfApi-specific code in the app crate, violating the separation of concerns.
 
 **Rationale**: The VFS crate already owns all CfApi placeholder operations. A free function keeps the implementation contained while allowing the app layer to call it with the resolved paths and items.
 

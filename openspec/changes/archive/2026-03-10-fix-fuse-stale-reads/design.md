@@ -1,6 +1,6 @@
 ## Context
 
-CloudMount's FUSE backend serves file reads from an OpenFileTable — a per-handle content snapshot taken at `open()` time. Meanwhile, delta sync (running every 60s in `cloudmount-cache`) detects remote changes and updates the memory cache metadata (size, eTag) and invalidates disk cache blobs. These two systems are currently disconnected: delta sync has no awareness of open file handles, and the FUSE layer has no awareness of remote changes happening mid-session.
+carminedesktop's FUSE backend serves file reads from an OpenFileTable — a per-handle content snapshot taken at `open()` time. Meanwhile, delta sync (running every 60s in `carminedesktop-cache`) detects remote changes and updates the memory cache metadata (size, eTag) and invalidates disk cache blobs. These two systems are currently disconnected: delta sync has no awareness of open file handles, and the FUSE layer has no awareness of remote changes happening mid-session.
 
 This disconnect causes a concrete corruption scenario:
 1. App opens file → handle holds 5000 bytes of content
@@ -12,7 +12,7 @@ This disconnect causes a concrete corruption scenario:
 
 Additionally, `FUSE_WRITEBACK_CACHE` is enabled, meaning the Linux kernel caches read data in its page cache. Even if we fix the userspace side, the kernel may serve stale bytes from its own cache until the inode is invalidated.
 
-**Crate boundary constraint**: `cloudmount-cache` (where `run_delta_sync` lives) depends on `cloudmount-core` but does NOT depend on `cloudmount-vfs` (where `OpenFileTable` lives). The notification must flow from cache → vfs without introducing a circular dependency.
+**Crate boundary constraint**: `carminedesktop-cache` (where `run_delta_sync` lives) depends on `carminedesktop-core` but does NOT depend on `carminedesktop-vfs` (where `OpenFileTable` lives). The notification must flow from cache → vfs without introducing a circular dependency.
 
 ## Goals / Non-Goals
 
@@ -42,13 +42,13 @@ Additionally, `FUSE_WRITEBACK_CACHE` is enabled, meaning the Linux kernel caches
 
 ### Decision 2: Delta sync notification via callback trait
 
-**Choice**: Define a trait `DeltaSyncObserver` in `cloudmount-core` (shared dependency) with a method `on_inode_content_changed(ino: u64)`. `CacheManager` stores an optional `Arc<dyn DeltaSyncObserver>`. The VFS layer implements this trait to mark open handles as stale.
+**Choice**: Define a trait `DeltaSyncObserver` in `carminedesktop-core` (shared dependency) with a method `on_inode_content_changed(ino: u64)`. `CacheManager` stores an optional `Arc<dyn DeltaSyncObserver>`. The VFS layer implements this trait to mark open handles as stale.
 
-**Rationale**: This avoids a circular dependency between `cloudmount-cache` and `cloudmount-vfs`. The trait lives in `cloudmount-core`, which both crates already depend on. The observer pattern is simple and doesn't require async channels or additional runtime dependencies.
+**Rationale**: This avoids a circular dependency between `carminedesktop-cache` and `carminedesktop-vfs`. The trait lives in `carminedesktop-core`, which both crates already depend on. The observer pattern is simple and doesn't require async channels or additional runtime dependencies.
 
 **Alternative considered**: `tokio::sync::broadcast` channel. Viable but heavier — requires the VFS to spawn a listener task, and the channel semantics (bounded/unbounded, lag) add complexity. The callback is simpler since delta sync already runs on a single task and the notification is synchronous (just mark a flag).
 
-**Alternative considered**: Passing `Arc<OpenFileTable>` directly to delta sync. Rejected because it creates a direct dependency from `cloudmount-cache` on `cloudmount-vfs` types.
+**Alternative considered**: Passing `Arc<OpenFileTable>` directly to delta sync. Rejected because it creates a direct dependency from `carminedesktop-cache` on `carminedesktop-vfs` types.
 
 ### Decision 3: Stale flag on OpenFile, not handle invalidation
 
@@ -66,7 +66,7 @@ Additionally, `FUSE_WRITEBACK_CACHE` is enabled, meaning the Linux kernel caches
 
 **Caveat**: `notify_inval_inode()` requires a reference to the `fuser::Session`, which is only available during the mount session. The session reference must be captured during `init()` or at mount time and stored in a way accessible to the delta sync observer. If the session is unavailable (e.g., during shutdown), the invalidation is skipped (best-effort).
 
-**Implementation**: The `DeltaSyncObserver` impl in `cloudmount-vfs` will hold an `Arc<Mutex<Option<fuser::SessionRef>>>` (or equivalent). On mount, the session is stored. On notification, the observer calls `notify_inval_inode`. This is FUSE-specific and stays entirely within `cloudmount-vfs`.
+**Implementation**: The `DeltaSyncObserver` impl in `carminedesktop-vfs` will hold an `Arc<Mutex<Option<fuser::SessionRef>>>` (or equivalent). On mount, the session is stored. On notification, the observer calls `notify_inval_inode`. This is FUSE-specific and stays entirely within `carminedesktop-vfs`.
 
 ### Decision 5: getattr TTL reduction for open inodes
 
@@ -86,4 +86,4 @@ Additionally, `FUSE_WRITEBACK_CACHE` is enabled, meaning the Linux kernel caches
 
 - **[FUSE_WRITEBACK_CACHE interaction] Kernel may buffer writes over stale content** → If a file is open for writing and delta sync detects a change, the kernel may have buffered writes in its page cache that it hasn't flushed yet. Calling `notify_inval_inode` forces the kernel to flush dirty pages first (per FUSE spec), then discard clean pages. This is the correct behavior — the writes will be flushed, then subsequent reads will re-fetch from userspace.
 
-- **[Complexity] New trait + observer wiring** → Adds a small amount of abstraction. The trait has a single method and a single implementation. The wiring happens at mount setup time in `cloudmount-app`. This is a well-understood observer pattern.
+- **[Complexity] New trait + observer wiring** → Adds a small amount of abstraction. The trait has a single method and a single implementation. The wiring happens at mount setup time in `carminedesktop-app`. This is a well-understood observer pattern.

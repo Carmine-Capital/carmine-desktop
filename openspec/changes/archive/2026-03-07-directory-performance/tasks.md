@@ -1,6 +1,6 @@
 ## 1. Memory cache HashMap migration (memory.rs)
 
-- [x] 1.1 Change `CachedEntry.children` from `Option<Vec<u64>>` to `Option<HashMap<String, u64>>` in `crates/cloudmount-cache/src/memory.rs`. Add `use std::collections::HashMap;` import.
+- [x] 1.1 Change `CachedEntry.children` from `Option<Vec<u64>>` to `Option<HashMap<String, u64>>` in `crates/carminedesktop-cache/src/memory.rs`. Add `use std::collections::HashMap;` import.
 - [x] 1.2 Update `MemoryCache::get_children()` return type from `Option<Vec<u64>>` to `Option<HashMap<String, u64>>`. Clone the HashMap instead of the Vec.
 - [x] 1.3 Update `MemoryCache::insert_with_children()` parameter from `children: Vec<u64>` to `children: HashMap<String, u64>`. Store as `Some(children)` in the `CachedEntry`.
 - [x] 1.4 Update `MemoryCache::insert()` to initialize `children: None` (unchanged, but verify HashMap type is consistent).
@@ -29,16 +29,16 @@
 
 ## 5. readdirplus implementation (fuse_fs.rs)
 
-- [x] 5.1 Add `ReplyDirectoryPlus` to the `fuser` import list in `crates/cloudmount-vfs/src/fuse_fs.rs`.
-- [x] 5.2 Implement `Filesystem::readdirplus()` on `CloudMountFs`: same entry-building logic as `readdir()` (`.`, `..`, then `self.ops.list_children(ino)`), but for each entry compute `FileAttr` via `self.item_to_attr()` and call `reply.add(INodeNo(inode), offset, &name, &TTL, &attr, Generation(0))`. Stop when `reply.add` returns `true` (buffer full). Call `reply.ok()` at the end.
+- [x] 5.1 Add `ReplyDirectoryPlus` to the `fuser` import list in `crates/carminedesktop-vfs/src/fuse_fs.rs`.
+- [x] 5.2 Implement `Filesystem::readdirplus()` on `carminedesktopFs`: same entry-building logic as `readdir()` (`.`, `..`, then `self.ops.list_children(ino)`), but for each entry compute `FileAttr` via `self.item_to_attr()` and call `reply.add(INodeNo(inode), offset, &name, &TTL, &attr, Generation(0))`. Stop when `reply.add` returns `true` (buffer full). Call `reply.ok()` at the end.
 - [x] 5.3 For the `.` and `..` entries in `readdirplus`, look up the directory's own `DriveItem` via `self.ops.lookup_item(ino)` to compute their `FileAttr`. If lookup fails, use a default directory attr.
 
 ## 6. Test updates
 
-- [x] 6.1 Update `crates/cloudmount-cache/tests/cache_tests.rs`: all tests that call `insert_with_children` must pass a `HashMap<String, u64>` instead of `Vec<u64>`. All tests that call `get_children` must expect `HashMap<String, u64>`.
+- [x] 6.1 Update `crates/carminedesktop-cache/tests/cache_tests.rs`: all tests that call `insert_with_children` must pass a `HashMap<String, u64>` instead of `Vec<u64>`. All tests that call `get_children` must expect `HashMap<String, u64>`.
 - [x] 6.2 Add tests for `MemoryCache::add_child`: verify child is inserted into existing HashMap, verify no-op when parent not in cache, verify no-op when children is `None`.
 - [x] 6.3 Add tests for `MemoryCache::remove_child`: verify child is removed from existing HashMap, verify no-op when parent not in cache, verify no-op when children is `None`, verify removing non-existent name is a no-op.
-- [x] 6.4 Update `crates/cloudmount-app/tests/integration_tests.rs`: verify that `find_child` still works correctly after the HashMap migration (existing tests should pass without changes to test logic, but verify).
+- [x] 6.4 Update `crates/carminedesktop-app/tests/integration_tests.rs`: verify that `find_child` still works correctly after the HashMap migration (existing tests should pass without changes to test logic, but verify).
 - [x] 6.5 Add integration test for surgical invalidation: create a file in a directory, verify the parent's children cache is NOT invalidated (i.e., a subsequent `list_children` does not trigger a Graph API call -- verify via mock server request count).
 
 ## 7. Verify

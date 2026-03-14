@@ -21,6 +21,6 @@ All 5 action buttons in `settings.html` (Save General, Save Advanced, Add Mount,
 
 ## Impact
 
-- `crates/cloudmount-app/dist/settings.html` — remove 5 inline `onclick` attributes, add button IDs
-- `crates/cloudmount-app/dist/settings.js` — add `addEventListener` calls at end of file
+- `crates/carminedesktop-app/dist/settings.html` — remove 5 inline `onclick` attributes, add button IDs
+- `crates/carminedesktop-app/dist/settings.js` — add `addEventListener` calls at end of file
 - No Rust changes, no dependency changes, no API changes

@@ -1,6 +1,6 @@
 ## Context
 
-The Windows CfApi mount path (`CfMountHandle::mount`) takes an `account_name: String` parameter that is fed directly into `SyncRootIdBuilder::account_name()`. The resulting sync root ID is `CloudMount!<SID>!<account_name>`, where `!` is the component separator. The `cloud-filter` crate validates `!` in provider_name and security_id, but **not** in account_name.
+The Windows CfApi mount path (`CfMountHandle::mount`) takes an `account_name: String` parameter that is fed directly into `SyncRootIdBuilder::account_name()`. The resulting sync root ID is `carminedesktop!<SID>!<account_name>`, where `!` is the component separator. The `cloud-filter` crate validates `!` in provider_name and security_id, but **not** in account_name.
 
 Currently, `main.rs:797` passes `drive_id.to_string()` as account_name. Microsoft Graph drive IDs for OneDrive Business and SharePoint always start with `b!`, injecting an extra separator into the sync root ID.
 

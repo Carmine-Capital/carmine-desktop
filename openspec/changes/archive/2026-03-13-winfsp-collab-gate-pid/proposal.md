@@ -24,9 +24,9 @@ _None._
 
 ## Impact
 
-- **cloudmount-vfs** (`process_filter.rs`): New `resolve_parent_process_name()` function, updated `is_interactive_shell()` to check parent PID on Windows.
-- **cloudmount-vfs** (`core_ops.rs`): Add `is_transient_file()` guard in CollabGate block.
-- **cloudmount-vfs** (`winfsp_fs.rs`): Extract caller PID via FFI call, change `CollabRedirect` NTSTATUS mapping.
-- **cloudmount-app** (`main.rs`): Platform-conditional handler logic — on Windows, respond before launching URI with a delay.
-- **cloudmount-vfs/tests/**: Update CollabGate tests for transient-file filtering and new Windows PID behavior.
+- **carminedesktop-vfs** (`process_filter.rs`): New `resolve_parent_process_name()` function, updated `is_interactive_shell()` to check parent PID on Windows.
+- **carminedesktop-vfs** (`core_ops.rs`): Add `is_transient_file()` guard in CollabGate block.
+- **carminedesktop-vfs** (`winfsp_fs.rs`): Extract caller PID via FFI call, change `CollabRedirect` NTSTATUS mapping.
+- **carminedesktop-app** (`main.rs`): Platform-conditional handler logic — on Windows, respond before launching URI with a delay.
+- **carminedesktop-vfs/tests/**: Update CollabGate tests for transient-file filtering and new Windows PID behavior.
 - **Dependencies**: No new crates. Uses existing `winfsp-sys` FFI (`FspFileSystemOperationProcessIdF`), existing `windows-sys` (`STATUS_CANCELLED`, process query APIs).

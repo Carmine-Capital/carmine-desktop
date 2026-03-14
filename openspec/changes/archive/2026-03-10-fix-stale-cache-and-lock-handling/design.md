@@ -1,12 +1,12 @@
 ## Context
 
-CloudMount mounts OneDrive/SharePoint as local filesystems via FUSE (Linux/macOS) and CfApi (Windows). Three related issues exist:
+carminedesktop mounts OneDrive/SharePoint as local filesystems via FUSE (Linux/macOS) and CfApi (Windows). Three related issues exist:
 
 1. **Stale disk cache corruption**: `open_file` validates the disk cache against memory-cached metadata (which may also be stale). The server metadata refresh added in commit `27c53be` is positioned *after* the disk cache check, so it never fires when both caches are stale-but-consistent (before the 60s delta sync cycle).
 
 2. **Silent upload failure on FUSE**: When `flush_inode` fails (e.g. 423 Locked), the FUSE `flush` callback returns `EIO` with no `VfsEvent` emitted. CfApi already emits `WritebackFailed` in the equivalent path.
 
-3. **No lock awareness**: OneDrive locks files during online co-authoring. CloudMount has no awareness of this — users can edit locally, then the upload silently fails. The Graph API exposes lock status that we don't check.
+3. **No lock awareness**: OneDrive locks files during online co-authoring. carminedesktop has no awareness of this — users can edit locally, then the upload silently fails. The Graph API exposes lock status that we don't check.
 
 ## Goals / Non-Goals
 
@@ -34,7 +34,7 @@ The `get_item()` call moves from after the disk cache validation (line ~1098) to
 
 ### 2. New `Error::Locked` variant for 423
 
-Add `Error::Locked` to `cloudmount-core::Error`, analogous to the existing `PreconditionFailed` for 412. `handle_error` in `GraphClient` maps 423 to this variant. `flush_inode` matches on `Error::Locked` and handles it distinctly from generic errors.
+Add `Error::Locked` to `carminedesktop-core::Error`, analogous to the existing `PreconditionFailed` for 412. `handle_error` in `GraphClient` maps 423 to this variant. `flush_inode` matches on `Error::Locked` and handles it distinctly from generic errors.
 
 **Alternative considered**: Reuse `PreconditionFailed`. Rejected because the semantics and handling differ — 412 triggers a conflict upload of the same content, while 423 means the file is actively locked and we need a copy.
 

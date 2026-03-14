@@ -46,7 +46,7 @@ Separately, FUSE mounts can become stale when a process exits without proper unm
 
 **Failure mode:** If cleanup fails, log a warning with actionable guidance ("run `fusermount -u <path>` manually") and skip the mount — same as current behavior, but with a better error message.
 
-### D4: Place stale mount logic in `cloudmount-vfs::mount`
+### D4: Place stale mount logic in `carminedesktop-vfs::mount`
 
 **Choice:** Add a `pub fn cleanup_stale_mount(path: &str) -> bool` function in `mount.rs`. Both desktop `start_mount` and headless mount loop call it before `create_dir_all`.
 

@@ -66,7 +66,7 @@ This is replaced by targeted cache mutations:
 
 ### D3: readdirplus implementation
 
-Implement `Filesystem::readdirplus()` in `CloudMountFs`. The implementation mirrors the existing `readdir()` but uses `ReplyDirectoryPlus` which accepts `FileAttr` alongside each entry:
+Implement `Filesystem::readdirplus()` in `carminedesktopFs`. The implementation mirrors the existing `readdir()` but uses `ReplyDirectoryPlus` which accepts `FileAttr` alongside each entry:
 
 1. Build the entries list from `self.ops.list_children(ino)` (same as `readdir`).
 2. For each entry (including `.` and `..`), compute `FileAttr` via `self.item_to_attr()`.

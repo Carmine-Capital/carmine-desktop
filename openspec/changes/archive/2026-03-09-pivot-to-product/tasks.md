@@ -2,7 +2,7 @@
 
 - [x] 1.1 Update the Azure AD app registration for client ID `8ebe3ef7-f509-4146-8fef-c9b5d7c22252` — set `signInAudience` to `AzureADandPersonalMicrosoftAccount` to enable both M365 org and personal MSA accounts
 
-## 2. Config layer cleanup (cloudmount-core)
+## 2. Config layer cleanup (carminedesktop-core)
 
 - [x] 2.1 Delete `PackagedDefaults`, `PackagedMount`, `BrandingConfig`, `TenantConfig`, `DefaultSettings` structs from `config.rs`
 - [x] 2.2 Delete `MountOverride` struct from `config.rs`
@@ -10,22 +10,22 @@
 - [x] 2.4 Remove `mount_overrides: Vec<MountOverride>`, `dismissed_packaged_mounts: Vec<String>`, and `restore_default_mounts()` from `UserConfig`
 - [x] 2.5 Remove `tenant_id`, `client_id`, and `app_name` fields from `EffectiveConfig`
 - [x] 2.6 Rewrite `EffectiveConfig::build()` — remove `PackagedDefaults` parameter; merge user config directly with built-in defaults only
-- [x] 2.7 Update or remove any tests in `crates/cloudmount-core/tests/` that reference `PackagedDefaults`, `MountOverride`, or the merge logic
+- [x] 2.7 Update or remove any tests in `crates/carminedesktop-core/tests/` that reference `PackagedDefaults`, `MountOverride`, or the merge logic
 
-## 3. App cleanup (cloudmount-app main.rs)
+## 3. App cleanup (carminedesktop-app main.rs)
 
 - [x] 3.1 Replace `include_str!(build/defaults.toml)` / `PACKAGED_DEFAULTS_TOML` with `const CLIENT_ID: &str = "8ebe3ef7-f509-4146-8fef-c9b5d7c22252";`
 - [x] 3.2 Remove `BUILD_CLIENT_ID`, `BUILD_TENANT_ID`, `BUILD_APP_NAME` `option_env!()` constants
 - [x] 3.3 Delete `resolve_client_id()` and `resolve_tenant_id()` functions; replace call sites with `args.client_id.as_deref().unwrap_or(CLIENT_ID)` and `args.tenant_id` directly
 - [x] 3.4 Remove `AppState.packaged` field and all references in `run_desktop()`, `run_headless()`, and command handlers
 - [x] 3.5 Remove `packaged` parameter from `init_components()` and all call chains
-- [x] 3.6 Replace all `packaged.app_name()` call sites with the `"CloudMount"` literal
+- [x] 3.6 Replace all `packaged.app_name()` call sites with the `"carminedesktop"` literal
 - [x] 3.7 Remove the `has_packaged_config()` branch from pre-flight or first-run detection logic
-- [x] 3.8 Update or remove tests in `crates/cloudmount-app/` that reference `PackagedDefaults` (e.g., `test_runtime_overrides_resolve_client_id`)
+- [x] 3.8 Update or remove tests in `crates/carminedesktop-app/` that reference `PackagedDefaults` (e.g., `test_runtime_overrides_resolve_client_id`)
 
 ## 4. Build system cleanup
 
-- [x] 4.1 Rewrite `crates/cloudmount-app/build.rs` — remove the `defaults.toml` file-copy logic; retain only `tauri_build::build()` for the `desktop` feature
+- [x] 4.1 Rewrite `crates/carminedesktop-app/build.rs` — remove the `defaults.toml` file-copy logic; retain only `tauri_build::build()` for the `desktop` feature
 - [x] 4.2 Delete `build/defaults.toml.example` from the repository
 - [x] 4.3 Remove `build/defaults.toml` from `.gitignore` (the file no longer exists and is not generated)
 
@@ -54,7 +54,7 @@
 - [x] 7.1 Delete `docs/builder-guide.md`
 - [x] 7.2 Delete `docs/org-build-guide.md`
 - [x] 7.3 Delete `docs/templates/` directory and its contents
-- [x] 7.4 Rewrite `docs/azure-ad-setup.md` to be contributor-focused: remove org-builder sections, document the official CloudMount app registration setup for developers
+- [x] 7.4 Rewrite `docs/azure-ad-setup.md` to be contributor-focused: remove org-builder sections, document the official carminedesktop app registration setup for developers
 - [x] 7.5 Update `CLAUDE.md` — remove `DEFAULT_CLIENT_ID` magic number entry, replace with `CLIENT_ID` constant and its value; remove build-time env var references; update wizard step list
 
 ## 8. Verification

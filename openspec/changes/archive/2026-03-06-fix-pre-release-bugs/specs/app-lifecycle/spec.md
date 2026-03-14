@@ -5,7 +5,7 @@ The system SHALL support running without the `desktop` feature flag, performing 
 
 #### Scenario: Headless startup with existing tokens
 - **WHEN** the application starts in headless mode and valid tokens are found in the credential store
-- **THEN** the system restores tokens, runs crash recovery for pending writes, starts all enabled mounts, starts the periodic delta sync loop, and logs "CloudMount headless mode running — N mount(s) active"
+- **THEN** the system restores tokens, runs crash recovery for pending writes, starts all enabled mounts, starts the periodic delta sync loop, and logs "carminedesktop headless mode running — N mount(s) active"
 
 #### Scenario: Headless startup without tokens
 - **WHEN** the application starts in headless mode and no valid tokens are found in the credential store

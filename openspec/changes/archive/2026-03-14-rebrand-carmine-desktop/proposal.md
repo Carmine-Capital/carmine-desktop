@@ -1,10 +1,10 @@
 ## Why
 
-The project is being rebranded from "CloudMount" to "Carmine Desktop" to reflect its new identity under the Carmine Capital organization. Alongside the rebrand, the distribution infrastructure is being moved from public GitHub Releases to a private update server (`static.carminecapital.com`), and the Windows installer is being switched from NSIS to MSI (WiX) for better enterprise deployment compatibility.
+The project is being rebranded from "carminedesktop" to "Carmine Desktop" to reflect its new identity under the Carmine Capital organization. Alongside the rebrand, the distribution infrastructure is being moved from public GitHub Releases to a private update server (`static.carminecapital.com`), and the Windows installer is being switched from NSIS to MSI (WiX) for better enterprise deployment compatibility.
 
 ## What Changes
 
-- **BREAKING**: Full rename from `cloudmount-*` to `carminedesktop-*` across all 6 crate directories, module names, struct prefixes, env var prefixes (`CLOUDMOUNT_*` → `CARMINEDESKTOP_*`), system identifiers (D-Bus, keyring service names), and user-facing strings
+- **BREAKING**: Full rename from `carminedesktop-*` to `carminedesktop-*` across all 6 crate directories, module names, struct prefixes, env var prefixes (`carminedesktop_*` → `CARMINEDESKTOP_*`), system identifiers (D-Bus, keyring service names), and user-facing strings
 - **BREAKING**: Tauri app identity updated — bundle identifier `com.carmine-capital.desktop`, deep-link scheme `carminedesktop://`, product name "Carmine Desktop"
 - **BREAKING**: Auto-update endpoint changed from `https://github.com/{owner}/{repo}/releases/latest/download/latest.json` to `https://static.carminecapital.com/carmine-desktop/latest.json`
 - **BREAKING**: Release pipeline rewritten — artifacts uploaded via rsync/SSH to private server instead of published as GitHub Releases
@@ -22,7 +22,7 @@ _None — this change modifies existing capabilities only._
 
 - `auto-updater`: Default endpoint changes from GitHub Releases URL to private server URL at `static.carminecapital.com`
 - `release-pipeline`: Publishing mechanism changes from GitHub Releases (draft-then-publish) to rsync/SSH upload to private static server; `latest.json` generated locally instead of as a GitHub Release asset
-- `developer-experience`: Environment variable prefix changes from `CLOUDMOUNT_*` to `CARMINEDESKTOP_*`; build-time env vars renamed accordingly; `.env.example`, docs, and CLI help text updated
+- `developer-experience`: Environment variable prefix changes from `carminedesktop_*` to `CARMINEDESKTOP_*`; build-time env vars renamed accordingly; `.env.example`, docs, and CLI help text updated
 - `winfsp-installer-bundling`: Installer type changes from NSIS to MSI (WiX); WinFsp embedding approach changes accordingly
 
 ## Impact

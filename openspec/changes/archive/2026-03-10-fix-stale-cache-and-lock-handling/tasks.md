@@ -1,6 +1,6 @@
 ## 1. Error type and Graph client changes
 
-- [x] 1.1 Add `Error::Locked` variant to `cloudmount-core::Error` (analogous to `PreconditionFailed`)
+- [x] 1.1 Add `Error::Locked` variant to `carminedesktop-core::Error` (analogous to `PreconditionFailed`)
 - [x] 1.2 Map HTTP 423 to `Error::Locked` in `GraphClient::handle_error`
 
 ## 2. Fix stale disk cache in `open_file`

@@ -5,7 +5,7 @@ The release and build-installer workflows SHALL download a pinned WinFsp MSI fro
 
 #### Scenario: Windows build downloads WinFsp MSI
 - **WHEN** the workflow runs a Windows build job
-- **THEN** the workflow downloads the WinFsp MSI specified by the pinned version variable to `crates/cloudmount-app/resources/winfsp.msi`
+- **THEN** the workflow downloads the WinFsp MSI specified by the pinned version variable to `crates/carminedesktop-app/resources/winfsp.msi`
 
 #### Scenario: WinFsp MSI download fails
 - **WHEN** the WinFsp MSI download fails (network error, 404, etc.)

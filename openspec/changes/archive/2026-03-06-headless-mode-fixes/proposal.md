@@ -1,6 +1,6 @@
 ## Why
 
-Headless mode was implemented in the `fix-pre-release-bugs` change but a detailed audit against the spec and the desktop code path reveals 7 issues. The most critical is a token storage key mismatch in `cloudmount-auth` that breaks token restoration across restarts in BOTH modes: `exchange_code()` and `refresh()` store tokens under `self.client_id` (the Azure AD app ID), but `try_restore()` loads tokens using the `account_id` parameter (which is `drive.id` from the user config) — the keys never match, so tokens are never found on restart. Two further bugs break the headless first-time-use flow (no account metadata or OneDrive mount persisted after sign-in), two are behavioral defects (auth-degradation warning spam, crash recovery blocking mount startup), and two are missing capabilities (no re-authentication path in degraded mode, duplicated initialization code that will drift). These must be fixed before headless mode is usable for real-world deployment.
+Headless mode was implemented in the `fix-pre-release-bugs` change but a detailed audit against the spec and the desktop code path reveals 7 issues. The most critical is a token storage key mismatch in `carminedesktop-auth` that breaks token restoration across restarts in BOTH modes: `exchange_code()` and `refresh()` store tokens under `self.client_id` (the Azure AD app ID), but `try_restore()` loads tokens using the `account_id` parameter (which is `drive.id` from the user config) — the keys never match, so tokens are never found on restart. Two further bugs break the headless first-time-use flow (no account metadata or OneDrive mount persisted after sign-in), two are behavioral defects (auth-degradation warning spam, crash recovery blocking mount startup), and two are missing capabilities (no re-authentication path in degraded mode, duplicated initialization code that will drift). These must be fixed before headless mode is usable for real-world deployment.
 
 ## What Changes
 
@@ -25,8 +25,8 @@ _(none)_
 
 ## Impact
 
-- **`crates/cloudmount-auth/src/manager.rs`**: Fix `try_restore()` to use `self.client_id` as storage key (1-line change, fixes both desktop and headless restart)
-- **`crates/cloudmount-app/src/main.rs`**: Primary file — extract `init_components()`, rewrite `run_headless()` post-sign-in flow, add SIGHUP handler, add `auth_degraded` flag, spawn crash recovery
+- **`crates/carminedesktop-auth/src/manager.rs`**: Fix `try_restore()` to use `self.client_id` as storage key (1-line change, fixes both desktop and headless restart)
+- **`crates/carminedesktop-app/src/main.rs`**: Primary file — extract `init_components()`, rewrite `run_headless()` post-sign-in flow, add SIGHUP handler, add `auth_degraded` flag, spawn crash recovery
 - **`openspec/specs/app-lifecycle/spec.md`**: Delta spec with new/updated scenarios for headless post-sign-in, SIGHUP re-auth, deduped degradation logging, non-blocking crash recovery
-- **No new dependencies**: All required crates (`open`, `tokio::signal`, `cloudmount-auth`, `cloudmount-graph`, `cloudmount-core::config`) are already in scope
+- **No new dependencies**: All required crates (`open`, `tokio::signal`, `carminedesktop-auth`, `carminedesktop-graph`, `carminedesktop-core::config`) are already in scope
 - **No API changes**: Internal refactor only, no user-facing config or command changes

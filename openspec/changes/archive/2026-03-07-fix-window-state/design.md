@@ -8,7 +8,7 @@ Tauri webview windows are created once and then shown/hidden across their lifeti
 
 3. **Wizard DOM stale after cancel** (M-004): `cancelSignIn()` reverts to `step-welcome` but does not clear the auth URL input or the error message div. On the next sign-in attempt, the stale URL is briefly visible before being overwritten.
 
-The fix is purely in the app layer (`cloudmount-app`): no other crates are affected. The Tauri `Emitter` trait is already imported in `commands.rs`, so emitting an event requires no new dependencies.
+The fix is purely in the app layer (`carminedesktop-app`): no other crates are affected. The Tauri `Emitter` trait is already imported in `commands.rs`, so emitting an event requires no new dependencies.
 
 ## Goals / Non-Goals
 

@@ -16,8 +16,8 @@ The system SHALL resolve any absolute local file path within a mounted drive to 
 - **THEN** the system fetches a fresh `DriveItem` via `get_item()`, updates the cache, and returns the `webUrl`
 
 #### Scenario: Path outside any mount
-- **WHEN** a user requests the SharePoint URL for a path that is not inside any active CloudMount mount point
-- **THEN** the system returns an error indicating the path is not managed by CloudMount
+- **WHEN** a user requests the SharePoint URL for a path that is not inside any active carminedesktop mount point
+- **THEN** the system returns an error indicating the path is not managed by carminedesktop
 
 #### Scenario: Path for non-existent file
 - **WHEN** a user requests the SharePoint URL for a path that does not resolve to any known inode
@@ -66,18 +66,18 @@ The system SHALL map Office file extensions to their corresponding URI schemes f
 - **THEN** the system uses the plain `webUrl` (no URI scheme prefix)
 
 ### Requirement: Deep-link protocol handler
-The system SHALL register a `cloudmount://` URL protocol handler that allows external tools to trigger the "Open in SharePoint" action.
+The system SHALL register a `carminedesktop://` URL protocol handler that allows external tools to trigger the "Open in SharePoint" action.
 
 #### Scenario: Handle open-online deep link
-- **WHEN** the OS dispatches `cloudmount://open-online?path=<percent-encoded-path>` to the application
+- **WHEN** the OS dispatches `carminedesktop://open-online?path=<percent-encoded-path>` to the application
 - **THEN** the system decodes the path, resolves it to a SharePoint URL, and opens it as if `open_online` were invoked directly
 
 #### Scenario: Deep link with invalid path
-- **WHEN** the OS dispatches a `cloudmount://open-online` deep link with a path that is not inside any active mount
-- **THEN** the system shows a desktop notification indicating the file is not managed by CloudMount
+- **WHEN** the OS dispatches a `carminedesktop://open-online` deep link with a path that is not inside any active mount
+- **THEN** the system shows a desktop notification indicating the file is not managed by carminedesktop
 
 #### Scenario: Deep link with unrecognized action
-- **WHEN** the OS dispatches a `cloudmount://` deep link with an action other than `open-online`
+- **WHEN** the OS dispatches a `carminedesktop://` deep link with an action other than `open-online`
 - **THEN** the system ignores the request and logs a warning
 
 ### Requirement: Windows Explorer context menu
@@ -85,23 +85,23 @@ On Windows, the system SHALL register a context menu entry in Explorer that allo
 
 #### Scenario: Context menu registration on mount
 - **WHEN** a CfApi sync root is registered during mount
-- **THEN** the system creates registry entries under `HKCU\Software\Classes` that add an "Open in SharePoint" menu item for files, with the command invoking the `cloudmount://open-online` deep link with the selected file's path
+- **THEN** the system creates registry entries under `HKCU\Software\Classes` that add an "Open in SharePoint" menu item for files, with the command invoking the `carminedesktop://open-online` deep link with the selected file's path
 
 #### Scenario: Context menu cleanup on unmount
 - **WHEN** a CfApi sync root is unregistered during unmount
 - **THEN** the system removes the registry entries for the context menu
 
 #### Scenario: User clicks "Open in SharePoint"
-- **WHEN** a user right-clicks a file in Explorer inside a CloudMount sync root and selects "Open in SharePoint"
-- **THEN** Explorer invokes the registered command, which dispatches the `cloudmount://open-online` deep link, and the file opens in desktop Office or the browser
+- **WHEN** a user right-clicks a file in Explorer inside a carminedesktop sync root and selects "Open in SharePoint"
+- **THEN** Explorer invokes the registered command, which dispatches the `carminedesktop://open-online` deep link, and the file opens in desktop Office or the browser
 
 ### Requirement: Linux file manager integration
 On Linux, the system SHALL provide a Nautilus script that allows users to open files in SharePoint from the file manager.
 
 #### Scenario: Nautilus script available
-- **WHEN** CloudMount is installed on a Linux system with Nautilus
-- **THEN** a script is available (installed or documented for manual placement) at `~/.local/share/nautilus/scripts/Open in SharePoint` that invokes the `cloudmount://open-online` deep link or the Tauri command for the selected file
+- **WHEN** carminedesktop is installed on a Linux system with Nautilus
+- **THEN** a script is available (installed or documented for manual placement) at `~/.local/share/nautilus/scripts/Open in SharePoint` that invokes the `carminedesktop://open-online` deep link or the Tauri command for the selected file
 
 #### Scenario: User triggers script from Nautilus
-- **WHEN** a user right-clicks a file in Nautilus inside a CloudMount mount and selects Scripts > "Open in SharePoint"
+- **WHEN** a user right-clicks a file in Nautilus inside a carminedesktop mount and selects Scripts > "Open in SharePoint"
 - **THEN** the script resolves the file path and opens it in the default browser via `xdg-open`

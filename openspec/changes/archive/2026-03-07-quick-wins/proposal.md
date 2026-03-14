@@ -18,9 +18,9 @@ Three low-effort, zero-risk performance improvements that each independently red
 
 ## Impact
 
-- `crates/cloudmount-vfs/src/fuse_fs.rs`: Mount options (~5 lines)
-- `crates/cloudmount-cache/src/sqlite.rs`: `prepare` -> `prepare_cached` (~5 call sites)
-- `crates/cloudmount-graph/src/client.rs`: `$select` parameter on list queries (~2 URLs)
+- `crates/carminedesktop-vfs/src/fuse_fs.rs`: Mount options (~5 lines)
+- `crates/carminedesktop-cache/src/sqlite.rs`: `prepare` -> `prepare_cached` (~5 call sites)
+- `crates/carminedesktop-graph/src/client.rs`: `$select` parameter on list queries (~2 URLs)
 
 ## Risk
 

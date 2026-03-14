@@ -2,13 +2,13 @@
 
 The authentication flow uses `open::that()` (which calls `xdg-open` on Linux) to open the Microsoft login page in the default browser. This works in headless mode but silently fails in desktop mode when running as a Tauri/WebKitGTK app on Wayland with AppImage packaging. The `xdg-open` child process spawns (so `open::that()` returns `Ok(())`), but it cannot reach `xdg-desktop-portal` through D-Bus in the Tauri process context, so the browser never opens.
 
-The `open::that()` call is hardcoded in `cloudmount-auth::oauth::run_pkce_flow()`. The auth crate has no Tauri dependency and should not gain one — it's also used in headless mode.
+The `open::that()` call is hardcoded in `carminedesktop-auth::oauth::run_pkce_flow()`. The auth crate has no Tauri dependency and should not gain one — it's also used in headless mode.
 
 ## Goals / Non-Goals
 
 **Goals:**
 - Fix browser opening for the sign-in flow in desktop mode on Wayland + AppImage
-- Keep `cloudmount-auth` free of any Tauri dependency
+- Keep `carminedesktop-auth` free of any Tauri dependency
 - Preserve existing headless mode behavior
 
 **Non-Goals:**
@@ -45,9 +45,9 @@ The `open::that()` call is hardcoded in `cloudmount-auth::oauth::run_pkce_flow()
 
 **Rationale:** The opener callback fully owns the "how to open a URL" decision, including display detection and fallback. This keeps `run_pkce_flow()` simple — it just calls the opener.
 
-### D4: Keep `open` crate as a dependency of `cloudmount-auth`
+### D4: Keep `open` crate as a dependency of `carminedesktop-auth`
 
-**Decision:** Keep the `open` crate in `cloudmount-auth` but only use it as a default/convenience. The headless opener closure in `cloudmount-app` imports it from there or uses its own.
+**Decision:** Keep the `open` crate in `carminedesktop-auth` but only use it as a default/convenience. The headless opener closure in `carminedesktop-app` imports it from there or uses its own.
 
 **Alternatives considered:**
 - *Remove `open` from auth crate entirely*: Would require the app crate to always provide an opener, even in tests. Less ergonomic.

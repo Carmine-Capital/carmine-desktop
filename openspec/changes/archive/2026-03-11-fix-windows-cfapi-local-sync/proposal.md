@@ -21,6 +21,6 @@ On Windows, local file operations in mounted drives (copy-in from outside the mo
 
 ## Impact
 
-- Affected code: `crates/cloudmount-vfs/src/cfapi.rs`, `crates/cloudmount-vfs/src/core_ops.rs`, `crates/cloudmount-vfs/src/pending.rs`, `crates/cloudmount-app/src/main.rs`, Windows CfApi integration tests.
+- Affected code: `crates/carminedesktop-vfs/src/cfapi.rs`, `crates/carminedesktop-vfs/src/core_ops.rs`, `crates/carminedesktop-vfs/src/pending.rs`, `crates/carminedesktop-app/src/main.rs`, Windows CfApi integration tests.
 - Affected behavior: Windows upload reliability for local edits/copies/moves and sync-state transitions shown in Explorer.
 - Dependency/system impact: may require extending current `cloud-filter` watcher usage or adding complementary filesystem event handling for non-placeholder change detection.

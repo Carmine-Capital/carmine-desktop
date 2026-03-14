@@ -22,7 +22,7 @@ _(none)_
 
 ## Impact
 
-- `crates/cloudmount-vfs/src/cfapi.rs` — `fetch_data`, `dehydrate`, `delete`, `rename` callbacks
-- `crates/cloudmount-vfs/tests/cfapi_integration.rs` — `create_root_placeholders` fixture helper
+- `crates/carminedesktop-vfs/src/cfapi.rs` — `fetch_data`, `dehydrate`, `delete`, `rename` callbacks
+- `crates/carminedesktop-vfs/tests/cfapi_integration.rs` — `create_root_placeholders` fixture helper
 - No new dependencies
 - No API surface changes — internal error-handling behaviour only

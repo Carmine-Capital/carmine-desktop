@@ -20,5 +20,5 @@ None.
 
 ## Impact
 
-- `crates/cloudmount-app/src/main.rs`: `start_all_mounts` function, notification logic
-- `crates/cloudmount-app/src/notify.rs`: New `mounts_summary` notification function
+- `crates/carminedesktop-app/src/main.rs`: `start_all_mounts` function, notification logic
+- `crates/carminedesktop-app/src/notify.rs`: New `mounts_summary` notification function

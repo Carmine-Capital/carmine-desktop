@@ -20,7 +20,7 @@
 
 ## 4. Verification
 
-- [x] 4.1 Run `cargo check --target x86_64-pc-windows-msvc -p cloudmount-vfs` and confirm zero errors
-- [x] 4.2 Run `cargo clippy --target x86_64-pc-windows-msvc -p cloudmount-vfs --all-targets --all-features` and confirm zero warnings
+- [x] 4.1 Run `cargo check --target x86_64-pc-windows-msvc -p carminedesktop-vfs` and confirm zero errors
+- [x] 4.2 Run `cargo clippy --target x86_64-pc-windows-msvc -p carminedesktop-vfs --all-targets --all-features` and confirm zero warnings
 - [x] 4.3 Run `cargo fmt --all -- --check` and confirm no formatting issues
-- [ ] 4.4 Confirm all six integration tests in `cfapi_integration.rs` pass on a Windows CI run: `cargo test -p cloudmount-vfs --test cfapi_integration -- --ignored`
+- [ ] 4.4 Confirm all six integration tests in `cfapi_integration.rs` pass on a Windows CI run: `cargo test -p carminedesktop-vfs --test cfapi_integration -- --ignored`

@@ -1,6 +1,6 @@
 ## Context
 
-`open-in-sharepoint` already introduces the core deep-link flow (`cloudmount://open-online?path=...`) and a Linux Nautilus script. KDE users primarily interact through Dolphin, which uses Service Menus (`.desktop` metadata + command invocation) instead of Nautilus script hooks. The backend path resolution and URL opening logic already exists; this change focuses on KDE-native entry points and predictable argument handling.
+`open-in-sharepoint` already introduces the core deep-link flow (`carminedesktop://open-online?path=...`) and a Linux Nautilus script. KDE users primarily interact through Dolphin, which uses Service Menus (`.desktop` metadata + command invocation) instead of Nautilus script hooks. The backend path resolution and URL opening logic already exists; this change focuses on KDE-native entry points and predictable argument handling.
 
 ## Goals / Non-Goals
 
@@ -14,7 +14,7 @@
 - Replacing or removing the Nautilus integration.
 - Implementing a KDE-specific binary plugin or KIO extension.
 - Changing SharePoint URL resolution logic in Rust core/app crates.
-- Guaranteeing dynamic menu visibility only for CloudMount mounts in v1.
+- Guaranteeing dynamic menu visibility only for carminedesktop mounts in v1.
 
 ## Decisions
 
@@ -28,7 +28,7 @@
 
 ### 2. Keep deep-link as the single invocation contract
 
-**Decision:** The helper script percent-encodes each selected absolute path and calls `xdg-open "cloudmount://open-online?path=<encoded>"`.
+**Decision:** The helper script percent-encodes each selected absolute path and calls `xdg-open "carminedesktop://open-online?path=<encoded>"`.
 
 **Rationale:** This reuses existing validation, mount checks, notifications, and Office/browser selection behavior from the current `open_online` flow.
 
@@ -52,7 +52,7 @@
 
 ### 5. Contract pinning to `open-online` deep link
 
-**Decision:** KDE integration is strictly bound to `cloudmount://open-online?path=<encoded>` and does not introduce alternative actions.
+**Decision:** KDE integration is strictly bound to `carminedesktop://open-online?path=<encoded>` and does not introduce alternative actions.
 
 **Rationale:** This keeps KDE entrypoints aligned with existing path validation, URL resolution, notifications, and Office/browser fallback behavior.
 
@@ -62,7 +62,7 @@
 
 - **[Risk] Service menu install path differences across distros/Plasma versions** -> Mitigation: document supported locations and include validation/troubleshooting guidance.
 - **[Risk] Multiple windows/tabs opening for large multi-selection** -> Mitigation: define expected behavior and consider future batching if user feedback requires it.
-- **[Risk] Menu entry appears for non-CloudMount files** -> Mitigation: rely on existing deep-link-side validation and user-visible error notification.
+- **[Risk] Menu entry appears for non-carminedesktop files** -> Mitigation: rely on existing deep-link-side validation and user-visible error notification.
 - **[Risk] Path quoting/encoding edge cases** -> Mitigation: require percent-encoding of full absolute path and add explicit test cases/examples for spaces and unicode.
 
 ## Migration Plan

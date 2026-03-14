@@ -1,8 +1,8 @@
 ## 1. Core Types and Config
 
-- [x] 1.1 Add `CollabOpenRequest` and `CollabOpenResponse` types to `cloudmount-core/src/types.rs`
-- [x] 1.2 Add `is_collaborative(extension: &str) -> bool` function to `cloudmount-core/src/open_online.rs`
-- [x] 1.3 Add `CollaborativeOpenConfig` struct to `cloudmount-core` config system (`enabled`, `default_action`, `timeout_seconds`, `shell_processes`, per-extension overrides)
+- [x] 1.1 Add `CollabOpenRequest` and `CollabOpenResponse` types to `carminedesktop-core/src/types.rs`
+- [x] 1.2 Add `is_collaborative(extension: &str) -> bool` function to `carminedesktop-core/src/open_online.rs`
+- [x] 1.3 Add `CollaborativeOpenConfig` struct to `carminedesktop-core` config system (`enabled`, `default_action`, `timeout_seconds`, `shell_processes`, per-extension overrides)
 - [x] 1.4 Add `VfsEvent::CollabGateTimeout { path }` variant to the VfsEvent enum
 - [x] 1.5 Write tests for `is_collaborative()` — Office, ODF, non-collaborative, case insensitivity
 
@@ -38,7 +38,7 @@
 
 ## 5. Context Menu Enhancements
 
-- [x] 5.1 Update Windows context menu registration to create two entries: `CloudMount.OpenOnline` and `CloudMount.OpenLocally` with appropriate labels and commands
+- [x] 5.1 Update Windows context menu registration to create two entries: `carminedesktop.OpenOnline` and `carminedesktop.OpenLocally` with appropriate labels and commands
 - [x] 5.2 Update Windows context menu cleanup to remove both entries
 - [x] 5.3 Update Linux Nautilus scripts in `linux_integrations.rs` — add "Open Online (SharePoint)" and "Open Locally" scripts
 - [x] 5.4 Update KDE Dolphin service menus in `linux_integrations.rs` — add both entries

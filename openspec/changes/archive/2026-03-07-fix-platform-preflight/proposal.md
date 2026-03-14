@@ -21,7 +21,7 @@ Platform-specific startup failures silently kill the app or produce invisible er
 
 ## Impact
 
-- `crates/cloudmount-app/src/main.rs`: `preflight_checks()` (lines 143–182), preflight call site (lines 275–278), `start_all_mounts` (lines 512–533), `start_mount` (lines 535–580).
-- `crates/cloudmount-app/src/notify.rs`: New notification helpers for FUSE unavailable and mount failure.
+- `crates/carminedesktop-app/src/main.rs`: `preflight_checks()` (lines 143–182), preflight call site (lines 275–278), `start_all_mounts` (lines 512–533), `start_mount` (lines 535–580).
+- `crates/carminedesktop-app/src/notify.rs`: New notification helpers for FUSE unavailable and mount failure.
 - `Cargo.toml` (workspace): `windows` crate dependency for `MessageBoxW` on Windows desktop builds only.
 - No public API changes; no breaking changes to existing config, auth, or cache behavior.

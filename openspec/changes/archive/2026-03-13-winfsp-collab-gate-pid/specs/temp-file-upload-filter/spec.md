@@ -39,7 +39,7 @@ The transient check SHALL be a pure function of the filename only (no filesystem
 - **THEN** all local VFS operations succeed normally (the filter only affects the upload step in `flush_inode` and the CollabGate guard in `open_file`, not create/write/read/delete)
 
 #### Scenario: Office lock file excluded from CollabGate
-- **WHEN** an interactive process opens `~$Budget.xlsx` on a CloudMount mount
+- **WHEN** an interactive process opens `~$Budget.xlsx` on a carminedesktop mount
 - **AND** the file has a collaborative extension (`.xlsx`)
 - **THEN** the CollabGate guard detects `is_transient_file("~$Budget.xlsx")` is `true`
 - **AND** skips the CollabGate check entirely

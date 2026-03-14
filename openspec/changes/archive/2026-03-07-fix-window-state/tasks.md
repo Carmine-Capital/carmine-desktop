@@ -1,15 +1,15 @@
 ## 1. Rust: Refresh Settings on Window Re-show
 
-- [x] 1.1 In `crates/cloudmount-app/src/tray.rs`, update `open_or_focus_window`: in the branch where `app.get_webview_window(label)` returns `Some(win)`, add `if label == "settings" { let _ = win.eval("loadSettings(); loadMounts();"); }` immediately before `win.show()` — the guard is mandatory: other windows (e.g., the wizard) do not define these functions and calling them would throw a silent `ReferenceError` in the webview
+- [x] 1.1 In `crates/carminedesktop-app/src/tray.rs`, update `open_or_focus_window`: in the branch where `app.get_webview_window(label)` returns `Some(win)`, add `if label == "settings" { let _ = win.eval("loadSettings(); loadMounts();"); }` immediately before `win.show()` — the guard is mandatory: other windows (e.g., the wizard) do not define these functions and calling them would throw a silent `ReferenceError` in the webview
 - [x] 1.2 In the same `open_or_focus_window` function, add `.min_inner_size(640.0, 480.0)` to the `WebviewWindowBuilder` chain in the `else` branch (new window creation) so all newly created windows enforce the minimum inner size
 
 ## 2. Rust: Reload Settings Window on Sign-Out
 
-- [x] 2.1 In `crates/cloudmount-app/src/commands.rs`, update the `sign_out` command: replace the `app.get_webview_window("settings").map(|w| w.hide())` call (line 169) with logic that calls `w.reload()` instead of `w.hide()`, ensuring the settings window starts from a clean DOM on the next open after sign-out
+- [x] 2.1 In `crates/carminedesktop-app/src/commands.rs`, update the `sign_out` command: replace the `app.get_webview_window("settings").map(|w| w.hide())` call (line 169) with logic that calls `w.reload()` instead of `w.hide()`, ensuring the settings window starts from a clean DOM on the next open after sign-out
 
 ## 3. JS: Wizard Cancel Cleanup
 
-- [x] 3.1 In `crates/cloudmount-app/dist/wizard.html`, update the `cancelSignIn()` function: after `showStep('step-welcome')`, add `document.getElementById('auth-url').value = '';` to clear the stale auth URL from the input
+- [x] 3.1 In `crates/carminedesktop-app/dist/wizard.html`, update the `cancelSignIn()` function: after `showStep('step-welcome')`, add `document.getElementById('auth-url').value = '';` to clear the stale auth URL from the input
 - [x] 3.2 In the same `cancelSignIn()` function, add `const errEl = document.getElementById('auth-error'); errEl.style.display = 'none'; errEl.textContent = '';` to hide and clear any error message left from a prior sign-in attempt
 
 ## 4. Verification

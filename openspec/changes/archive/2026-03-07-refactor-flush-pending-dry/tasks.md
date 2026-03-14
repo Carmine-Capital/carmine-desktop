@@ -1,8 +1,8 @@
 ## 1. Create shared pending module
 
-- [x] 1.1 Create `crates/cloudmount-vfs/src/pending.rs` with `pub(crate) const UNMOUNT_FLUSH_TIMEOUT: Duration` (30 s)
+- [x] 1.1 Create `crates/carminedesktop-vfs/src/pending.rs` with `pub(crate) const UNMOUNT_FLUSH_TIMEOUT: Duration` (30 s)
 - [x] 1.2 Implement `pub(crate) async fn flush_pending(cache: &CacheManager, graph: &GraphClient, drive_id: &str)` in `pending.rs` — copy body from either existing implementation (they are identical in logic)
-- [x] 1.3 Declare `mod pending;` in `crates/cloudmount-vfs/src/lib.rs` (no `#[cfg]` gate)
+- [x] 1.3 Declare `mod pending;` in `crates/carminedesktop-vfs/src/lib.rs` (no `#[cfg]` gate)
 
 ## 2. Update FUSE mount handle
 

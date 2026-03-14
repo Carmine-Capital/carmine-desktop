@@ -21,9 +21,9 @@ Two bugs and a missing capability: (1) files updated on OneDrive appear corrupte
 
 ## Impact
 
-- `cloudmount-vfs/src/core_ops.rs`: Reorder `open_file` logic, add lock check, add 423 handling in `flush_inode`, new `VfsEvent` variant
-- `cloudmount-vfs/src/fuse_fs.rs`: Emit `VfsEvent::UploadFailed` from `flush` callback
-- `cloudmount-graph/src/client.rs`: Expose 423 as a distinct error variant (like `PreconditionFailed` for 412)
-- `cloudmount-core/src/error.rs`: New `Error::Locked` variant
-- `cloudmount-app/src/main.rs`: Handle new `VfsEvent` variants in event forwarder
-- `cloudmount-app/src/notify.rs`: New notification functions for upload failure and lock warning
+- `carminedesktop-vfs/src/core_ops.rs`: Reorder `open_file` logic, add lock check, add 423 handling in `flush_inode`, new `VfsEvent` variant
+- `carminedesktop-vfs/src/fuse_fs.rs`: Emit `VfsEvent::UploadFailed` from `flush` callback
+- `carminedesktop-graph/src/client.rs`: Expose 423 as a distinct error variant (like `PreconditionFailed` for 412)
+- `carminedesktop-core/src/error.rs`: New `Error::Locked` variant
+- `carminedesktop-app/src/main.rs`: Handle new `VfsEvent` variants in event forwarder
+- `carminedesktop-app/src/notify.rs`: New notification functions for upload failure and lock warning

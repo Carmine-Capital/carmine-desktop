@@ -26,7 +26,7 @@ None.
 
 ## Impact
 
-- `crates/cloudmount-app/src/main.rs` — `setup_after_launch` logic, `start_mount` (desktop), and headless mount loop.
-- `crates/cloudmount-vfs/src/mount.rs` — Pre-mount stale detection utility (shared by both desktop and headless paths).
+- `crates/carminedesktop-app/src/main.rs` — `setup_after_launch` logic, `start_mount` (desktop), and headless mount loop.
+- `crates/carminedesktop-vfs/src/mount.rs` — Pre-mount stale detection utility (shared by both desktop and headless paths).
 - No new dependencies. `fusermount`/`fusermount3` is already required for FUSE operation.
 - No API or config changes.

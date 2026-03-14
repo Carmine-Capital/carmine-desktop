@@ -29,7 +29,7 @@ _(none -- these are internal performance improvements within existing capabiliti
 
 ## Impact
 
-- **Code**: `crates/cloudmount-cache/src/memory.rs` (CachedEntry struct, get_children, insert_with_children, new surgical methods), `crates/cloudmount-vfs/src/core_ops.rs` (find_child, list_children, create_file, mkdir, unlink, rmdir, rename, remove invalidate_parent), `crates/cloudmount-vfs/src/fuse_fs.rs` (new readdirplus impl, add ReplyDirectoryPlus import).
-- **Tests**: `crates/cloudmount-cache/tests/cache_tests.rs` (update for HashMap API), `crates/cloudmount-app/tests/integration_tests.rs` (verify no regressions).
+- **Code**: `crates/carminedesktop-cache/src/memory.rs` (CachedEntry struct, get_children, insert_with_children, new surgical methods), `crates/carminedesktop-vfs/src/core_ops.rs` (find_child, list_children, create_file, mkdir, unlink, rmdir, rename, remove invalidate_parent), `crates/carminedesktop-vfs/src/fuse_fs.rs` (new readdirplus impl, add ReplyDirectoryPlus import).
+- **Tests**: `crates/carminedesktop-cache/tests/cache_tests.rs` (update for HashMap API), `crates/carminedesktop-app/tests/integration_tests.rs` (verify no regressions).
 - **Dependencies**: None added. `std::collections::HashMap` is in the standard library.
 - **Backwards compatibility**: Internal change only -- no user-facing API, config, or behavior changes. FUSE external behavior is identical (readdirplus is transparently negotiated by the kernel).

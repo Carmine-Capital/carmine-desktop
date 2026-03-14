@@ -19,7 +19,7 @@ The cross-platform and VFS parity audit revealed that the CfApi (Windows) backen
 - **`pending.rs` recovery streams large files** via `upload_large` instead of loading them fully in memory.
 - **Windows headless mode exits with a clear error** instead of silently running an idle process.
 - **`start_mount` shared preamble extracted** into a helper, fixing the code duplication and the `account_name` bug in one refactor.
-- **Minor cleanups**: remove dead `#[cfg(not(unix))]` block in `mount.rs`, remove stale `open` dependency in `cloudmount-auth`, fix `DEFAULT_CONFIG_TOML` Unix-only path comment, add comment on fragile `cache_dir` cfg union, make `block_on_compat` usage consistent in CfApi SyncFilter callbacks.
+- **Minor cleanups**: remove dead `#[cfg(not(unix))]` block in `mount.rs`, remove stale `open` dependency in `carminedesktop-auth`, fix `DEFAULT_CONFIG_TOML` Unix-only path comment, add comment on fragile `cache_dir` cfg union, make `block_on_compat` usage consistent in CfApi SyncFilter callbacks.
 
 ## Capabilities
 
@@ -34,12 +34,12 @@ _None._
 
 ## Impact
 
-- **`crates/cloudmount-vfs/src/cfapi.rs`** — Major refactor of `rename`, `delete`, `closed` callbacks; path handling changed from `String` to `OsString`.
-- **`crates/cloudmount-vfs/src/core_ops.rs`** — `resolve_path` signature changes from `&str` to `&OsStr`; `flush_inode` gains `If-Match` header and moves content instead of cloning; `read_range_direct` delegates to new `disk.get_range()`; `StreamingBuffer` allocation strategy changes.
-- **`crates/cloudmount-vfs/src/mount.rs`** — Remove dead `#[cfg(not(unix))]` block; refactor `shutdown_on_signal` to release mutex before unmounts.
-- **`crates/cloudmount-vfs/src/pending.rs`** — Large file recovery uses `upload_large` streaming.
-- **`crates/cloudmount-cache/src/disk.rs`** — New `get_range()` method for partial file reads.
-- **`crates/cloudmount-graph/src/lib.rs`** — Upload methods accept optional `If-Match` header.
-- **`crates/cloudmount-app/src/main.rs`** — `start_mount` refactored into shared helper + platform mount; headless Windows path changed; `DEFAULT_CONFIG_TOML` comment fixed.
-- **`crates/cloudmount-auth/Cargo.toml`** — Remove unused `open` dependency.
-- **`crates/cloudmount-vfs/src/fuse_fs.rs`** — `resolve_path` call sites updated for `OsStr`.
+- **`crates/carminedesktop-vfs/src/cfapi.rs`** — Major refactor of `rename`, `delete`, `closed` callbacks; path handling changed from `String` to `OsString`.
+- **`crates/carminedesktop-vfs/src/core_ops.rs`** — `resolve_path` signature changes from `&str` to `&OsStr`; `flush_inode` gains `If-Match` header and moves content instead of cloning; `read_range_direct` delegates to new `disk.get_range()`; `StreamingBuffer` allocation strategy changes.
+- **`crates/carminedesktop-vfs/src/mount.rs`** — Remove dead `#[cfg(not(unix))]` block; refactor `shutdown_on_signal` to release mutex before unmounts.
+- **`crates/carminedesktop-vfs/src/pending.rs`** — Large file recovery uses `upload_large` streaming.
+- **`crates/carminedesktop-cache/src/disk.rs`** — New `get_range()` method for partial file reads.
+- **`crates/carminedesktop-graph/src/lib.rs`** — Upload methods accept optional `If-Match` header.
+- **`crates/carminedesktop-app/src/main.rs`** — `start_mount` refactored into shared helper + platform mount; headless Windows path changed; `DEFAULT_CONFIG_TOML` comment fixed.
+- **`crates/carminedesktop-auth/Cargo.toml`** — Remove unused `open` dependency.
+- **`crates/carminedesktop-vfs/src/fuse_fs.rs`** — `resolve_path` call sites updated for `OsStr`.

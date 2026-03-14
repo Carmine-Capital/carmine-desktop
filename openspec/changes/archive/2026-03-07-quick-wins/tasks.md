@@ -1,7 +1,7 @@
 ## 1. FUSE mount options and capabilities
 
 - [x] 1.1 Add `MountOption::CUSTOM("max_read=1048576".into())` and `MountOption::NoAtime` to mount options in `fuse_fs.rs::mount()`
-- [x] 1.2 Implement `Filesystem::init()` on `CloudMountFs` to call `config.add_capabilities(InitFlags::FUSE_WRITEBACK_CACHE | InitFlags::FUSE_PARALLEL_DIROPS)` with graceful degradation (log warning on `Err`)
+- [x] 1.2 Implement `Filesystem::init()` on `carminedesktopFs` to call `config.add_capabilities(InitFlags::FUSE_WRITEBACK_CACHE | InitFlags::FUSE_PARALLEL_DIROPS)` with graceful degradation (log warning on `Err`)
 - [x] 1.3 Add `InitFlags` and `KernelConfig` to the fuser import list in `fuse_fs.rs`
 
 ## 2. SQLite prepared statement caching

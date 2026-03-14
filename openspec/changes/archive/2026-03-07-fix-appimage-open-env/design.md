@@ -1,6 +1,6 @@
 ## Context
 
-CloudMount on Linux is distributed as an AppImage. The AppImage runtime sets two environment variables before launching the main binary:
+carminedesktop on Linux is distributed as an AppImage. The AppImage runtime sets two environment variables before launching the main binary:
 
 - `LD_LIBRARY_PATH` — points to bundled `.so` files inside the AppImage mount
 - `LD_PRELOAD` — may inject AppImage-bundled hooks
@@ -17,7 +17,7 @@ The desktop OAuth URL opener (`main.rs:403-421`) already strips these vars via `
 ## Goals / Non-Goals
 
 **Goals:**
-- Eliminate env var inheritance for all "open something with the OS" call sites in cloudmount-app
+- Eliminate env var inheritance for all "open something with the OS" call sites in carminedesktop-app
 - Single definition of the Linux-specific scrubbing logic (DRY)
 - No regression on macOS or Windows
 

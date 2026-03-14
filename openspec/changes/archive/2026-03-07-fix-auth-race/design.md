@@ -80,9 +80,9 @@ The wizard's `cancelSignIn()` adds `await invoke('cancel_sign_in')` before its e
 ## Migration Plan
 
 1. Add `"sync"` to `tokio-util` features in root `Cargo.toml`.
-2. Modify `cloudmount-auth`: add cancellation token field and `cancel()` method to `AuthManager`; thread the token into `run_pkce_flow` and `wait_for_callback`.
-3. Modify `cloudmount-app/src/commands.rs`: add `active_sign_in` to `AppState`, implement abort-before-spawn in `start_sign_in`, add `cancel_sign_in` command, register it in `invoke_handler!`.
-4. Modify `crates/cloudmount-app/dist/wizard.html`: add `await invoke('cancel_sign_in')` to `cancelSignIn()`.
+2. Modify `carminedesktop-auth`: add cancellation token field and `cancel()` method to `AuthManager`; thread the token into `run_pkce_flow` and `wait_for_callback`.
+3. Modify `carminedesktop-app/src/commands.rs`: add `active_sign_in` to `AppState`, implement abort-before-spawn in `start_sign_in`, add `cancel_sign_in` command, register it in `invoke_handler!`.
+4. Modify `crates/carminedesktop-app/dist/wizard.html`: add `await invoke('cancel_sign_in')` to `cancelSignIn()`.
 5. Run `cargo clippy --all-targets --all-features` and `cargo test --all-targets` to verify no regressions.
 
 No config changes. No database migration. Rollback: revert the four file changes above.

@@ -1,6 +1,6 @@
 ## Context
 
-CloudMount uses the Windows Cloud Files API (CfApi) via the `cloud-filter` crate (v0.0.6) to present OneDrive/SharePoint as a sync root in Explorer. Remote-to-local sync works (delta sync updates placeholders), but local-to-remote sync is completely broken. Five independent bugs in the CfApi writeback pipeline prevent any local file mutation from reaching OneDrive.
+carminedesktop uses the Windows Cloud Files API (CfApi) via the `cloud-filter` crate (v0.0.6) to present OneDrive/SharePoint as a sync root in Explorer. Remote-to-local sync works (delta sync updates placeholders), but local-to-remote sync is completely broken. Five independent bugs in the CfApi writeback pipeline prevent any local file mutation from reaching OneDrive.
 
 The `cloud-filter` crate provides a `SyncFilter` trait with callbacks (`closed`, `rename`, `state_changed`, `delete`) and a `spawn_root_watcher` that uses `ReadDirectoryChangesW`. The crate is third-party (v0.0.6), evolving, and we do not control its watcher implementation.
 

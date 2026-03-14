@@ -47,7 +47,7 @@ The tray `handle_menu_event` function runs on the Rust side with no webview cont
 - **Route through the settings/wizard window JS**: requires the window to be open and focused; not reliable from a background tray event.
 - **Skip confirmation on tray**: inconsistent with the spec requirement that sign-out always requires confirmation.
 
-`tauri-plugin-dialog` must be added to `[workspace.dependencies]` in the root `Cargo.toml` and to the `desktop` feature list in `cloudmount-app/Cargo.toml`.
+`tauri-plugin-dialog` must be added to `[workspace.dependencies]` in the root `Cargo.toml` and to the `desktop` feature list in `carminedesktop-app/Cargo.toml`.
 
 ### D4: Button loading state via `disabled` + text swap
 
@@ -66,7 +66,7 @@ When an async action starts, the calling button is found via `event.target` (or 
 ## Migration Plan
 
 1. Add `tauri-plugin-dialog = "2"` to root `Cargo.toml` `[workspace.dependencies]`.
-2. Add `tauri-plugin-dialog` to `cloudmount-app`'s `desktop` feature and optional deps.
+2. Add `tauri-plugin-dialog` to `carminedesktop-app`'s `desktop` feature and optional deps.
 3. Register the dialog plugin in `main.rs` `setup_after_launch` alongside the other plugins.
 4. Patch `tray.rs` `handle_menu_event` `"sign_out"` branch.
 5. Patch `settings.html` with toast infrastructure and updated JS functions.

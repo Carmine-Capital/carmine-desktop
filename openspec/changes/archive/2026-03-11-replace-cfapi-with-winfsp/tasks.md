@@ -1,21 +1,21 @@
 ## 1. Workspace Dependencies & Module Structure
 
 - [x] 1.1 Add `winfsp` and `winfsp-sys` as Windows-only workspace dependencies in root `Cargo.toml`
-- [x] 1.2 Add `winfsp` dependency to `cloudmount-vfs/Cargo.toml` (`workspace = true`, `cfg(target_os = "windows")`)
-- [x] 1.3 Create `crates/cloudmount-vfs/src/winfsp_fs.rs` with `CloudMountWinFsp`, `WinFspFileContext`, `WinFspMountHandle`, and `WinFspDeltaObserver` struct skeletons
-- [x] 1.4 Add `#[cfg(target_os = "windows")] mod winfsp_fs;` declaration in `cloudmount-vfs/src/lib.rs` and update public exports
+- [x] 1.2 Add `winfsp` dependency to `carminedesktop-vfs/Cargo.toml` (`workspace = true`, `cfg(target_os = "windows")`)
+- [x] 1.3 Create `crates/carminedesktop-vfs/src/winfsp_fs.rs` with `carminedesktopWinFsp`, `WinFspFileContext`, `WinFspMountHandle`, and `WinFspDeltaObserver` struct skeletons
+- [x] 1.4 Add `#[cfg(target_os = "windows")] mod winfsp_fs;` declaration in `carminedesktop-vfs/src/lib.rs` and update public exports
 
 ## 2. Remove CfApi Backend
 
-- [x] 2.1 Remove `cloud-filter` from workspace dependencies in root `Cargo.toml` and from `cloudmount-vfs/Cargo.toml`
-- [x] 2.2 Delete `crates/cloudmount-vfs/src/cfapi.rs`
-- [x] 2.3 Remove `cfapi` module declaration and CfApi-specific public exports (`apply_delta_placeholder_updates`, `CfMountHandle`) from `cloudmount-vfs/src/lib.rs`
-- [x] 2.4 Remove CfApi-specific integration tests from `crates/cloudmount-vfs/tests/`
+- [x] 2.1 Remove `cloud-filter` from workspace dependencies in root `Cargo.toml` and from `carminedesktop-vfs/Cargo.toml`
+- [x] 2.2 Delete `crates/carminedesktop-vfs/src/cfapi.rs`
+- [x] 2.3 Remove `cfapi` module declaration and CfApi-specific public exports (`apply_delta_placeholder_updates`, `CfMountHandle`) from `carminedesktop-vfs/src/lib.rs`
+- [x] 2.4 Remove CfApi-specific integration tests from `crates/carminedesktop-vfs/tests/`
 
 ## 3. WinFsp Core Types & Helpers
 
 - [x] 3.1 Define `WinFspFileContext` struct with `ino: u64`, `fh: Option<u64>`, `is_dir: bool`
-- [x] 3.2 Define `CloudMountWinFsp` struct holding `Arc<CoreOps>`, `tokio::runtime::Handle`, `Arc<OpenFileTable>`, and `VfsEventSender`
+- [x] 3.2 Define `carminedesktopWinFsp` struct holding `Arc<CoreOps>`, `tokio::runtime::Handle`, `Arc<OpenFileTable>`, and `VfsEventSender`
 - [x] 3.3 Implement `VfsError` to `NTSTATUS` error mapping helper (`NotFound` -> `STATUS_OBJECT_NAME_NOT_FOUND`, `NotADirectory` -> `STATUS_NOT_A_DIRECTORY`, `DirectoryNotEmpty` -> `STATUS_DIRECTORY_NOT_EMPTY`, `PermissionDenied` -> `STATUS_ACCESS_DENIED`, `TimedOut` -> `STATUS_IO_TIMEOUT`, `QuotaExceeded` -> `STATUS_DISK_FULL`, `IoError` -> `STATUS_IO_DEVICE_ERROR`)
 - [x] 3.4 Implement `DriveItem` to WinFsp `FileInfo` mapping helper: file_size, allocation_size (4KB-aligned), file_attributes (`FILE_ATTRIBUTE_DIRECTORY`/`FILE_ATTRIBUTE_NORMAL`), timestamps as Windows FILETIME (100ns since 1601-01-01), default to Windows epoch for `None` timestamps, open handle size override
 - [x] 3.5 Implement `U16CStr` path to `OsString` component splitting helper (backslash separator, root path `\` special case, lossless Unicode)
@@ -27,7 +27,7 @@
 - [x] 4.3 Implement `get_file_info`: map inode metadata to `FileInfo` via the attribute mapping helper; prefer open handle content size over cached DriveItem size
 - [x] 4.4 Implement `read`: delegate to `CoreOps::read_handle(fh, offset, size)`, copy bytes into WinFsp buffer, return byte count; 0 bytes for read-beyond-EOF
 - [x] 4.5 Implement `read_directory`: call `CoreOps::list_children(ino)`, emit `.` and `..` entries first, encode each child as `DirInfo` with full attributes; stop and return when buffer is full (WinFsp re-requests with marker)
-- [x] 4.6 Implement `get_volume_info`: call `CoreOps::get_quota()`, return total/free sizes with volume label "CloudMount"; fall back to 1 TB total / 1 TB free when quota is unavailable
+- [x] 4.6 Implement `get_volume_info`: call `CoreOps::get_quota()`, return total/free sizes with volume label "carminedesktop"; fall back to 1 TB total / 1 TB free when quota is unavailable
 
 ## 5. WinFsp FileSystemContext — Write Path
 
@@ -43,8 +43,8 @@
 
 ## 6. WinFsp Mount Lifecycle
 
-- [x] 6.1 Define `WinFspMountHandle` struct with `FileSystemHost<CloudMountWinFsp>`, `Arc<CacheManager>`, `Arc<GraphClient>`, `drive_id: String`, `rt: Handle`, `mountpoint: String`, `delta_observer: Arc<WinFspDeltaObserver>`
-- [x] 6.2 Implement `WinFspMountHandle::mount()`: fetch drive root from Graph API, seed into caches as ROOT_INODE, create `CloudMountWinFsp`, create `WinFspDeltaObserver` sharing `OpenFileTable`, configure `VolumeParams` (filesystem name "cloudmount", `FileInfoTimeout` 5000ms), create and start `FileSystemHost`
+- [x] 6.1 Define `WinFspMountHandle` struct with `FileSystemHost<carminedesktopWinFsp>`, `Arc<CacheManager>`, `Arc<GraphClient>`, `drive_id: String`, `rt: Handle`, `mountpoint: String`, `delta_observer: Arc<WinFspDeltaObserver>`
+- [x] 6.2 Implement `WinFspMountHandle::mount()`: fetch drive root from Graph API, seed into caches as ROOT_INODE, create `carminedesktopWinFsp`, create `WinFspDeltaObserver` sharing `OpenFileTable`, configure `VolumeParams` (filesystem name "carminedesktop", `FileInfoTimeout` 5000ms), create and start `FileSystemHost`
 - [x] 6.3 Implement `WinFspMountHandle::unmount()`: call shared `flush_pending()`, stop `FileSystemHost`, unmount
 - [x] 6.4 Implement accessor methods: `drive_id() -> &str`, `mountpoint() -> &str`, `delta_observer() -> Arc<dyn DeltaSyncObserver>`
 
@@ -63,7 +63,7 @@
 
 ## 9. CfApi Migration & Packaging
 
-- [x] 9.1 Add `cfapi_migrated: bool` field to user config schema in `cloudmount-core` (default `false`)
-- [x] 9.2 Implement CfApi sync root cleanup in `setup_after_launch()`: if `cfapi_migrated` is false, enumerate CloudMount sync roots, unregister each, set flag to true; log warning and continue on failure
+- [x] 9.1 Add `cfapi_migrated: bool` field to user config schema in `carminedesktop-core` (default `false`)
+- [x] 9.2 Implement CfApi sync root cleanup in `setup_after_launch()`: if `cfapi_migrated` is false, enumerate carminedesktop sync roots, unregister each, set flag to true; log warning and continue on failure
 - [x] 9.3 Add WinFsp FLOSS attribution text to UI About dialog: "WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos"
 - [x] 9.4 Update Windows installer/packaging notes to bundle or require WinFsp driver installation

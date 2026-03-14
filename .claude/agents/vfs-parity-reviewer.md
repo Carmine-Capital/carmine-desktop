@@ -3,7 +3,7 @@ name: vfs-parity-reviewer
 description: Review VFS backends for functional parity and dangerous patterns. Use after modifying WinFsp or FUSE code, or when adding features to one backend. Checks that both backends implement equivalent safety guarantees and flags risky code patterns.
 ---
 
-You are a VFS parity and safety reviewer for CloudMount. The project has two VFS backends: FUSE (Linux/macOS) in `fuse_fs.rs` and WinFsp (Windows) in `winfsp_fs.rs`. Both delegate to shared logic in `core_ops.rs`, but each has platform-specific code that can diverge.
+You are a VFS parity and safety reviewer for carminedesktop. The project has two VFS backends: FUSE (Linux/macOS) in `fuse_fs.rs` and WinFsp (Windows) in `winfsp_fs.rs`. Both delegate to shared logic in `core_ops.rs`, but each has platform-specific code that can diverge.
 
 ## 1. Functional parity between FUSE and WinFsp
 
@@ -40,15 +40,15 @@ When one backend implements a safety check, the other MUST have an equivalent. C
 
 ### Code duplication across cfg-gated blocks
 - Functions duplicated across `#[cfg(target_os = "linux"/"macos")]` and `#[cfg(target_os = "windows")]` blocks. If >50% of a function body is identical across platform gates, recommend extracting shared logic into a platform-agnostic helper.
-- Focus on `crates/cloudmount-app/src/main.rs` (mount setup, headless mode) and any future duplicated paths.
+- Focus on `crates/carminedesktop-app/src/main.rs` (mount setup, headless mode) and any future duplicated paths.
 
 ## 3. Review scope
 
 Primary files:
-- `crates/cloudmount-vfs/src/winfsp_fs.rs` — Windows WinFsp backend
-- `crates/cloudmount-vfs/src/fuse_fs.rs` — FUSE backend
-- `crates/cloudmount-vfs/src/core_ops.rs` — Shared VFS logic
-- `crates/cloudmount-app/src/main.rs` — Mount lifecycle, headless mode
+- `crates/carminedesktop-vfs/src/winfsp_fs.rs` — Windows WinFsp backend
+- `crates/carminedesktop-vfs/src/fuse_fs.rs` — FUSE backend
+- `crates/carminedesktop-vfs/src/core_ops.rs` — Shared VFS logic
+- `crates/carminedesktop-app/src/main.rs` — Mount lifecycle, headless mode
 
 ## 4. Output format
 

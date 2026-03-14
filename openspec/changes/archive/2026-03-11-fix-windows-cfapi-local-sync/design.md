@@ -70,4 +70,4 @@ This change must preserve existing cross-platform `CoreOps` semantics while maki
 
 - Should safe-save reconciliation window be fixed or adaptive per file extension/app behavior?
 - Should retry cadence be shared with `sync_interval_secs` or remain independent?
-- Do we need cloud-filter crate changes for broader event flags, or is a CloudMount-side watcher layer sufficient long-term?
+- Do we need cloud-filter crate changes for broader event flags, or is a carminedesktop-side watcher layer sufficient long-term?

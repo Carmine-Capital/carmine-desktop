@@ -1,6 +1,6 @@
 ## Context
 
-The project "CloudMount" is being rebranded to "Carmine Desktop" as it moves under the Carmine Capital organization. The codebase is a Rust 2024 workspace with 6 crates, a Tauri desktop app, and CI/CD via GitHub Actions. The rename touches every layer: crate names, Rust identifiers, environment variables, system integration points (D-Bus, keyring), Tauri config, frontend assets, build tooling, and documentation.
+The project "carminedesktop" is being rebranded to "Carmine Desktop" as it moves under the Carmine Capital organization. The codebase is a Rust 2024 workspace with 6 crates, a Tauri desktop app, and CI/CD via GitHub Actions. The rename touches every layer: crate names, Rust identifiers, environment variables, system integration points (D-Bus, keyring), Tauri config, frontend assets, build tooling, and documentation.
 
 Simultaneously, the distribution infrastructure is being moved off public GitHub Releases to a private update server, and the Windows installer format is switching from NSIS to MSI for enterprise compatibility.
 
@@ -8,7 +8,7 @@ Simultaneously, the distribution infrastructure is being moved off public GitHub
 
 **Goals:**
 
-- Complete identity rename from CloudMount to Carmine Desktop across all code, config, and documentation
+- Complete identity rename from carminedesktop to Carmine Desktop across all code, config, and documentation
 - Move update distribution to private infrastructure (`static.carminecapital.com`)
 - Switch Windows installer to MSI (WiX) for better enterprise/GPO deployment support
 - Maintain full CI passing (fmt, clippy, build, 222 tests) after all changes
@@ -81,8 +81,8 @@ Simultaneously, the distribution infrastructure is being moved off public GitHub
 ## Risks / Trade-offs
 
 - **[Broken imports after rename]** → Mitigated by CI enforcement (fmt + clippy + build + 222 tests all pass). Swarm workers validated each file category independently.
-- **[Stale references in non-code files]** → Mitigated by grepping for `cloudmount` and `CloudMount` across all file types, not just `.rs`.
+- **[Stale references in non-code files]** → Mitigated by grepping for `carminedesktop` and `carminedesktop` across all file types, not just `.rs`.
 - **[Toolbox container name mismatch]** → The local build container is still named `carminedesktop-build`. The Makefile now references `carminedesktop-build`. User must manually rename: `toolbox rename carminedesktop-build carminedesktop-build`.
 - **[Server not yet provisioned]** → The private update server requires nginx setup and `DEPLOY_SSH_KEY` GitHub secret. Until provisioned, `release.yml` will fail on publish. This is an intentional deferred ops task.
 - **[MSI/NSIS hooks.nsh stale content]** → The NSIS hooks file was updated but may need removal once MSI is fully validated on Windows CI.
-- **[No user data migration]** → Users of the old "CloudMount" builds will need to re-authenticate. Keyring entries and config paths use the new name. This is acceptable for a pre-release project.
+- **[No user data migration]** → Users of the old "carminedesktop" builds will need to re-authenticate. Keyring entries and config paths use the new name. This is acceptable for a pre-release project.

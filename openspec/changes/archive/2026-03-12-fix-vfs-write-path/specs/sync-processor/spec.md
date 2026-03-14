@@ -27,7 +27,7 @@ The SyncProcessor SHALL support a `SyncRequest::FlushSync { ino, done: oneshot::
 ## MODIFIED Requirements
 
 ### Requirement: SyncProcessor event loop
-The system SHALL provide a `SyncProcessor` tokio task in `cloudmount-vfs` that receives `SyncRequest` messages via an unbounded `tokio::sync::mpsc` channel and processes them in an event loop using `tokio::select!`. The event loop SHALL have three branches in priority order: (1) drain upload results from an internal bounded channel, (2) receive external sync requests, (3) process periodic tick. The processor SHALL own all upload-related state as local variables (no `Mutex`-guarded shared state).
+The system SHALL provide a `SyncProcessor` tokio task in `carminedesktop-vfs` that receives `SyncRequest` messages via an unbounded `tokio::sync::mpsc` channel and processes them in an event loop using `tokio::select!`. The event loop SHALL have three branches in priority order: (1) drain upload results from an internal bounded channel, (2) receive external sync requests, (3) process periodic tick. The processor SHALL own all upload-related state as local variables (no `Mutex`-guarded shared state).
 
 #### Scenario: Processor receives Flush request
 - **WHEN** the processor receives `SyncRequest::Flush { ino }` via the request channel

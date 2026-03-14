@@ -1,12 +1,12 @@
 ## Context
 
-`expand_mount_point()` in `cloudmount-core/src/config.rs` expands `~/` and `{home}` templates into absolute paths using `Path::join`. On Windows, `Path::join("Cloud/OneDrive")` preserves the forward slash from the template, producing mixed-separator paths like `C:\Users\nyxa\Cloud/OneDrive`. While WinFsp tolerates mixed separators, a trailing `/` or `\` on the mountpoint causes `FspFileSystemSetMountPoint` (inside `host.mount()`) to crash with `STATUS_ACCESS_VIOLATION`.
+`expand_mount_point()` in `carminedesktop-core/src/config.rs` expands `~/` and `{home}` templates into absolute paths using `Path::join`. On Windows, `Path::join("Cloud/OneDrive")` preserves the forward slash from the template, producing mixed-separator paths like `C:\Users\nyxa\Cloud/OneDrive`. While WinFsp tolerates mixed separators, a trailing `/` or `\` on the mountpoint causes `FspFileSystemSetMountPoint` (inside `host.mount()`) to crash with `STATUS_ACCESS_VIOLATION`.
 
 The trailing separator originates from user config or from mount creation functions that don't strip it.
 
 Affected code:
-- `cloudmount-core/src/config.rs` — `expand_mount_point()`, `add_onedrive_mount()`, `add_sharepoint_mount()`
-- `cloudmount-app/src/main.rs` — `start_mount_common()` (consumer of expanded paths)
+- `carminedesktop-core/src/config.rs` — `expand_mount_point()`, `add_onedrive_mount()`, `add_sharepoint_mount()`
+- `carminedesktop-app/src/main.rs` — `start_mount_common()` (consumer of expanded paths)
 
 ## Goals / Non-Goals
 

@@ -2,18 +2,18 @@
 
 The Windows Explorer "Open in SharePoint" context-menu entry is implemented as a global HKCU registry key, but its lifecycle is currently managed from individual CfApi mount/unmount events. In multi-mount sessions this causes premature cleanup: unmounting one drive can remove the menu while other drives remain active.
 
-CloudMount mounts are independent per drive, but shell integration is shared process-wide. The lifecycle policy must therefore be tied to aggregate active-mount state, not to a single mount instance.
+carminedesktop mounts are independent per drive, but shell integration is shared process-wide. The lifecycle policy must therefore be tied to aggregate active-mount state, not to a single mount instance.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Keep the Windows context-menu entry available while at least one CloudMount Windows mount is active.
+- Keep the Windows context-menu entry available while at least one carminedesktop Windows mount is active.
 - Remove the entry only after the final active Windows mount is unmounted.
 - Make register/unregister operations idempotent and resilient to restarts or stale registry state.
 - Preserve existing deep-link behavior and error handling.
 
 **Non-Goals:**
-- Dynamic Explorer visibility filtering to CloudMount paths only.
+- Dynamic Explorer visibility filtering to carminedesktop paths only.
 - COM shell extension implementation.
 - Changes to Linux/macOS integration behavior.
 - Changes to deep-link URL schema or command semantics.
@@ -47,6 +47,6 @@ CloudMount mounts are independent per drive, but shell integration is shared pro
 ## Risks / Trade-offs
 
 - **[Risk] Counter desynchronization after unexpected process termination** -> Mitigation: registration on first successful mount converges state quickly; cleanup on normal unmount still applies.
-- **[Risk] Multiple CloudMount processes on Windows** -> Mitigation: treat this as unsupported for v1; retain idempotent key handling to reduce impact.
+- **[Risk] Multiple carminedesktop processes on Windows** -> Mitigation: treat this as unsupported for v1; retain idempotent key handling to reduce impact.
 - **[Risk] Unmount error paths might skip decrement** -> Mitigation: ensure decrement happens in teardown paths that run after connection drop/unregister attempts.
-- **[Risk] Global key still appears outside CloudMount directories** -> Mitigation: existing deep-link path validation and user notification remain in place.
+- **[Risk] Global key still appears outside carminedesktop directories** -> Mitigation: existing deep-link path validation and user notification remain in place.

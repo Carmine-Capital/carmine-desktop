@@ -1,6 +1,6 @@
 ## Context
 
-The VFS layer handles file copies through the standard open/read/write/flush path. When a user runs `cp bigfile.docx bigfile-backup.docx` within the mount, the kernel calls `open` on the source (downloading the full file), `create` on the destination, then issues a series of `copy_file_range` syscalls (Linux 4.5+). Since `CloudMountFs` does not implement `copy_file_range`, fuser returns `ENOSYS`, and the kernel falls back to `read` + `write` pairs. This downloads the entire file from OneDrive/SharePoint into memory and re-uploads it via the writeback+flush path.
+The VFS layer handles file copies through the standard open/read/write/flush path. When a user runs `cp bigfile.docx bigfile-backup.docx` within the mount, the kernel calls `open` on the source (downloading the full file), `create` on the destination, then issues a series of `copy_file_range` syscalls (Linux 4.5+). Since `carminedesktopFs` does not implement `copy_file_range`, fuser returns `ENOSYS`, and the kernel falls back to `read` + `write` pairs. This downloads the entire file from OneDrive/SharePoint into memory and re-uploads it via the writeback+flush path.
 
 The Microsoft Graph API supports server-side copy via `POST /drives/{driveId}/items/{itemId}/copy`. This operation runs entirely on the server with no data transfer to or from the client. It returns HTTP 202 with a `Location` header pointing to a monitor URL. The client polls the monitor URL until the copy completes, at which point it receives the new item's `resourceId`.
 
@@ -91,7 +91,7 @@ This is purely in-memory (no network I/O) since both files are already open with
 
 **Why not return ENOSYS:** Returning `ENOSYS` from `copy_file_range` causes the kernel to fall back to `read` + `write` pairs, each of which crosses the FUSE kernel-userspace boundary. The buffer-level fallback copies data in a single call with no boundary crossings.
 
-### D6: CopyMonitorResponse type in cloudmount-core
+### D6: CopyMonitorResponse type in carminedesktop-core
 
 A new `CopyMonitorResponse` struct in `types.rs`:
 
@@ -112,7 +112,7 @@ CopyStatus::Completed { resource_id: String }
 CopyStatus::Failed { message: String }
 ```
 
-**Why in cloudmount-core:** `CopyMonitorResponse` is a Graph API JSON shape, consistent with other Graph response types (`DriveItem`, `DeltaResponse`, `UploadSession`) that live in `types.rs`. The `CopyStatus` enum lives in the graph crate as it is the parsed, domain-specific representation used by `poll_copy_status`.
+**Why in carminedesktop-core:** `CopyMonitorResponse` is a Graph API JSON shape, consistent with other Graph response types (`DriveItem`, `DeltaResponse`, `UploadSession`) that live in `types.rs`. The `CopyStatus` enum lives in the graph crate as it is the parsed, domain-specific representation used by `poll_copy_status`.
 
 ## Risks / Trade-offs
 

@@ -21,8 +21,8 @@ _(none — all changes are bug fixes to existing capabilities)_
 
 ## Impact
 
-- **`crates/cloudmount-vfs/src/core_ops.rs`**: `write_handle()` gains truncation logic; `flush_handle()` gains optional synchronous upload path (new `SyncRequest::FlushSync` or oneshot completion channel).
-- **`crates/cloudmount-vfs/src/sync_processor.rs`**: `flush_inode_async()` gains memory cache + children map cleanup for transient files; new completion-signaling mechanism for synchronous flush callers.
-- **`crates/cloudmount-vfs/src/winfsp_fs.rs`**: `cleanup()`/`flush()` callbacks use the synchronous flush path.
-- **`crates/cloudmount-cache/src/memory.rs`**: May need a method to remove an entry and its parent reference atomically.
+- **`crates/carminedesktop-vfs/src/core_ops.rs`**: `write_handle()` gains truncation logic; `flush_handle()` gains optional synchronous upload path (new `SyncRequest::FlushSync` or oneshot completion channel).
+- **`crates/carminedesktop-vfs/src/sync_processor.rs`**: `flush_inode_async()` gains memory cache + children map cleanup for transient files; new completion-signaling mechanism for synchronous flush callers.
+- **`crates/carminedesktop-vfs/src/winfsp_fs.rs`**: `cleanup()`/`flush()` callbacks use the synchronous flush path.
+- **`crates/carminedesktop-cache/src/memory.rs`**: May need a method to remove an entry and its parent reference atomically.
 - **No API changes, no new dependencies, no breaking changes.** FUSE behavior on Linux/macOS is unchanged (fire-and-forget flush is fine for POSIX apps).

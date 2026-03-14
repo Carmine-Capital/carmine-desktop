@@ -21,7 +21,7 @@ None.
 
 ## Impact
 
-- `cloudmount-auth`: `AuthManager` gains an `opener` field; `run_pkce_flow` accepts an opener parameter instead of calling `open::that()` directly. The `open` crate dependency may become optional or be removed.
-- `cloudmount-app`: Desktop mode constructs `AuthManager` with a Tauri-based opener; headless mode uses `open::that()`.
+- `carminedesktop-auth`: `AuthManager` gains an `opener` field; `run_pkce_flow` accepts an opener parameter instead of calling `open::that()` directly. The `open` crate dependency may become optional or be removed.
+- `carminedesktop-app`: Desktop mode constructs `AuthManager` with a Tauri-based opener; headless mode uses `open::that()`.
 - New dependency: `tauri-plugin-opener` (workspace, behind `desktop` feature flag).
 - Tauri capabilities config needs `opener:allow-open-url` permission.

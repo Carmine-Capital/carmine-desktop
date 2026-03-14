@@ -1,6 +1,6 @@
 ## Why
 
-When a user edits a file online (e.g. in the OneDrive/SharePoint web browser), then opens the same file from the local CloudMount mount, LibreOffice (and other apps) either shows the file as corrupted or displays stale content without the online modifications. This is a data reliability issue that makes the product untrustable for daily use.
+When a user edits a file online (e.g. in the OneDrive/SharePoint web browser), then opens the same file from the local carminedesktop mount, LibreOffice (and other apps) either shows the file as corrupted or displays stale content without the online modifications. This is a data reliability issue that makes the product untrustable for daily use.
 
 The root cause is a metadata/content desynchronization across cache tiers:
 
@@ -48,7 +48,7 @@ _(none — this is a correctness fix within existing capabilities)_
 
 ## Impact
 
-- **Code**: `crates/cloudmount-cache/src/sync.rs` (delta sync invalidation logic), `crates/cloudmount-cache/src/disk.rs` (eTag tracking in `cache_entries`), `crates/cloudmount-vfs/src/core_ops.rs` (freshness check in `open_file`, dirty set), `crates/cloudmount-vfs/src/fuse_fs.rs` (TTL changes, writeback cache flag review).
+- **Code**: `crates/carminedesktop-cache/src/sync.rs` (delta sync invalidation logic), `crates/carminedesktop-cache/src/disk.rs` (eTag tracking in `cache_entries`), `crates/carminedesktop-vfs/src/core_ops.rs` (freshness check in `open_file`, dirty set), `crates/carminedesktop-vfs/src/fuse_fs.rs` (TTL changes, writeback cache flag review).
 - **Tests**: New tests for delta sync disk invalidation, stale content detection in `open_file`, eTag-based cache validation, dirty set lifecycle.
 - **Dependencies**: None added.
 - **Backwards compatibility**: No external API changes. Behavior is strictly improved — stale content is no longer served. Slightly more network traffic when files change remotely (re-download instead of serving stale cache), which is the correct trade-off.

@@ -1,6 +1,6 @@
 ## 1. Graph client streaming download
 
-- [x] 1.1 Add `download_streaming()` method to `GraphClient` in `crates/cloudmount-graph/src/client.rs`: send `GET /drives/{driveId}/items/{itemId}/content` with auth header, return `impl Stream<Item = Result<Bytes>>` via reqwest's `.bytes_stream()` (do NOT collect the full body). Include token acquisition and error handling matching existing `download_content()` pattern.
+- [x] 1.1 Add `download_streaming()` method to `GraphClient` in `crates/carminedesktop-graph/src/client.rs`: send `GET /drives/{driveId}/items/{itemId}/content` with auth header, return `impl Stream<Item = Result<Bytes>>` via reqwest's `.bytes_stream()` (do NOT collect the full body). Include token acquisition and error handling matching existing `download_content()` pattern.
 - [x] 1.2 Add unit test for `download_streaming()` using wiremock: mock a large response body, verify chunks arrive progressively via the stream, verify auth header is sent.
 
 ## 2. DownloadProgress and StreamingBuffer types
@@ -25,7 +25,7 @@
 
 - [x] 4.1 Refactor `CoreOps::open_file()`: after checking writeback/disk cache (which return `Complete` state as before), check if the file size (from metadata) is below `SMALL_FILE_LIMIT` — if so, download fully via `download_content()` and insert as `Complete`. If size >= `SMALL_FILE_LIMIT`, create a `StreamingBuffer`, spawn a background download task, and insert as `Streaming`.
 - [x] 4.2 Implement the background download task: call `graph.download_streaming()`, iterate over the byte stream appending chunks to `StreamingBuffer`, call `mark_done()` on completion, call `mark_failed()` on error. After `mark_done()`, write the full buffer to disk cache via `cache.disk.put()`.
-- [x] 4.3 Import `SMALL_FILE_LIMIT` from `cloudmount_graph` (or re-define locally in `core_ops.rs`) for the size threshold check. Ensure the constant is accessible cross-crate or duplicated with a comment referencing the source.
+- [x] 4.3 Import `SMALL_FILE_LIMIT` from `carminedesktop_graph` (or re-define locally in `core_ops.rs`) for the size threshold check. Ensure the constant is accessible cross-crate or duplicated with a comment referencing the source.
 
 ## 5. CoreOps read_handle streaming support
 

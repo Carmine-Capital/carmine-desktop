@@ -21,9 +21,9 @@ OAuth sign-in has a race condition that silently degrades user trust: cancelling
 
 ## Impact
 
-- `crates/cloudmount-auth/src/manager.rs`: Add `Arc<Mutex<Option<CancellationToken>>>` field; modify `sign_in()` to set/clear the token and select on it alongside `wait_for_callback`.
-- `crates/cloudmount-auth/src/oauth.rs`: Thread the `CancellationToken` into `run_pkce_flow` and `wait_for_callback`; no change to the url_tx send order (already correct per code review — url_tx fires before opener call at line 72-76).
-- `crates/cloudmount-app/src/commands.rs`: Add `cancel_sign_in` command; store the spawn `JoinHandle` in `AppState` under a `Mutex<Option<JoinHandle<()>>>` and abort it before spawning a new one.
-- `crates/cloudmount-app/dist/wizard.html`: Wire `cancelSignIn()` to invoke `cancel_sign_in` command.
+- `crates/carminedesktop-auth/src/manager.rs`: Add `Arc<Mutex<Option<CancellationToken>>>` field; modify `sign_in()` to set/clear the token and select on it alongside `wait_for_callback`.
+- `crates/carminedesktop-auth/src/oauth.rs`: Thread the `CancellationToken` into `run_pkce_flow` and `wait_for_callback`; no change to the url_tx send order (already correct per code review — url_tx fires before opener call at line 72-76).
+- `crates/carminedesktop-app/src/commands.rs`: Add `cancel_sign_in` command; store the spawn `JoinHandle` in `AppState` under a `Mutex<Option<JoinHandle<()>>>` and abort it before spawning a new one.
+- `crates/carminedesktop-app/dist/wizard.html`: Wire `cancelSignIn()` to invoke `cancel_sign_in` command.
 - No changes to Graph, cache, VFS, or config crates.
 - No new external crate dependencies beyond `tokio-util` (for `CancellationToken`); check if `tokio-util` is already in `[workspace.dependencies]`.

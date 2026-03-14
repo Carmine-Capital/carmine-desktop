@@ -27,7 +27,7 @@ _(none — this is an internal implementation change within existing capabilitie
 
 ## Impact
 
-- **Code**: `crates/cloudmount-vfs/src/core_ops.rs` (new `OpenFileTable` + reworked read/write/flush/open/release/create), `crates/cloudmount-vfs/src/fuse_fs.rs` (wire real file handles, implement `release`), `crates/cloudmount-vfs/src/cfapi.rs` (adapt hydration to use `OpenFile` buffers).
-- **Tests**: `crates/cloudmount-app/tests/integration_tests.rs` updated for handle-based semantics.
+- **Code**: `crates/carminedesktop-vfs/src/core_ops.rs` (new `OpenFileTable` + reworked read/write/flush/open/release/create), `crates/carminedesktop-vfs/src/fuse_fs.rs` (wire real file handles, implement `release`), `crates/carminedesktop-vfs/src/cfapi.rs` (adapt hydration to use `OpenFile` buffers).
+- **Tests**: `crates/carminedesktop-app/tests/integration_tests.rs` updated for handle-based semantics.
 - **Dependencies**: None added. Uses existing `DashMap` and `std::sync::atomic`.
 - **Backwards compatibility**: Internal change only — no API or config changes. FUSE/CfApi external behavior unchanged.

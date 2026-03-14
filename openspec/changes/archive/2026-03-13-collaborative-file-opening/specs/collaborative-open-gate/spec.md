@@ -35,7 +35,7 @@ Known interactive shells:
 - Linux: `nautilus`, `dolphin`, `thunar`, `nemo`, `pcmanfm`, `caja`
 - macOS: `Finder`
 
-The list of shell process names SHALL be configurable in the CloudMount config.
+The list of shell process names SHALL be configurable in the carminedesktop config.
 
 #### Scenario: Explorer opens a file on Windows
 - **WHEN** a file open request arrives with a caller PID
@@ -65,17 +65,17 @@ The `CollabOpenRequest` SHALL include: local path, file extension, DriveItem id,
 The `CollabOpenResponse` SHALL be one of: `OpenLocally`, `OpenOnline`, or `Cancel`.
 
 #### Scenario: Interactive shell opens a collaborative file
-- **WHEN** `explorer.exe` opens a `.docx` file on a CloudMount mount
+- **WHEN** `explorer.exe` opens a `.docx` file on a carminedesktop mount
 - **AND** CollabGate is enabled (channel is `Some`)
 - **THEN** the VFS sends a `CollabOpenRequest` via the channel
 - **AND** blocks on the oneshot reply
 
 #### Scenario: Non-interactive process opens a collaborative file
-- **WHEN** a non-shell process opens a `.docx` file on a CloudMount mount
+- **WHEN** a non-shell process opens a `.docx` file on a carminedesktop mount
 - **THEN** the VFS serves the file locally without sending a `CollabOpenRequest`
 
 #### Scenario: Interactive shell opens a non-collaborative file
-- **WHEN** `explorer.exe` opens a `.pdf` file on a CloudMount mount
+- **WHEN** `explorer.exe` opens a `.pdf` file on a carminedesktop mount
 - **THEN** the VFS serves the file locally without sending a `CollabOpenRequest`
 
 #### Scenario: CollabGate is disabled (headless mode)
@@ -180,7 +180,7 @@ When `CollabOpenResponse` is `OpenOnline`, the system SHALL resolve the file's `
 - **AND** shows a notification about the failure
 
 ### Requirement: Collaborative open preferences in config
-The CloudMount config SHALL support a `[collaborative_open]` section with:
+The carminedesktop config SHALL support a `[collaborative_open]` section with:
 - `enabled`: bool (master switch, default `true`)
 - `default_action`: `"ask"` | `"online"` | `"local"` (default `"ask"`)
 - `timeout_seconds`: u64 (default `15`)

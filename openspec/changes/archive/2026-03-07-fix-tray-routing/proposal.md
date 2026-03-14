@@ -20,5 +20,5 @@ None.
 
 ## Impact
 
-- `crates/cloudmount-app/src/tray.rs`: All three fixes land here. No other crates are affected.
+- `crates/carminedesktop-app/src/tray.rs`: All three fixes land here. No other crates are affected.
 - `openspec/specs/tray-app/spec.md`: Delta spec adds/updates requirements for left-click routing, auth-degraded menu, and mount status tracking.

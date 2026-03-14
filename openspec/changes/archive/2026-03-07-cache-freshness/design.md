@@ -1,14 +1,14 @@
 ## Context
 
-CloudMount serves file content through a three-tier cache: memory (metadata) → SQLite (metadata) → disk (content blobs). Delta sync periodically fetches changes from the Graph API and updates the metadata tiers, but currently **does not invalidate disk content blobs** when a file's content changes on the server. Meanwhile, `open_file` serves disk-cached content unconditionally with no freshness validation.
+carminedesktop serves file content through a three-tier cache: memory (metadata) → SQLite (metadata) → disk (content blobs). Delta sync periodically fetches changes from the Graph API and updates the metadata tiers, but currently **does not invalidate disk content blobs** when a file's content changes on the server. Meanwhile, `open_file` serves disk-cached content unconditionally with no freshness validation.
 
 This creates a metadata/content desynchronization: `getattr` reports the new size from fresh metadata, while `read` returns stale bytes from the disk cache. Applications like LibreOffice see a size mismatch and report corruption, or silently display stale content.
 
 The affected code paths are:
-- `crates/cloudmount-cache/src/sync.rs` — `run_delta_sync` updates metadata but ignores disk content
-- `crates/cloudmount-vfs/src/core_ops.rs` — `open_file` trusts disk cache blindly
-- `crates/cloudmount-cache/src/disk.rs` — `DiskCache` has no concept of content version
-- `crates/cloudmount-vfs/src/fuse_fs.rs` — 60s FUSE TTL and `FUSE_WRITEBACK_CACHE` compound staleness
+- `crates/carminedesktop-cache/src/sync.rs` — `run_delta_sync` updates metadata but ignores disk content
+- `crates/carminedesktop-vfs/src/core_ops.rs` — `open_file` trusts disk cache blindly
+- `crates/carminedesktop-cache/src/disk.rs` — `DiskCache` has no concept of content version
+- `crates/carminedesktop-vfs/src/fuse_fs.rs` — 60s FUSE TTL and `FUSE_WRITEBACK_CACHE` compound staleness
 
 ## Goals / Non-Goals
 

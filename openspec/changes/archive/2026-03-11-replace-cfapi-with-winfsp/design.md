@@ -1,8 +1,8 @@
 ## Context
 
-CloudMount's Windows backend currently uses the Cloud Files API (CfApi) via the `cloud-filter` crate (`cfapi.rs`, ~1700 lines). CfApi has structural problems that are unfixable: hydration storms from the Windows indexer/antivirus, stale content after failed dehydration, and no recovery mechanism when placeholder updates fail with `E_HANDLE`. These are architectural properties of CfApi — once a file is hydrated, Windows owns the content and bypasses CloudMount.
+carminedesktop's Windows backend currently uses the Cloud Files API (CfApi) via the `cloud-filter` crate (`cfapi.rs`, ~1700 lines). CfApi has structural problems that are unfixable: hydration storms from the Windows indexer/antivirus, stale content after failed dehydration, and no recovery mechanism when placeholder updates fail with `E_HANDLE`. These are architectural properties of CfApi — once a file is hydrated, Windows owns the content and bypasses carminedesktop.
 
-The Linux/macOS backend uses FUSE (`fuse_fs.rs`, ~605 lines), which delegates every filesystem operation to `CoreOps`. This gives CloudMount full control over caching, content freshness, and read behavior. WinFsp provides the same model on Windows: a kernel driver routes every I/O operation to userspace callbacks.
+The Linux/macOS backend uses FUSE (`fuse_fs.rs`, ~605 lines), which delegates every filesystem operation to `CoreOps`. This gives carminedesktop full control over caching, content freshness, and read behavior. WinFsp provides the same model on Windows: a kernel driver routes every I/O operation to userspace callbacks.
 
 The existing architecture already separates concerns cleanly: `CoreOps` handles all filesystem logic (cache, Graph API, writeback, conflict detection), and `fuse_fs.rs` is a thin adapter that maps FUSE trait methods to `CoreOps` calls. The WinFsp backend follows the same pattern — a thin adapter mapping `FileSystemContext` trait methods to `CoreOps`.
 
@@ -88,7 +88,7 @@ FUSE's `FuseDeltaObserver` additionally calls `notifier.inval_inode()` to purge 
 1. Check registry key `HKLM\SOFTWARE\WinFsp\InstallDir` for the installation directory
 2. Verify `winfsp-x64.dll` (or `winfsp-x86.dll`) is loadable — the `winfsp-rs` crate uses delay-load linking and will panic at runtime if the DLL is missing
 
-If WinFsp is not found, show an error dialog directing the user to install it. The CloudMount installer will bundle the unmodified WinFsp MSI per FLOSS exception terms and can install it silently during setup, but the application itself should degrade gracefully if the driver is missing at runtime.
+If WinFsp is not found, show an error dialog directing the user to install it. The carminedesktop installer will bundle the unmodified WinFsp MSI per FLOSS exception terms and can install it silently during setup, but the application itself should degrade gracefully if the driver is missing at runtime.
 
 **Alternative considered:** Bundling WinFsp DLL directly (static linking). Not possible — WinFsp is a kernel driver + userspace DLL pair; the driver must be installed system-wide. The winfsp-rs crate links against the DLL at load time.
 
@@ -98,7 +98,7 @@ If WinFsp is not found, show an error dialog directing the user to install it. T
 
 ```rust
 pub struct WinFspMountHandle {
-    host: FileSystemHost<CloudMountWinFsp>,
+    host: FileSystemHost<carminedesktopWinFsp>,
     cache: Arc<CacheManager>,
     graph: Arc<GraphClient>,
     drive_id: String,
@@ -120,7 +120,7 @@ Methods: `mount()`, `unmount()`, `drive_id()`, `mountpoint()`, `delta_observer()
 
 **Why:** The CfApi delta sync block exists because CfApi placeholders are a separate state machine that must be explicitly updated (dehydrated, deleted) after delta sync. WinFsp has no placeholders and no separate state — it serves directly from the cache.
 
-This also removes the dependency on `cloudmount_cache::resolve_relative_path` and `resolve_deleted_path` in the delta sync path.
+This also removes the dependency on `carminedesktop_cache::resolve_relative_path` and `resolve_deleted_path` in the delta sync path.
 
 ### D8: CfApi sync root cleanup on upgrade
 
@@ -142,7 +142,7 @@ This also removes the dependency on `cloudmount_cache::resolve_relative_path` an
 
 **[UX regression: no Explorer sync status badges]** → Accepted. CfApi sync roots show overlay icons and "Free up space" context menus. WinFsp mounts appear as regular volumes. Users who relied on sync status indicators will not have them. Mitigation: document the change. A future Explorer shell extension could restore this if demanded.
 
-**[WinFsp driver not installed at runtime]** → Preflight check with actionable error message. The installer bundles WinFsp MSI. If a user installs CloudMount manually (e.g., portable), they must install WinFsp separately. The delay-load linking in winfsp-rs means the DLL absence is caught early, not as a crash.
+**[WinFsp driver not installed at runtime]** → Preflight check with actionable error message. The installer bundles WinFsp MSI. If a user installs carminedesktop manually (e.g., portable), they must install WinFsp separately. The delay-load linking in winfsp-rs means the DLL absence is caught early, not as a crash.
 
 **[Antivirus interference with WinFsp driver]** → Some security products flag third-party filesystem drivers. This is a known issue for WinFsp (and FUSE on macOS). Mitigation: WinFsp is signed with a Microsoft-approved certificate. Document known AV exclusion requirements.
 

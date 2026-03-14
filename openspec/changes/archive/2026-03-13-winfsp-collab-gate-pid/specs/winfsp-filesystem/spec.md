@@ -1,13 +1,13 @@
 ## MODIFIED Requirements
 
 ### Requirement: WinFsp FileSystemContext implementation
-On Windows, the system SHALL implement the WinFsp `FileSystemContext` trait in a `CloudMountWinFsp` struct that delegates all filesystem operations to `CoreOps`. The `FileSystemContext::FileContext` associated type SHALL be a `WinFspFileContext` struct containing the resolved inode number (`ino: u64`), an optional CoreOps file handle (`fh: Option<u64>`), and a directory flag (`is_dir: bool`). The struct SHALL hold an `Arc<CoreOps>` instance and a `tokio::runtime::Handle` for bridging async operations via `rt.block_on()`.
+On Windows, the system SHALL implement the WinFsp `FileSystemContext` trait in a `carminedesktopWinFsp` struct that delegates all filesystem operations to `CoreOps`. The `FileSystemContext::FileContext` associated type SHALL be a `WinFspFileContext` struct containing the resolved inode number (`ino: u64`), an optional CoreOps file handle (`fh: Option<u64>`), and a directory flag (`is_dir: bool`). The struct SHALL hold an `Arc<CoreOps>` instance and a `tokio::runtime::Handle` for bridging async operations via `rt.block_on()`.
 
 The `open` callback SHALL extract the caller process ID using `winfsp_sys::FspFileSystemOperationProcessIdF()` (an `unsafe` FFI call valid during Create/Open callbacks) and pass it to `CoreOps::open_file()` as `Some(pid)`. If the function returns 0, the callback SHALL pass `None`.
 
-#### Scenario: CloudMountWinFsp created with CoreOps
+#### Scenario: carminedesktopWinFsp created with CoreOps
 - **WHEN** a WinFsp filesystem is initialized for a mounted drive
-- **THEN** the system creates a `CloudMountWinFsp` instance holding a shared `CoreOps`, a Tokio runtime handle, and a shared `OpenFileTable` reference
+- **THEN** the system creates a `carminedesktopWinFsp` instance holding a shared `CoreOps`, a Tokio runtime handle, and a shared `OpenFileTable` reference
 
 #### Scenario: FileContext returned on open
 - **WHEN** WinFsp dispatches an `open` callback for a file

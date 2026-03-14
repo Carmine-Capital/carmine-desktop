@@ -1,13 +1,13 @@
 ## Context
 
-CloudMount mounts OneDrive/SharePoint document libraries as local filesystems. When users double-click Office files, they open locally — losing access to real-time co-authoring. The existing `open_online` Tauri command can resolve local paths to SharePoint webUrls and launch Office URI schemes (`ms-word:ofe|u|<url>`), but it requires explicit invocation. There is no mechanism to intercept a standard file open and redirect it to collaborative mode.
+carminedesktop mounts OneDrive/SharePoint document libraries as local filesystems. When users double-click Office files, they open locally — losing access to real-time co-authoring. The existing `open_online` Tauri command can resolve local paths to SharePoint webUrls and launch Office URI schemes (`ms-word:ofe|u|<url>`), but it requires explicit invocation. There is no mechanism to intercept a standard file open and redirect it to collaborative mode.
 
 The VFS layer (CoreOps) handles all `open()` calls from both FUSE and WinFsp backends. Both backends have access to the caller's process ID. The Tauri app already has an event/command system for communicating with the VFS.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Make collaborative editing the default experience for Office files opened from CloudMount mounts
+- Make collaborative editing the default experience for Office files opened from carminedesktop mounts
 - Intercept file opens at the VFS level, filtered by caller process (interactive shells only)
 - Present a native dialog for open mode selection with per-extension preference memory
 - Warn users when local modifications conflict with online opening
@@ -31,7 +31,7 @@ The VFS layer (CoreOps) handles all `open()` calls from both FUSE and WinFsp bac
 
 **Alternatives considered**:
 - *Shell extension (COM DLL)*: Best UX scoping but high complexity, risk of crashing Explorer, Windows-only
-- *Registry verb override*: Simpler but system-wide scope for all Office files, not just CloudMount mounts
+- *Registry verb override*: Simpler but system-wide scope for all Office files, not just carminedesktop mounts
 - *Passive notification*: Simplest but poor UX — file opens locally first, user must manually switch
 
 ### 2. Process filtering by PID
@@ -55,7 +55,7 @@ The VFS layer (CoreOps) handles all `open()` calls from both FUSE and WinFsp bac
 
 ### 4. Per-extension preference storage in config
 
-**Decision**: Store collaborative open preferences in the existing `CloudMountConfig` structure under a new `[collaborative_open]` section. Per-extension overrides are a flat map (`extensions.docx = "online"`).
+**Decision**: Store collaborative open preferences in the existing `carminedesktopConfig` structure under a new `[collaborative_open]` section. Per-extension overrides are a flat map (`extensions.docx = "online"`).
 
 **Rationale**: Reuses the existing config system (TOML file + in-memory). No new storage mechanism needed. Per-extension granularity matches user expectations (always open Word online, but Excel locally).
 
@@ -67,7 +67,7 @@ The VFS layer (CoreOps) handles all `open()` calls from both FUSE and WinFsp bac
 
 ### 6. File type classification as a pure function
 
-**Decision**: `is_collaborative(extension: &str) -> bool` as a pure function in `cloudmount-core`, not configurable per-mount. Returns true for Office formats (.docx, .xlsx, .pptx and legacy/macro variants) plus ODF formats (.odt, .ods, .odp) that SharePoint Online can edit.
+**Decision**: `is_collaborative(extension: &str) -> bool` as a pure function in `carminedesktop-core`, not configurable per-mount. Returns true for Office formats (.docx, .xlsx, .pptx and legacy/macro variants) plus ODF formats (.odt, .ods, .odp) that SharePoint Online can edit.
 
 **Rationale**: The set of collaborative file types is determined by Microsoft 365 capabilities, not user preference. Keeping it as a pure function simplifies testing and avoids config bloat.
 

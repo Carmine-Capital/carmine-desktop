@@ -1,8 +1,8 @@
 ## 1. Dependencies
 
 - [x] 1.1 Add `tauri-plugin-updater` to `[workspace.dependencies]` in root `Cargo.toml`
-- [x] 1.2 Add `tauri-plugin-updater` to `cloudmount-app/Cargo.toml` as optional dep behind `desktop` feature
-- [x] 1.3 Add `tauri-plugin-process` to workspace and `cloudmount-app` (needed for `relaunch()` after update)
+- [x] 1.2 Add `tauri-plugin-updater` to `carminedesktop-app/Cargo.toml` as optional dep behind `desktop` feature
+- [x] 1.3 Add `tauri-plugin-process` to workspace and `carminedesktop-app` (needed for `relaunch()` after update)
 
 ## 2. Tauri Configuration
 
@@ -11,7 +11,7 @@
 
 ## 3. Update Module
 
-- [x] 3.1 Create `crates/cloudmount-app/src/update.rs` module (gated behind `#[cfg(feature = "desktop")]`)
+- [x] 3.1 Create `crates/carminedesktop-app/src/update.rs` module (gated behind `#[cfg(feature = "desktop")]`)
 - [x] 3.2 Implement `check_for_update()` — uses `UpdaterExt` to check endpoint, returns update info or None
 - [x] 3.3 Implement `spawn_update_checker()` — background task: 10s delay → initial check → 4-hour periodic loop, respects cancellation token
 - [x] 3.4 Implement `install_and_relaunch()` — triggers graceful shutdown then delegates to updater plugin for install + relaunch

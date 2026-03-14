@@ -68,7 +68,7 @@ The system SHALL resolve the mount-relative filesystem path for each changed or 
 - **AND** the item's cache updates (memory, SQLite, disk invalidation) are unaffected — only the NTFS placeholder update is skipped
 
 ### Requirement: Platform-gated placeholder update function
-The system SHALL expose a public function in `cloudmount-vfs` for applying post-delta-sync placeholder updates, gated with `#[cfg(target_os = "windows")]`. The function SHALL accept the mount path, a list of changed items with their resolved relative paths, and a list of deleted item relative paths. The function SHALL NOT require access to the `CfMountHandle` or the `SyncFilter` instance.
+The system SHALL expose a public function in `carminedesktop-vfs` for applying post-delta-sync placeholder updates, gated with `#[cfg(target_os = "windows")]`. The function SHALL accept the mount path, a list of changed items with their resolved relative paths, and a list of deleted item relative paths. The function SHALL NOT require access to the `CfMountHandle` or the `SyncFilter` instance.
 
 #### Scenario: Placeholder updates applied on Windows
 - **WHEN** the app orchestration layer calls the placeholder update function after a successful delta sync on Windows

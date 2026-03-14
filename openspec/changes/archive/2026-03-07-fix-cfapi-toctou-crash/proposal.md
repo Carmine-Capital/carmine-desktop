@@ -19,7 +19,7 @@ _None — this is a targeted bug fix with no new user-visible capability._
 
 ## Impact
 
-- **Files changed**: `crates/cloudmount-vfs/src/cfapi.rs` only.
+- **Files changed**: `crates/carminedesktop-vfs/src/cfapi.rs` only.
 - **Platform scope**: Windows only (`#[cfg(target_os = "windows")]`).
 - **External crate `cloud-filter 0.0.6`**: The panic site (`proxy.rs:153`, `command::CreatePlaceholders::fail(...).unwrap()`) is in an external dependency and cannot be modified. The fix in `cfapi.rs` prevents the Err path from being reached for TOCTOU collisions, making the external unwrap a dead code path for this class of error.
 - **No API or ABI changes**: The `SyncFilter` trait signature is unchanged; only the internal implementation of `fetch_placeholders` changes.

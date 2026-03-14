@@ -1,6 +1,6 @@
 ## Why
 
-A cross-platform review of `cloudmount-vfs` and `cloudmount-app` (verified against the working tree with `fix-cfapi-safety-parity` and `fix-vfs-residual-parity-gaps` applied) revealed six remaining defects that cause Windows CI failures, unnecessary Graph API traffic, silent data-race potential, and panic/debuggability issues across platforms. None are covered by existing in-progress changes.
+A cross-platform review of `carminedesktop-vfs` and `carminedesktop-app` (verified against the working tree with `fix-cfapi-safety-parity` and `fix-vfs-residual-parity-gaps` applied) revealed six remaining defects that cause Windows CI failures, unnecessary Graph API traffic, silent data-race potential, and panic/debuggability issues across platforms. None are covered by existing in-progress changes.
 
 ## What Changes
 
@@ -26,9 +26,9 @@ _None._
 
 ## Impact
 
-- **`crates/cloudmount-vfs/src/inode.rs`** — `allocate()` rewritten with single-lock pattern.
-- **`crates/cloudmount-vfs/src/cfapi.rs`** — `closed()` gains mtime guard; `CfMountHandle._connection` renamed.
-- **`crates/cloudmount-app/src/main.rs`** — `run_headless` body restructured under `#[cfg(not(target_os = "windows"))]`.
-- **`crates/cloudmount-app/src/commands.rs`** — `get_default_mount_root` uses `PathBuf`.
-- **`crates/cloudmount-app/src/notify.rs`** — error included in warning log.
-- **`crates/cloudmount-app/src/tray.rs`** — `.unwrap()` replaced with `?` propagation.
+- **`crates/carminedesktop-vfs/src/inode.rs`** — `allocate()` rewritten with single-lock pattern.
+- **`crates/carminedesktop-vfs/src/cfapi.rs`** — `closed()` gains mtime guard; `CfMountHandle._connection` renamed.
+- **`crates/carminedesktop-app/src/main.rs`** — `run_headless` body restructured under `#[cfg(not(target_os = "windows"))]`.
+- **`crates/carminedesktop-app/src/commands.rs`** — `get_default_mount_root` uses `PathBuf`.
+- **`crates/carminedesktop-app/src/notify.rs`** — error included in warning log.
+- **`crates/carminedesktop-app/src/tray.rs`** — `.unwrap()` replaced with `?` propagation.
