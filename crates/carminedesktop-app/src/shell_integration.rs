@@ -639,8 +639,7 @@ pub fn ensure_nav_pane(cloud_root: &std::path::Path) -> carminedesktop_core::Res
     let clsid_path = format!(r"Software\Classes\CLSID\{NAV_PANE_CLSID}");
 
     if let Ok(clsid_key) = hkcu.open_subkey_with_flags(&clsid_path, KEY_READ)
-        && let Ok(bag) =
-            clsid_key.open_subkey_with_flags(r"Instance\InitPropertyBag", KEY_READ)
+        && let Ok(bag) = clsid_key.open_subkey_with_flags(r"Instance\InitPropertyBag", KEY_READ)
         && let Ok(existing_target) = bag.get_value::<String, _>("TargetFolderPath")
         && existing_target == target.as_ref()
     {
