@@ -136,12 +136,12 @@ pub fn unregister_file_associations() -> carminedesktop_core::Result<()> {
         if let Ok(ext_key) = classes.open_subkey_with_flags(ext, KEY_READ | KEY_WRITE) {
             // Check if we're currently the handler
             let current: Result<String, _> = ext_key.get_value("");
-            if let Ok(ref current_progid) = current {
-                if current_progid != &progid {
-                    // We're not the handler, skip
-                    tracing::debug!("skipping {ext}: not currently handled by Carmine Desktop");
-                    continue;
-                }
+            if let Ok(ref current_progid) = current
+                && current_progid != &progid
+            {
+                // We're not the handler, skip
+                tracing::debug!("skipping {ext}: not currently handled by Carmine Desktop");
+                continue;
             }
 
             // Restore the previous handler
@@ -198,11 +198,12 @@ pub fn get_previous_handler(ext: &str) -> Option<String> {
     }
 
     // Fallback: check UserChoice ProgId (may have been set after registration)
-    if let Some(progid) = get_user_choice_progid(ext) {
-        if !progid.starts_with(PROGID_PREFIX) && get_progid_command(&progid).is_some() {
-            tracing::debug!("get_previous_handler({ext}): found UserChoice fallback: {progid}");
-            return Some(progid);
-        }
+    if let Some(progid) = get_user_choice_progid(ext)
+        && !progid.starts_with(PROGID_PREFIX)
+        && get_progid_command(&progid).is_some()
+    {
+        tracing::debug!("get_previous_handler({ext}): found UserChoice fallback: {progid}");
+        return Some(progid);
     }
 
     tracing::debug!("get_previous_handler({ext}): no previous handler found");
@@ -274,10 +275,10 @@ pub fn are_file_associations_registered() -> bool {
         let Ok(ext_key) = classes.open_subkey_with_flags(ext, KEY_READ) else {
             continue;
         };
-        if let Ok(progid) = ext_key.get_value::<String, _>("") {
-            if progid.starts_with(PROGID_PREFIX) {
-                return true;
-            }
+        if let Ok(progid) = ext_key.get_value::<String, _>("")
+            && progid.starts_with(PROGID_PREFIX)
+        {
+            return true;
         }
     }
 
