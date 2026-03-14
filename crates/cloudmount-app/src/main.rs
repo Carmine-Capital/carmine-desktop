@@ -574,6 +574,10 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::get_default_mount_root,
             commands::open_online,
             commands::open_file,
+            commands::get_file_handlers,
+            commands::redetect_file_handlers,
+            commands::save_file_handler_override,
+            commands::clear_file_handler_override,
         ])
         .setup(move |app| {
             // Populate the opener's AppHandle slot now that the app is running.

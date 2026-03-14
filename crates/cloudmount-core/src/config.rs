@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_CACHE_MAX_SIZE: &str = "5GB";
@@ -69,6 +70,7 @@ impl UserConfig {
                 "root_dir" => g.root_dir = None,
                 "collaborative_open" => g.collaborative_open = None,
                 "register_file_associations" => g.register_file_associations = None,
+                "file_handler_overrides" => g.file_handler_overrides = None,
                 _ => {}
             }
         }
@@ -173,6 +175,11 @@ pub struct UserGeneralSettings {
     /// CloudMount, which redirects to SharePoint Online for co-authoring.
     #[serde(default)]
     pub register_file_associations: Option<bool>,
+    /// Per-extension handler overrides. Keys are extensions (e.g. ".docx"),
+    /// values are handler identifiers (ProgID on Windows, .desktop name on
+    /// Linux, bundle ID on macOS).
+    #[serde(default)]
+    pub file_handler_overrides: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,6 +257,10 @@ pub struct EffectiveConfig {
     /// Register CloudMount as the handler for Office file types on Windows.
     /// Default: true on Windows, false on other platforms.
     pub register_file_associations: bool,
+    /// Per-extension handler overrides. Keys are extensions (e.g. ".docx"),
+    /// values are handler identifiers (ProgID on Windows, .desktop name on
+    /// Linux, bundle ID on macOS). Default: empty.
+    pub file_handler_overrides: HashMap<String, String>,
 }
 
 impl EffectiveConfig {
@@ -294,6 +305,10 @@ impl EffectiveConfig {
             .and_then(|g| g.register_file_associations)
             .unwrap_or(default_file_assoc);
 
+        let file_handler_overrides = user_general
+            .and_then(|g| g.file_handler_overrides.clone())
+            .unwrap_or_default();
+
         Self {
             auto_start,
             cache_max_size,
@@ -307,6 +322,7 @@ impl EffectiveConfig {
             accounts: user.accounts.clone(),
             collaborative_open,
             register_file_associations,
+            file_handler_overrides,
         }
     }
 }
@@ -526,7 +542,11 @@ pub fn diff_configs(old: &EffectiveConfig, new: &EffectiveConfig) -> Vec<ConfigC
 
 pub mod autostart {
     pub fn set_enabled(enabled: bool, app_path: &str) -> crate::Result<()> {
-        if enabled { enable(app_path) } else { disable() }
+        if enabled {
+            enable(app_path)
+        } else {
+            disable()
+        }
     }
 
     #[cfg(target_os = "linux")]

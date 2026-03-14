@@ -307,6 +307,86 @@ pub fn is_handled_extension(ext: &str) -> bool {
         .any(|&e| e.eq_ignore_ascii_case(ext))
 }
 
+/// Well-known Office ProgIDs to try when no saved previous handler exists.
+///
+/// Ordered by version (newest first) for each extension group.
+#[cfg(target_os = "windows")]
+const WELL_KNOWN_PROGIDS: &[(&str, &[&str])] = &[
+    (".xlsx", &["Excel.Sheet.12", "Excel.Sheet.8"]),
+    (".xls", &["Excel.Sheet.12", "Excel.Sheet.8"]),
+    (".docx", &["Word.Document.12", "Word.Document.8"]),
+    (".doc", &["Word.Document.12", "Word.Document.8"]),
+    (".pptx", &["PowerPoint.Show.12", "PowerPoint.Show.8"]),
+    (".ppt", &["PowerPoint.Show.12", "PowerPoint.Show.8"]),
+];
+
+/// Discover an Office application handler at runtime for the given extension.
+///
+/// This is the fallback when `get_previous_handler()` returns `None` — e.g.
+/// when the user set "always open with CloudMount" via the Windows "Open with"
+/// dialog (bypassing `register_file_associations()`), or when registration ran
+/// but the handler was already CloudMount.
+///
+/// Search order:
+/// 1. Well-known Office ProgIDs (HKCU then HKLM) with valid `shell\open\command`
+/// 2. HKLM system default ProgID for the extension
+/// 3. `OpenWithProgids` under `HKCU\Software\Classes\{ext}`
+///
+/// Returns the first ProgID that has a valid `shell\open\command`.
+#[cfg(target_os = "windows")]
+pub fn discover_office_handler(ext: &str) -> Option<String> {
+    // 1. Well-known Office ProgIDs
+    if let Some((_, progids)) = WELL_KNOWN_PROGIDS
+        .iter()
+        .find(|(e, _)| e.eq_ignore_ascii_case(ext))
+    {
+        for &progid in *progids {
+            if get_progid_command(progid).is_some() {
+                tracing::debug!(
+                    "discover_office_handler({ext}): found well-known ProgID: {progid}"
+                );
+                return Some(progid.to_string());
+            }
+        }
+    }
+
+    // 2. HKLM system default — check HKLM\Software\Classes\{ext} default value
+    if let Ok(hklm_classes) = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey_with_flags(r"Software\Classes", KEY_READ)
+        && let Ok(ext_key) = hklm_classes.open_subkey_with_flags(ext, KEY_READ)
+        && let Ok(progid) = ext_key.get_value::<String, _>("")
+        && !progid.is_empty()
+        && !progid.starts_with(PROGID_PREFIX)
+        && get_progid_command(&progid).is_some()
+    {
+        tracing::debug!("discover_office_handler({ext}): found HKLM system default: {progid}");
+        return Some(progid);
+    }
+
+    // 3. OpenWithProgids — check HKCU\Software\Classes\{ext}\OpenWithProgids
+    if let Ok(hkcu_classes) =
+        RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(r"Software\Classes", KEY_READ)
+        && let Ok(ext_key) = hkcu_classes.open_subkey_with_flags(ext, KEY_READ)
+        && let Ok(owp_key) = ext_key.open_subkey_with_flags("OpenWithProgids", KEY_READ)
+    {
+        // Each value name under OpenWithProgids is a ProgID
+        for name in owp_key.enum_values().filter_map(|v| v.ok()).map(|(n, _)| n) {
+            if !name.is_empty()
+                && !name.starts_with(PROGID_PREFIX)
+                && get_progid_command(&name).is_some()
+            {
+                tracing::debug!(
+                    "discover_office_handler({ext}): found OpenWithProgids entry: {name}"
+                );
+                return Some(name);
+            }
+        }
+    }
+
+    tracing::debug!("discover_office_handler({ext}): no handler discovered");
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Linux shell integration — xdg-mime and .desktop files
 // ---------------------------------------------------------------------------
@@ -605,6 +685,109 @@ mod linux {
         handlers.get(mime).cloned()
     }
 
+    /// Well-known .desktop file names for Office suites.
+    const WELL_KNOWN_SPREADSHEET_DESKTOPS: &[&str] = &[
+        "libreoffice-calc.desktop",
+        "org.onlyoffice.desktopeditors.desktop",
+        "wps-office-et.desktop",
+    ];
+
+    const WELL_KNOWN_WORD_DESKTOPS: &[&str] = &[
+        "libreoffice-writer.desktop",
+        "org.onlyoffice.desktopeditors.desktop",
+        "wps-office-wps.desktop",
+    ];
+
+    const WELL_KNOWN_PRESENTATION_DESKTOPS: &[&str] = &[
+        "libreoffice-impress.desktop",
+        "org.onlyoffice.desktopeditors.desktop",
+        "wps-office-wpp.desktop",
+    ];
+
+    /// Map an extension to its well-known .desktop file names.
+    fn well_known_desktops_for_ext(ext: &str) -> &'static [&'static str] {
+        match ext.to_ascii_lowercase().as_str() {
+            ".xlsx" | ".xls" => WELL_KNOWN_SPREADSHEET_DESKTOPS,
+            ".docx" | ".doc" => WELL_KNOWN_WORD_DESKTOPS,
+            ".pptx" | ".ppt" => WELL_KNOWN_PRESENTATION_DESKTOPS,
+            _ => &[],
+        }
+    }
+
+    /// Parse a `mimeinfo.cache` file and return .desktop names for a MIME type.
+    ///
+    /// The format is: `mime/type=app1.desktop;app2.desktop;`
+    fn parse_mimeinfo_cache(path: &std::path::Path, mime_type: &str) -> Vec<String> {
+        let Ok(content) = std::fs::read_to_string(path) else {
+            return Vec::new();
+        };
+        let prefix = format!("{mime_type}=");
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix(&prefix) {
+                return rest
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect();
+            }
+        }
+        Vec::new()
+    }
+
+    /// Discover an Office application handler at runtime for the given extension.
+    ///
+    /// Fallback when `get_previous()` returns `None`. Searches:
+    /// 1. `mimeinfo.cache` files (user-local then system) for the MIME type,
+    ///    skipping our own `cloudmount-open.desktop`
+    /// 2. Well-known .desktop file names for common Office suites
+    ///
+    /// Returns the first .desktop file name that has a valid `Exec=` line.
+    pub fn discover(ext: &str) -> Option<String> {
+        let mime_type = mime_for_ext(ext)?;
+
+        // 1. mimeinfo.cache lookup
+        let cache_paths: Vec<PathBuf> = {
+            let mut paths = Vec::new();
+            // User-local first (higher priority)
+            if let Some(data_dir) = dirs::data_dir() {
+                paths.push(data_dir.join("applications/mimeinfo.cache"));
+            }
+            paths.push(PathBuf::from("/usr/share/applications/mimeinfo.cache"));
+            paths
+        };
+
+        for cache_path in &cache_paths {
+            let desktops = parse_mimeinfo_cache(cache_path, mime_type);
+            for desktop in desktops {
+                // Skip our own handler
+                if desktop == DESKTOP_FILE_NAME {
+                    continue;
+                }
+                if get_desktop_exec(&desktop).is_some() {
+                    tracing::debug!(
+                        "discover_office_handler({ext}): found in mimeinfo.cache: {desktop}"
+                    );
+                    return Some(desktop);
+                }
+            }
+        }
+
+        // 2. Well-known .desktop files
+        for &desktop in well_known_desktops_for_ext(ext) {
+            if get_desktop_exec(desktop).is_some() {
+                tracing::debug!(
+                    "discover_office_handler({ext}): found well-known desktop: {desktop}"
+                );
+                return Some(desktop.to_string());
+            }
+        }
+
+        tracing::debug!("discover_office_handler({ext}): no handler discovered");
+        None
+    }
+
     /// Parse the Exec= line from a .desktop file to get the command template.
     ///
     /// Searches standard XDG application directories for the .desktop file
@@ -677,6 +860,15 @@ pub fn is_handled_extension(ext: &str) -> bool {
     linux::OFFICE_EXTENSIONS
         .iter()
         .any(|&e| e.eq_ignore_ascii_case(ext))
+}
+
+/// Discover an Office application handler at runtime (Linux).
+///
+/// Fallback when `get_previous_handler()` returns `None`.
+/// Searches mimeinfo.cache and well-known .desktop files.
+#[cfg(target_os = "linux")]
+pub fn discover_office_handler(ext: &str) -> Option<String> {
+    linux::discover(ext)
 }
 
 // ---------------------------------------------------------------------------
@@ -958,6 +1150,56 @@ mod macos {
         handlers.get(ext_no_dot).cloned()
     }
 
+    /// Well-known bundle IDs for Office suites, grouped by extension category.
+    const WELL_KNOWN_SPREADSHEET_BUNDLES: &[&str] = &[
+        "com.microsoft.Excel",
+        "org.libreoffice.script",
+    ];
+
+    const WELL_KNOWN_WORD_BUNDLES: &[&str] = &[
+        "com.microsoft.Word",
+        "org.libreoffice.script",
+    ];
+
+    const WELL_KNOWN_PRESENTATION_BUNDLES: &[&str] = &[
+        "com.microsoft.Powerpoint",
+        "org.libreoffice.script",
+    ];
+
+    /// Map an extension to its well-known bundle IDs.
+    fn well_known_bundles_for_ext(ext: &str) -> &'static [&'static str] {
+        let ext_no_dot = ext.strip_prefix('.').unwrap_or(ext);
+        match ext_no_dot.to_ascii_lowercase().as_str() {
+            "xlsx" | "xls" => WELL_KNOWN_SPREADSHEET_BUNDLES,
+            "docx" | "doc" => WELL_KNOWN_WORD_BUNDLES,
+            "pptx" | "ppt" => WELL_KNOWN_PRESENTATION_BUNDLES,
+            _ => &[],
+        }
+    }
+
+    /// Discover an Office application handler at runtime for the given extension.
+    ///
+    /// Fallback when `get_previous()` returns `None`. Checks well-known bundle
+    /// IDs and verifies they are installed via `mdfind`.
+    ///
+    /// Returns the first bundle ID whose application is installed.
+    pub fn discover(ext: &str) -> Option<String> {
+        for &bundle_id in well_known_bundles_for_ext(ext) {
+            if bundle_id == BUNDLE_ID {
+                continue;
+            }
+            if resolve_app_path(bundle_id).is_some() {
+                tracing::debug!(
+                    "discover_office_handler({ext}): found installed bundle: {bundle_id}"
+                );
+                return Some(bundle_id.to_string());
+            }
+        }
+
+        tracing::debug!("discover_office_handler({ext}): no handler discovered");
+        None
+    }
+
     /// Resolve a bundle ID to the application path using `mdfind`.
     ///
     /// Returns the .app bundle path (e.g. "/Applications/Microsoft Word.app").
@@ -1011,4 +1253,13 @@ pub fn is_handled_extension(ext: &str) -> bool {
     macos::OFFICE_EXTENSIONS
         .iter()
         .any(|&e| e.eq_ignore_ascii_case(ext))
+}
+
+/// Discover an Office application handler at runtime (macOS).
+///
+/// Fallback when `get_previous_handler()` returns `None`.
+/// Checks well-known bundle IDs and verifies installation via `mdfind`.
+#[cfg(target_os = "macos")]
+pub fn discover_office_handler(ext: &str) -> Option<String> {
+    macos::discover(ext)
 }
