@@ -19,9 +19,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "resources/winfsp.msi"
-    ],
     "linux": {
       "deb": {
         "depends": [
