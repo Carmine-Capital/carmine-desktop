@@ -1084,10 +1084,10 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                 let cmd = cmd_template.replace("%1", &path);
                 tracing::info!("open_file: using config override handler {progid}: {cmd}");
 
-                let result = if cmd.starts_with('"') {
-                    if let Some(end_quote) = cmd[1..].find('"') {
-                        let exe = &cmd[1..=end_quote];
-                        let args = cmd[end_quote + 2..].trim();
+                let result = if let Some(stripped) = cmd.strip_prefix('"') {
+                    if let Some(end_quote) = stripped.find('"') {
+                        let exe = &stripped[..end_quote];
+                        let args = stripped[end_quote + 1..].trim();
                         std::process::Command::new(exe).raw_arg(args).spawn()
                     } else {
                         Err(std::io::Error::new(
@@ -1125,11 +1125,11 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
 
                 // Parse the command line to extract executable and arguments
                 // The command is typically: "C:\path\to\app.exe" args...
-                let result = if cmd.starts_with('"') {
+                let result = if let Some(stripped) = cmd.strip_prefix('"') {
                     // Quoted executable path
-                    if let Some(end_quote) = cmd[1..].find('"') {
-                        let exe = &cmd[1..=end_quote];
-                        let args = cmd[end_quote + 2..].trim();
+                    if let Some(end_quote) = stripped.find('"') {
+                        let exe = &stripped[..end_quote];
+                        let args = stripped[end_quote + 1..].trim();
                         std::process::Command::new(exe).raw_arg(args).spawn()
                     } else {
                         // Malformed command, fall through
@@ -1232,10 +1232,10 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                     let cmd = cmd_template.replace("%1", &path);
                     tracing::info!("open_file: using discovered handler {discovered}: {cmd}");
 
-                    let result = if cmd.starts_with('"') {
-                        if let Some(end_quote) = cmd[1..].find('"') {
-                            let exe = &cmd[1..=end_quote];
-                            let args = cmd[end_quote + 2..].trim();
+                    let result = if let Some(stripped) = cmd.strip_prefix('"') {
+                        if let Some(end_quote) = stripped.find('"') {
+                            let exe = &stripped[..end_quote];
+                            let args = stripped[end_quote + 1..].trim();
                             std::process::Command::new(exe).raw_arg(args).spawn()
                         } else {
                             Err(std::io::Error::new(
