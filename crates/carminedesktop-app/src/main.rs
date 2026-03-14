@@ -1081,103 +1081,6 @@ fn spawn_event_forwarder(
                 carminedesktop_vfs::core_ops::VfsEvent::FileLocked { file_name } => {
                     notify::file_locked(&app_handle, &file_name);
                 }
-                carminedesktop_vfs::core_ops::VfsEvent::CollabGateTimeout { path } => {
-                    let file_name = std::path::Path::new(&path)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(&path)
-                        .to_string();
-                    tracing::warn!("CollabGate timeout for {path}, opened locally");
-                    notify::collab_gate_timeout(&app_handle, &file_name);
-                }
-                carminedesktop_vfs::core_ops::VfsEvent::CollabOpenOnlineBackground { path } => {
-                    // Fire-and-forget: open the file online without blocking the VFS.
-                    // This is used when file associations are NOT registered, so the
-                    // VFS proceeds with local open while we asynchronously launch Office.
-                    let handle = app_handle.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = commands::open_online(handle, path.clone()).await {
-                            tracing::warn!("background open-online failed for {path}: {e}");
-                        }
-                    });
-                }
-            }
-        }
-    });
-}
-
-/// Open a file online — try desktop Office via URI scheme, fall back to browser.
-#[cfg(feature = "desktop")]
-async fn handle_collab_open_online(
-    app: &tauri::AppHandle,
-    request: &carminedesktop_core::types::CollabOpenRequest,
-) -> Result<(), String> {
-    // Delegate to the shared open_online command which handles Office URI +
-    // browser fallback.
-    commands::open_online(app.clone(), request.path.clone()).await
-}
-
-/// Spawn a task that listens on the CollabGate channel and handles requests.
-///
-/// For each request: unconditionally open online. Falls back to OpenLocally on error.
-#[cfg(feature = "desktop")]
-fn spawn_collab_handler(
-    rt: &tokio::runtime::Handle,
-    app: &tauri::AppHandle,
-    mut collab_rx: tokio::sync::mpsc::Receiver<(
-        carminedesktop_core::types::CollabOpenRequest,
-        tokio::sync::oneshot::Sender<carminedesktop_core::types::CollabOpenResponse>,
-    )>,
-) {
-    use carminedesktop_core::types::CollabOpenResponse;
-
-    let app_handle = app.clone();
-    rt.spawn(async move {
-        while let Some((request, reply_tx)) = collab_rx.recv().await {
-            let file_name = std::path::Path::new(&request.path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(&request.path)
-                .to_string();
-
-            // On Windows, respond OpenOnline first (unblocking the VFS so
-            // Excel processes STATUS_CANCELLED), then wait briefly before
-            // launching the Office URI to avoid duplicate-workbook collisions.
-            #[cfg(target_os = "windows")]
-            {
-                let _ = reply_tx.send(CollabOpenResponse::OpenOnline);
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                match handle_collab_open_online(&app_handle, &request).await {
-                    Ok(()) => {
-                        tracing::debug!("CollabGate: opened {file_name} online (deferred)");
-                    }
-                    Err(e) => {
-                        // Cannot fall back to OpenLocally — VFS already
-                        // unblocked with OpenOnline. Notify the user instead.
-                        tracing::warn!(
-                            "CollabGate: deferred open of {file_name} failed: {e}"
-                        );
-                        notify::collab_open_failed(&app_handle, &file_name, &e);
-                    }
-                }
-            }
-
-            // On Linux/macOS, open online first then respond (current behavior).
-            #[cfg(not(target_os = "windows"))]
-            {
-                match handle_collab_open_online(&app_handle, &request).await {
-                    Ok(()) => {
-                        tracing::debug!("CollabGate: opened {file_name} online");
-                        let _ = reply_tx.send(CollabOpenResponse::OpenOnline);
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "CollabGate: failed to open {file_name} online: {e}, falling back to local"
-                        );
-                        notify::collab_open_failed(&app_handle, &file_name, &e);
-                        let _ = reply_tx.send(CollabOpenResponse::OpenLocally);
-                    }
-                }
             }
         }
     });
@@ -1213,15 +1116,6 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         &ctx.rt,
     );
 
-    // Read collab config and create the CollabGate channel
-    let collab_config = {
-        let cfg = state.effective_config.lock().map_err(|e| e.to_string())?;
-        cfg.collaborative_open.clone()
-    };
-    let (collab_tx, collab_rx) = tokio::sync::mpsc::channel(8);
-
-    let file_associations_registered = shell_integration::are_file_associations_registered();
-
     let mut handle = MountHandle::mount(
         state.graph.clone(),
         ctx.cache.clone(),
@@ -1231,16 +1125,12 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         ctx.rt.clone(),
         Some(ctx.event_tx),
         Some(sync_handle),
-        Some(collab_tx),
-        Some(collab_config),
-        file_associations_registered,
     )
     .map_err(|e| e.to_string())?;
 
     handle.set_sync_join(sync_join);
 
     spawn_event_forwarder(&ctx.rt, app, ctx.event_rx);
-    spawn_collab_handler(&ctx.rt, app, collab_rx);
 
     let observer = Some(handle.delta_observer());
     state
@@ -1288,15 +1178,6 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         &ctx.rt,
     );
 
-    // Read collab config and create the CollabGate channel
-    let collab_config = {
-        let cfg = state.effective_config.lock().map_err(|e| e.to_string())?;
-        cfg.collaborative_open.clone()
-    };
-    let (collab_tx, collab_rx) = tokio::sync::mpsc::channel(8);
-
-    let file_associations_registered = shell_integration::are_file_associations_registered();
-
     let mut handle = carminedesktop_vfs::WinFspMountHandle::mount(
         state.graph.clone(),
         ctx.cache.clone(),
@@ -1306,16 +1187,12 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         ctx.rt.clone(),
         Some(ctx.event_tx),
         Some(sync_handle),
-        Some(collab_tx),
-        Some(collab_config),
-        file_associations_registered,
     )
     .map_err(|e| e.to_string())?;
 
     handle.set_sync_join(sync_join);
 
     spawn_event_forwarder(&ctx.rt, app, ctx.event_rx);
-    spawn_collab_handler(&ctx.rt, app, collab_rx);
 
     let observer = Some(handle.delta_observer());
     state
@@ -1746,9 +1623,6 @@ fn run_headless(
                     rt_handle.clone(),
                     None,
                     None, // no sync processor in headless mode
-                    None, // no collab channel in headless mode
-                    None,
-                    false, // no file associations in headless mode
                 ) {
                     Ok(handle) => {
                         tracing::info!("mount '{}' started at {mountpoint}", mount_config.name);

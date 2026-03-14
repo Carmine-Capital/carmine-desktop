@@ -10,9 +10,9 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use tokio::runtime::Handle;
 use windows_sys::Win32::Foundation::{
-    STATUS_ACCESS_DENIED, STATUS_CANCELLED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_FULL,
-    STATUS_IO_DEVICE_ERROR, STATUS_IO_TIMEOUT, STATUS_NOT_A_DIRECTORY,
-    STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND,
+    STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_FULL, STATUS_IO_DEVICE_ERROR,
+    STATUS_IO_TIMEOUT, STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_COLLISION,
+    STATUS_OBJECT_NAME_NOT_FOUND,
 };
 use windows_sys::Win32::Storage::FileSystem::FILE_ACCESS_RIGHTS;
 use winfsp::U16CStr;
@@ -118,7 +118,6 @@ fn vfs_err_to_ntstatus(e: VfsError) -> winfsp::FspError {
         VfsError::NotADirectory => STATUS_NOT_A_DIRECTORY,
         VfsError::DirectoryNotEmpty => STATUS_DIRECTORY_NOT_EMPTY,
         VfsError::PermissionDenied => STATUS_ACCESS_DENIED,
-        VfsError::CollabRedirect => STATUS_CANCELLED,
         VfsError::TimedOut => STATUS_IO_TIMEOUT,
         VfsError::QuotaExceeded => STATUS_DISK_FULL,
         VfsError::IoError(_) => STATUS_IO_DEVICE_ERROR,
@@ -240,29 +239,17 @@ impl CarmineDesktopWinFsp {
         cache: Arc<CacheManager>,
         inodes: Arc<InodeTable>,
         drive_id: String,
-        mountpoint: &str,
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
         sync_handle: Option<crate::sync_processor::SyncHandle>,
-        collab_tx: Option<crate::core_ops::CollabSender>,
-        collab_config: Option<carminedesktop_core::config::CollaborativeOpenConfig>,
-        file_associations_registered: bool,
     ) -> Self {
         let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt.clone());
-        ops = ops.with_mountpoint(mountpoint.to_string());
         if let Some(tx) = event_tx.clone() {
             ops = ops.with_event_sender(tx);
         }
         if let Some(sh) = sync_handle {
             ops = ops.with_sync_handle(sh);
         }
-        if let Some(tx) = collab_tx {
-            ops = ops.with_collab_sender(tx);
-        }
-        if let Some(cfg) = collab_config {
-            ops = ops.with_collab_config(cfg);
-        }
-        ops = ops.with_file_associations_registered(file_associations_registered);
         let open_files = ops.open_files().clone();
         Self {
             ops,
@@ -357,34 +344,13 @@ impl FileSystemContext for CarmineDesktopWinFsp {
 
         let is_dir = item.is_folder();
 
-        // Reconstruct the file path for CollabGate.
-        let path_str = if components.is_empty() {
-            String::from("/")
-        } else {
-            format!("/{}", components.join("/"))
-        };
-
-        // Extract the calling process ID so CollabGate can check whether
-        // the open originates from an interactive shell (e.g. Explorer).
-        // Safety: FspFileSystemOperationProcessIdF() is valid during
-        // Create/Open callbacks and returns 0 when unavailable.
-        let raw_pid = unsafe { winfsp_sys::FspFileSystemOperationProcessIdF() };
-        let caller_pid: Option<u32> = if raw_pid != 0 { Some(raw_pid) } else { None };
-        tracing::debug!(
-            raw_pid,
-            ?caller_pid,
-            path = %path_str,
-            is_dir,
-            "WinFsp create: caller PID and path"
-        );
-
         // Open a file handle for regular files; directories don't need one.
         let fh = if is_dir {
             None
         } else {
             let handle = self
                 .ops
-                .open_file(ino, caller_pid, Some(&path_str))
+                .open_file(ino)
                 .map_err(vfs_err_to_ntstatus)?;
             Some(handle)
         };
@@ -1020,9 +986,6 @@ impl WinFspMountHandle {
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
         sync_handle: Option<crate::sync_processor::SyncHandle>,
-        collab_tx: Option<crate::core_ops::CollabSender>,
-        collab_config: Option<carminedesktop_core::config::CollaborativeOpenConfig>,
-        file_associations_registered: bool,
     ) -> carminedesktop_core::Result<Self> {
         // 0. Initialize WinFsp DLL (resolves the delay-loaded DLL from PATH or registry).
         winfsp::winfsp_init().map_err(|e| {
@@ -1085,13 +1048,9 @@ impl WinFspMountHandle {
             cache.clone(),
             inodes.clone(),
             drive_id.clone(),
-            mountpoint,
             rt.clone(),
             event_tx,
             sync_handle,
-            collab_tx,
-            collab_config,
-            file_associations_registered,
         );
 
         // 4. Create delta observer before host takes ownership.

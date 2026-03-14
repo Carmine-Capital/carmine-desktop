@@ -1,7 +1,7 @@
 /// Build an Office URI scheme string (`ms-word:ofe|u|<url>`) for the given extension
 /// and **direct** document URL (not a `_layouts/15/Doc.aspx` web view URL).
 ///
-/// Returns `None` on Linux or for non-Office file types.
+/// Returns `None` on non-Windows platforms or for non-Office file types.
 pub fn office_uri(extension: &str, direct_url: &str) -> Option<String> {
     let scheme = office_uri_scheme(extension)?;
     Some(format!("{scheme}:ofe|u|{direct_url}"))
@@ -9,7 +9,7 @@ pub fn office_uri(extension: &str, direct_url: &str) -> Option<String> {
 
 /// Returns the Office URI scheme for the given file extension.
 fn office_uri_scheme(extension: &str) -> Option<&'static str> {
-    if cfg!(target_os = "linux") {
+    if cfg!(not(target_os = "windows")) {
         return None;
     }
 
@@ -39,24 +39,4 @@ pub fn direct_document_url(drive_web_url: &str, parent_path: &str, name: &str) -
     } else {
         format!("{base}/{relative}/{name}")
     }
-}
-
-/// Returns `true` if the file extension is editable collaboratively via Microsoft 365 Online.
-pub fn is_collaborative(extension: &str) -> bool {
-    matches!(
-        extension.to_ascii_lowercase().as_str(),
-        ".doc"
-            | ".docx"
-            | ".docm"
-            | ".xls"
-            | ".xlsx"
-            | ".xlsm"
-            | ".ppt"
-            | ".pptx"
-            | ".pptm"
-            | ".odt"
-            | ".ods"
-            | ".odp"
-            | ".vsdx"
-    )
 }

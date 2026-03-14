@@ -610,7 +610,7 @@ button.btn-remove:hover {
   color: var(--text-primary);
 }
 
-/* Extension preference list (collab settings) */
+/* Extension preference list */
 .ext-pref-list {
   list-style: none;
   margin-bottom: var(--space-2);

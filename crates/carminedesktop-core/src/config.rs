@@ -68,7 +68,6 @@ impl UserConfig {
                 "log_level" => g.log_level = None,
                 "notifications" => g.notifications = None,
                 "root_dir" => g.root_dir = None,
-                "collaborative_open" => g.collaborative_open = None,
                 "register_file_associations" => g.register_file_associations = None,
                 "file_handler_overrides" => g.file_handler_overrides = None,
                 "explorer_nav_pane" => g.explorer_nav_pane = None,
@@ -171,8 +170,6 @@ pub struct UserGeneralSettings {
     pub notifications: Option<bool>,
     #[serde(default)]
     pub root_dir: Option<String>,
-    #[serde(default)]
-    pub collaborative_open: Option<CollaborativeOpenConfig>,
     /// Register Carmine Desktop as the handler for Office file types on Windows.
     /// When enabled, double-clicking .docx/.xlsx/.pptx files opens them via
     /// Carmine Desktop, which redirects to SharePoint Online for co-authoring.
@@ -214,27 +211,6 @@ fn default_true() -> bool {
     true
 }
 
-fn default_collab_timeout() -> u64 {
-    15
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CollaborativeOpenConfig {
-    #[serde(default = "default_collab_timeout")]
-    pub timeout_seconds: u64,
-    #[serde(default)]
-    pub shell_processes: Vec<String>,
-}
-
-impl Default for CollaborativeOpenConfig {
-    fn default() -> Self {
-        Self {
-            timeout_seconds: default_collab_timeout(),
-            shell_processes: Vec::new(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountMetadata {
     pub id: String,
@@ -260,7 +236,6 @@ pub struct EffectiveConfig {
     pub root_dir: String,
     pub mounts: Vec<MountConfig>,
     pub accounts: Vec<AccountMetadata>,
-    pub collaborative_open: CollaborativeOpenConfig,
     /// Register Carmine Desktop as the handler for Office file types on Windows.
     /// Default: true on Windows, false on other platforms.
     pub register_file_associations: bool,
@@ -301,14 +276,10 @@ impl EffectiveConfig {
             .unwrap_or_else(|| "info".to_string());
         let notifications = user_general.and_then(|g| g.notifications).unwrap_or(true);
 
-        let collaborative_open = user_general
-            .and_then(|g| g.collaborative_open.clone())
-            .unwrap_or_default();
-
-        // Default: true on Windows, false on other platforms
-        #[cfg(target_os = "windows")]
+        // Default: true on Windows and macOS, false on other platforms
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
         let default_file_assoc = true;
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         let default_file_assoc = false;
 
         let register_file_associations = user_general
@@ -340,7 +311,6 @@ impl EffectiveConfig {
             root_dir,
             mounts: user.mounts.clone(),
             accounts: user.accounts.clone(),
-            collaborative_open,
             register_file_associations,
             file_handler_overrides,
             explorer_nav_pane,

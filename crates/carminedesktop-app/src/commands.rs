@@ -1193,62 +1193,6 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
             }
         }
 
-        // On Linux: try the previous handler from saved .desktop file
-        #[cfg(target_os = "linux")]
-        {
-            let ext = std::path::Path::new(&path)
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| format!(".{e}"))
-                .unwrap_or_default();
-
-            // Check config override first
-            let override_handler = {
-                let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-                config.file_handler_overrides.get(&ext).cloned()
-            };
-
-            if let Some(ref desktop_name) = override_handler
-                && let Some(exec_template) =
-                    crate::shell_integration::get_desktop_exec(desktop_name)
-            {
-                tracing::info!(
-                    "open_file: using config override handler {desktop_name}: {exec_template}"
-                );
-
-                match launch_desktop_exec(&exec_template, &path) {
-                    Ok(()) => return Ok(()),
-                    Err(e) => {
-                        tracing::warn!(
-                            "failed to invoke config override handler: {e}, trying other fallbacks"
-                        );
-                    }
-                }
-            }
-
-            tracing::debug!("open_file: looking up previous handler for {ext}");
-
-            if let Some(desktop_name) = crate::shell_integration::get_previous_handler(&ext)
-                && let Some(exec_template) =
-                    crate::shell_integration::get_desktop_exec(&desktop_name)
-            {
-                tracing::info!(
-                    "open_file: invoking previous handler from {desktop_name}: {exec_template}"
-                );
-
-                let result = launch_desktop_exec(&exec_template, &path);
-
-                match result {
-                    Ok(()) => return Ok(()),
-                    Err(e) => {
-                        tracing::warn!(
-                            "failed to invoke previous handler: {e}, trying other fallbacks"
-                        );
-                    }
-                }
-            }
-        }
-
         // Fall through to default OS handler for non-Windows/Linux or if previous handler failed
         #[cfg(target_os = "windows")]
         {
@@ -1312,46 +1256,9 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                 .map_err(|e| format!("failed to open with OS handler: {e}"))
         }
 
+        // On Linux: no file associations, just open with OS default handler
         #[cfg(target_os = "linux")]
         {
-            let ext = std::path::Path::new(&path)
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| format!(".{e}"))
-                .unwrap_or_default();
-
-            if crate::shell_integration::is_handled_extension(&ext) {
-                // Try runtime discovery before giving up
-                if let Some(discovered) = crate::shell_integration::discover_office_handler(&ext)
-                    && let Some(exec_template) =
-                        crate::shell_integration::get_desktop_exec(&discovered)
-                {
-                    tracing::info!(
-                        "open_file: using discovered handler {discovered}: {exec_template}"
-                    );
-
-                    match launch_desktop_exec(&exec_template, &path) {
-                        Ok(()) => return Ok(()),
-                        Err(e) => {
-                            tracing::warn!("failed to invoke discovered handler: {e}");
-                        }
-                    }
-                }
-
-                // Truly no handler found
-                tracing::warn!(
-                    "open_file: no previous or discovered handler for {ext}, cannot fall through (we are the handler)"
-                );
-                let msg = format!(
-                    "Carmine Desktop could not find the original application to open {ext} files. \
-                     Please right-click the file and choose 'Open with' to select your \
-                     preferred application, then try again."
-                );
-                crate::notify::send(&app, "Cannot open file", &msg);
-                return Err(msg);
-            }
-
-            // Non-handled extension — safe to delegate to OS (no loop risk)
             crate::open_with_clean_env(&path)
                 .map_err(|e| format!("failed to open with OS handler: {e}"))
         }
@@ -1508,87 +1415,6 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                 .map_err(|e| format!("failed to open with OS handler: {e}"))
         }
     }
-}
-
-/// Parse and execute a .desktop file Exec= template with the given file path.
-///
-/// Handles common Exec field codes:
-/// - `%f` / `%F`: single file path
-/// - `%u` / `%U`: file URI
-/// - No field code: append file path as argument
-///
-/// Strips LD_LIBRARY_PATH and LD_PRELOAD for AppImage compatibility.
-#[cfg(target_os = "linux")]
-fn launch_desktop_exec(exec_template: &str, file_path: &str) -> Result<(), String> {
-    // Split the Exec line into tokens, respecting quotes
-    let tokens = shell_tokenize(exec_template);
-    if tokens.is_empty() {
-        return Err("empty Exec= template".to_string());
-    }
-
-    let exe = &tokens[0];
-    let mut args: Vec<String> = Vec::new();
-    let mut has_field_code = false;
-
-    for token in &tokens[1..] {
-        match token.as_str() {
-            "%f" | "%F" => {
-                args.push(file_path.to_string());
-                has_field_code = true;
-            }
-            "%u" | "%U" => {
-                // Convert path to file:// URI
-                let uri = format!("file://{file_path}");
-                args.push(uri);
-                has_field_code = true;
-            }
-            // Skip other desktop entry field codes (%i, %c, %k, etc.)
-            s if s.starts_with('%') && s.len() == 2 => {}
-            other => args.push(other.to_string()),
-        }
-    }
-
-    // If no field code was found, append the file path
-    if !has_field_code {
-        args.push(file_path.to_string());
-    }
-
-    tracing::debug!("launch_desktop_exec: {exe} {args:?}");
-
-    std::process::Command::new(exe)
-        .args(&args)
-        .env_remove("LD_LIBRARY_PATH")
-        .env_remove("LD_PRELOAD")
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("failed to spawn {exe}: {e}"))
-}
-
-/// Simple shell-like tokenizer for .desktop Exec= lines.
-///
-/// Splits on whitespace but respects double-quoted strings.
-/// Does not handle escape sequences (not needed for .desktop files).
-#[cfg(target_os = "linux")]
-fn shell_tokenize(s: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut in_quotes = false;
-
-    for ch in s.chars() {
-        match ch {
-            '"' => in_quotes = !in_quotes,
-            ' ' | '\t' if !in_quotes => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-            }
-            _ => current.push(ch),
-        }
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    tokens
 }
 
 /// Find a child item by name under a parent inode.
