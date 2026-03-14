@@ -18,10 +18,7 @@ use tokio::sync::watch;
 
 use crate::inode::InodeTable;
 use carminedesktop_cache::CacheManager;
-use carminedesktop_core::config::CollaborativeOpenConfig;
-use carminedesktop_core::types::{
-    CollabOpenRequest, CollabOpenResponse, DriveItem, DriveQuota, FileFacet, ParentReference,
-};
+use carminedesktop_core::types::{DriveItem, DriveQuota, FileFacet, ParentReference};
 use carminedesktop_graph::{CopyStatus, GraphClient, SMALL_FILE_LIMIT};
 
 /// Compare item names for child lookup.
@@ -358,14 +355,6 @@ pub enum VfsEvent {
     UploadFailed { file_name: String, reason: String },
     /// The file is locked on OneDrive (co-authoring or checkout).
     FileLocked { file_name: String },
-    /// CollabGate dialog timed out; file opened locally.
-    CollabGateTimeout { path: String },
-    /// CollabGate requests the app to open a file online in the background.
-    ///
-    /// Unlike the blocking CollabGate flow, this event fires when file associations
-    /// are NOT registered. The VFS proceeds with a normal local open while the app
-    /// asynchronously launches the Office URI scheme. No error dialog is shown.
-    CollabOpenOnlineBackground { path: String },
 }
 
 /// Check if a filename matches known transient file patterns that should not
@@ -421,8 +410,6 @@ pub enum VfsError {
     QuotaExceeded,
     /// I/O or network operation failed (FUSE: EIO, Windows: STATUS_DEVICE_NOT_READY)
     IoError(String),
-    /// CollabGate redirected the open to the browser (FUSE: EACCES, Windows: STATUS_ACCESS_DENIED)
-    CollabRedirect,
 }
 
 impl VfsError {
@@ -478,12 +465,6 @@ const QUOTA_CACHE_TTL_SECS: u64 = 60;
 /// at open time. Without this, `FUSE_WRITEBACK_CACHE` keeps stale values.
 pub type InodeInvalidator = Arc<dyn Fn(u64) + Send + Sync>;
 
-/// Channel type for sending CollabGate requests with a oneshot reply channel.
-pub type CollabSender = tokio::sync::mpsc::Sender<(
-    CollabOpenRequest,
-    tokio::sync::oneshot::Sender<CollabOpenResponse>,
-)>;
-
 pub struct CoreOps {
     graph: Arc<GraphClient>,
     cache: Arc<CacheManager>,
@@ -495,18 +476,6 @@ pub struct CoreOps {
     sync_handle: Option<crate::sync_processor::SyncHandle>,
     quota_cache: std::sync::Mutex<Option<(Instant, DriveQuota)>>,
     inode_invalidator: Option<InodeInvalidator>,
-    collab_tx: Option<CollabSender>,
-    collab_config: CollaborativeOpenConfig,
-    mountpoint: Option<String>,
-    /// Per-inode cooldown to avoid re-firing CollabGate for the same file
-    /// when Explorer/apps issue multiple CreateFile calls for one user action.
-    /// The bool tracks whether the decision was OpenOnline (`true`) so that
-    /// retries during cooldown also receive `CollabRedirect` instead of
-    /// falling through to a local open.
-    collab_cooldown: dashmap::DashMap<u64, (Instant, bool)>,
-    /// If file associations are registered, skip CollabGate entirely.
-    /// The file association handler will intercept double-clicks outside the VFS.
-    file_associations_registered: bool,
 }
 
 impl CoreOps {
@@ -528,11 +497,6 @@ impl CoreOps {
             sync_handle: None,
             quota_cache: std::sync::Mutex::new(None),
             inode_invalidator: None,
-            collab_tx: None,
-            collab_config: CollaborativeOpenConfig::default(),
-            mountpoint: None,
-            collab_cooldown: dashmap::DashMap::new(),
-            file_associations_registered: false,
         }
     }
 
@@ -551,114 +515,9 @@ impl CoreOps {
         self
     }
 
-    pub fn with_collab_sender(mut self, tx: CollabSender) -> Self {
-        self.collab_tx = Some(tx);
-        self
-    }
-
-    pub fn with_collab_config(mut self, config: CollaborativeOpenConfig) -> Self {
-        self.collab_config = config;
-        self
-    }
-
-    /// Set whether file associations are registered.
-    ///
-    /// When `true`, CollabGate is bypassed entirely for collaborative file opens —
-    /// the file association handler will intercept double-clicks outside the VFS.
-    pub fn with_file_associations_registered(mut self, registered: bool) -> Self {
-        self.file_associations_registered = registered;
-        self
-    }
-
-    pub fn with_mountpoint(mut self, mountpoint: String) -> Self {
-        self.mountpoint = Some(mountpoint);
-        self
-    }
-
     pub fn send_event(&self, event: VfsEvent) {
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(event);
-        }
-    }
-
-    /// Windows-only: CollabGate fallback when file associations are NOT registered.
-    ///
-    /// Instead of blocking for a dialog and returning STATUS_CANCELLED (which shows
-    /// an ugly error dialog), we fire a background event to open online and let the
-    /// file open normally through WinFsp. The online version supersedes the local one.
-    ///
-    /// This provides graceful degradation: if the URI scheme fails, the local file
-    /// still works. No error dialog, no "double-open" feeling.
-    ///
-    /// On Linux/macOS, the blocking CollabGate dialog is used instead when file
-    /// associations are not registered.
-    #[cfg(target_os = "windows")]
-    fn handle_collab_gate_fallback(&self, ino: u64, caller_pid: Option<u32>, path: &str) {
-        let filename = std::path::Path::new(path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
-
-        let ext = std::path::Path::new(path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| format!(".{e}"))
-            .unwrap_or_default();
-
-        let is_transient = is_transient_file(filename);
-        let is_collab = carminedesktop_core::open_online::is_collaborative(&ext);
-        let is_interactive = if let Some(pid) = caller_pid {
-            crate::process_filter::is_interactive_shell(pid, &self.collab_config.shell_processes)
-        } else {
-            false
-        };
-
-        tracing::debug!(
-            ino,
-            ?caller_pid,
-            %filename,
-            %ext,
-            is_transient,
-            is_collab,
-            is_interactive,
-            "CollabGate fallback: gate check"
-        );
-
-        // Only fire for non-transient collaborative files from interactive shells
-        if !is_transient && is_collab && is_interactive {
-            // Check cooldown to avoid spamming the URI scheme
-            const COLLAB_COOLDOWN_SECS: u64 = 30;
-            let should_fire = self.collab_cooldown.get(&ino).is_none_or(|entry| {
-                let (instant, _was_online) = *entry;
-                instant.elapsed().as_secs() >= COLLAB_COOLDOWN_SECS
-            });
-
-            if should_fire {
-                // Build the full local path
-                let full_path = if let Some(mp) = &self.mountpoint {
-                    let trimmed = path.trim_start_matches('/');
-                    std::path::PathBuf::from(mp)
-                        .join(trimmed)
-                        .to_string_lossy()
-                        .into_owned()
-                } else {
-                    path.to_string()
-                };
-
-                tracing::debug!(
-                    ino,
-                    %full_path,
-                    "CollabGate fallback: firing background open online event"
-                );
-
-                // Record cooldown (true = was online)
-                self.collab_cooldown.insert(ino, (Instant::now(), true));
-
-                // Fire background event — app will launch Office URI scheme
-                self.send_event(VfsEvent::CollabOpenOnlineBackground { path: full_path });
-            } else {
-                tracing::debug!(ino, "CollabGate fallback: on cooldown, skipping");
-            }
         }
     }
 
@@ -1114,184 +973,7 @@ impl CoreOps {
     /// Small files (< 4 MB) and cached files load eagerly.
     /// Large uncached files return immediately with a background streaming download.
     /// Validates disk cache freshness via dirty-inode set, eTag, and size checks.
-    ///
-    /// When CollabGate is enabled and the caller is an interactive shell opening a
-    /// collaborative file type, either bypasses (if file associations are registered)
-    /// or fires a background online-open event and proceeds with the local open.
-    pub fn open_file(
-        &self,
-        ino: u64,
-        caller_pid: Option<u32>,
-        file_path: Option<&str>,
-    ) -> VfsResult<u64> {
-        // CollabGate: intercept collaborative file opens from interactive shells.
-        // If file associations are registered, skip CollabGate entirely —
-        // the association handler intercepts double-clicks before they reach the VFS.
-        if self.file_associations_registered {
-            tracing::debug!(
-                ino,
-                "CollabGate open_file: file associations registered, skipping CollabGate"
-            );
-            // Fall through to normal file open
-        } else if let (Some(_tx), Some(path)) = (&self.collab_tx, file_path) {
-            // CollabGate fallback: file associations NOT registered.
-            // On Windows: fire background event, proceed with local open.
-            // On Linux/macOS: same fallback pattern (no blocking dialog).
-            #[cfg(target_os = "windows")]
-            {
-                self.handle_collab_gate_fallback(ino, caller_pid, path);
-            }
-
-            // On non-Windows: use the blocking CollabGate dialog when collab channel exists.
-            // This preserves the existing FUSE behavior for systems without file associations.
-            #[cfg(not(target_os = "windows"))]
-            {
-                // Skip CollabGate for transient files (lock files like ~$Report.xlsx,
-                // temp files like ~WRS0001.tmp). They have collaborative extensions
-                // but are local-only artifacts that don't exist on OneDrive.
-                let filename = std::path::Path::new(path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
-
-                let ext = std::path::Path::new(path)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| format!(".{e}"))
-                    .unwrap_or_default();
-
-                let is_transient = is_transient_file(filename);
-                let is_collab = carminedesktop_core::open_online::is_collaborative(&ext);
-                let is_interactive = if let Some(pid) = caller_pid {
-                    crate::process_filter::is_interactive_shell(
-                        pid,
-                        &self.collab_config.shell_processes,
-                    )
-                } else {
-                    false
-                };
-
-                tracing::debug!(
-                    ino,
-                    ?caller_pid,
-                    %filename,
-                    %ext,
-                    is_transient,
-                    is_collab,
-                    is_interactive,
-                    "CollabGate open_file: gate check"
-                );
-
-                if !is_transient && is_collab && is_interactive {
-                    // Cooldown: skip CollabGate if we recently handled this inode.
-                    // Apps may issue multiple open calls for a single user action.
-                    const COLLAB_COOLDOWN_SECS: u64 = 30;
-                    let cooldown_entry = self.collab_cooldown.get(&ino).and_then(|entry| {
-                        let (instant, was_online) = *entry;
-                        if instant.elapsed().as_secs() < COLLAB_COOLDOWN_SECS {
-                            Some(was_online)
-                        } else {
-                            None
-                        }
-                    });
-
-                    tracing::debug!(ino, ?cooldown_entry, "CollabGate open_file: cooldown check");
-
-                    match cooldown_entry {
-                        // Cooldown active, last decision was OpenOnline: reject
-                        // this retry too so the file doesn't also open locally.
-                        Some(true) => {
-                            tracing::debug!(
-                                ino,
-                                "CollabGate open_file: on cooldown (was OpenOnline) → returning CollabRedirect"
-                            );
-                            return Err(VfsError::CollabRedirect);
-                        }
-                        // Cooldown active, last decision was OpenLocally: let
-                        // the file open locally (fall through).
-                        Some(false) => {}
-                        // No cooldown — fire CollabGate.
-                        None => {
-                            // Build a full local path by prepending the mountpoint.
-                            let full_path = if let Some(mp) = &self.mountpoint {
-                                let trimmed = path.trim_start_matches('/');
-                                std::path::PathBuf::from(mp)
-                                    .join(trimmed)
-                                    .to_string_lossy()
-                                    .into_owned()
-                            } else {
-                                path.to_string()
-                            };
-
-                            let item_id_for_collab =
-                                self.inodes.get_item_id(ino).unwrap_or_default();
-
-                            let web_url = self.lookup_item(ino).and_then(|i| i.web_url.clone());
-
-                            tracing::debug!(
-                                ino, %full_path, %item_id_for_collab,
-                                has_web_url = web_url.is_some(),
-                                "CollabGate open_file: sending request to app"
-                            );
-
-                            let request = CollabOpenRequest {
-                                path: full_path.clone(),
-                                extension: ext,
-                                item_id: item_id_for_collab,
-                                web_url,
-                            };
-
-                            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-                            if _tx.blocking_send((request, resp_tx)).is_ok() {
-                                let timeout = std::time::Duration::from_secs(
-                                    self.collab_config.timeout_seconds,
-                                );
-                                match self.rt.block_on(async {
-                                    tokio::time::timeout(timeout, resp_rx).await
-                                }) {
-                                    Ok(Ok(CollabOpenResponse::OpenLocally)) => {
-                                        tracing::debug!(
-                                            ino,
-                                            "CollabGate open_file: response = OpenLocally"
-                                        );
-                                        self.collab_cooldown.insert(ino, (Instant::now(), false));
-                                    }
-                                    Ok(Ok(CollabOpenResponse::OpenOnline)) => {
-                                        tracing::debug!(
-                                            ino,
-                                            "CollabGate open_file: response = OpenOnline → returning CollabRedirect"
-                                        );
-                                        self.collab_cooldown.insert(ino, (Instant::now(), true));
-                                        return Err(VfsError::CollabRedirect);
-                                    }
-                                    Ok(Err(_)) => {
-                                        tracing::debug!(
-                                            ino,
-                                            "CollabGate open_file: channel closed, proceeding locally"
-                                        );
-                                    }
-                                    Err(_) => {
-                                        tracing::warn!(
-                                            ino,
-                                            "CollabGate open_file: TIMEOUT, proceeding locally"
-                                        );
-                                        self.send_event(VfsEvent::CollabGateTimeout {
-                                            path: full_path,
-                                        });
-                                    }
-                                }
-                            } else {
-                                tracing::warn!(
-                                    ino,
-                                    "CollabGate open_file: failed to send request (channel full/closed)"
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
+    pub fn open_file(&self, ino: u64) -> VfsResult<u64> {
         let item_id = self.inodes.get_item_id(ino).ok_or(VfsError::NotFound)?;
 
         // Local files haven't been uploaded yet — Graph API would reject any download
