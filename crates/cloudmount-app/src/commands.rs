@@ -916,10 +916,6 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
 
                 tracing::info!("open_file: invoking previous handler: {cmd}");
 
-                // Set recursion guard before spawning, in case the handler somehow re-invokes us
-                // SAFETY: single-threaded access to this env var, guarded by cfg(windows)
-                unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
-
                 // Parse the command line to extract executable and arguments
                 // The command is typically: "C:\path\to\app.exe" args...
                 let result = if cmd.starts_with('"') {
@@ -942,9 +938,6 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                     let args = parts.get(1).unwrap_or(&"");
                     std::process::Command::new(exe).raw_arg(args).spawn()
                 };
-
-                // SAFETY: single-threaded access to this env var, guarded by cfg(windows)
-                unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
 
                 match result {
                     Ok(_) => return Ok(()),
@@ -976,14 +969,7 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                     "open_file: invoking previous handler from {desktop_name}: {exec_template}"
                 );
 
-                // Set recursion guard before spawning
-                // SAFETY: single-threaded access to this env var
-                unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
-
                 let result = launch_desktop_exec(&exec_template, &path);
-
-                // SAFETY: single-threaded access to this env var
-                unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
 
                 match result {
                     Ok(()) => return Ok(()),
@@ -1005,23 +991,24 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                 .map(|e| format!(".{e}"))
                 .unwrap_or_default();
 
-            // Use guard-protected OS fallback for ALL extensions (handled or not).
-            // The recursion guard prevents infinite loops: if the OS re-invokes
-            // CloudMount, we bail at the top of open_file(). The OS then falls
-            // through to the next registered handler (e.g. Excel).
             if crate::shell_integration::is_handled_extension(&ext) {
-                tracing::debug!(
-                    "open_file: no previous handler found for {ext}, using guard-protected OS fallback"
+                // We ARE the OS default handler for this extension — calling
+                // open_with_clean_env would loop back to us indefinitely.
+                tracing::warn!(
+                    "open_file: no previous handler found for {ext}, cannot fall through (we are the handler)"
                 );
+                let msg = format!(
+                    "CloudMount could not find the original application to open {ext} files. \
+                     Please right-click the file and choose 'Open with' to select your \
+                     preferred application, then try again."
+                );
+                crate::notify::send(&app, "Cannot open file", &msg);
+                return Err(msg);
             }
 
-            // SAFETY: single-threaded access to this env var, guarded by cfg(windows)
-            unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
-            let result = crate::open_with_clean_env(&path)
-                .map_err(|e| format!("failed to open with OS handler: {e}"));
-            // SAFETY: single-threaded access to this env var, guarded by cfg(windows)
-            unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
-            result
+            // Non-handled extension — safe to delegate to OS (no loop risk)
+            crate::open_with_clean_env(&path)
+                .map_err(|e| format!("failed to open with OS handler: {e}"))
         }
 
         #[cfg(target_os = "linux")]
@@ -1032,23 +1019,24 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                 .map(|e| format!(".{e}"))
                 .unwrap_or_default();
 
-            // Use guard-protected OS fallback for ALL extensions (handled or not).
-            // The recursion guard prevents infinite loops: if xdg-open re-invokes
-            // CloudMount, we bail at the top of open_file(). The OS then falls
-            // through to the next registered handler (e.g. LibreOffice).
             if crate::shell_integration::is_handled_extension(&ext) {
-                tracing::debug!(
-                    "open_file: no previous handler found for {ext}, using guard-protected OS fallback"
+                // We ARE the OS default handler for this extension — calling
+                // open_with_clean_env would loop back to us indefinitely.
+                tracing::warn!(
+                    "open_file: no previous handler found for {ext}, cannot fall through (we are the handler)"
                 );
+                let msg = format!(
+                    "CloudMount could not find the original application to open {ext} files. \
+                     Please right-click the file and choose 'Open with' to select your \
+                     preferred application, then try again."
+                );
+                crate::notify::send(&app, "Cannot open file", &msg);
+                return Err(msg);
             }
 
-            // SAFETY: single-threaded access to this env var
-            unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
-            let result = crate::open_with_clean_env(&path)
-                .map_err(|e| format!("failed to open with OS handler: {e}"));
-            // SAFETY: single-threaded access to this env var
-            unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
-            result
+            // Non-handled extension — safe to delegate to OS (no loop risk)
+            crate::open_with_clean_env(&path)
+                .map_err(|e| format!("failed to open with OS handler: {e}"))
         }
 
         // On macOS: try the previous handler (resolved via bundle ID → app path)
@@ -1069,16 +1057,9 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                         "open_file: invoking previous handler {bundle_id} at {app_path}"
                     );
 
-                    // Set recursion guard before spawning
-                    // SAFETY: single-threaded access to this env var
-                    unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
-
                     let result = std::process::Command::new("open")
                         .args(["-a", &app_path, &path])
                         .spawn();
-
-                    // SAFETY: single-threaded access to this env var
-                    unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
 
                     match result {
                         Ok(_) => return Ok(()),
@@ -1094,15 +1075,9 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                         "open_file: trying to launch previous handler by bundle ID {bundle_id}"
                     );
 
-                    // SAFETY: single-threaded access to this env var
-                    unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
-
                     let result = std::process::Command::new("open")
                         .args(["-b", &bundle_id, &path])
                         .spawn();
-
-                    // SAFETY: single-threaded access to this env var
-                    unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
 
                     match result {
                         Ok(_) => return Ok(()),
@@ -1115,23 +1090,24 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                 }
             }
 
-            // Use guard-protected OS fallback for ALL extensions (handled or not).
-            // The recursion guard prevents infinite loops: if Launch Services
-            // re-invokes CloudMount, we bail at the top of open_file(). The OS
-            // then falls through to the next registered handler (e.g. MS Office).
             if crate::shell_integration::is_handled_extension(&ext) {
-                tracing::debug!(
-                    "open_file: no previous handler found for {ext}, using guard-protected OS fallback"
+                // We ARE the OS default handler for this extension — calling
+                // open_with_clean_env would loop back to us indefinitely.
+                tracing::warn!(
+                    "open_file: no previous handler found for {ext}, cannot fall through (we are the handler)"
                 );
+                let msg = format!(
+                    "CloudMount could not find the original application to open {ext} files. \
+                     Please right-click the file and choose 'Open with' to select your \
+                     preferred application, then try again."
+                );
+                crate::notify::send(&app, "Cannot open file", &msg);
+                return Err(msg);
             }
 
-            // SAFETY: single-threaded access to this env var
-            unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
-            let result = crate::open_with_clean_env(&path)
-                .map_err(|e| format!("failed to open with OS handler: {e}"));
-            // SAFETY: single-threaded access to this env var
-            unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
-            result
+            // Non-handled extension — safe to delegate to OS (no loop risk)
+            crate::open_with_clean_env(&path)
+                .map_err(|e| format!("failed to open with OS handler: {e}"))
         }
     }
 }
