@@ -491,9 +491,9 @@ pub fn register_nav_pane(cloud_root: &std::path::Path) -> carminedesktop_core::R
     ns_key.set_value("", &"Carmine Desktop")?;
 
     // 3. HideDesktopIcons — prevent desktop shortcut
-    let hide_path = format!(
+    let hide_path =
         r"Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
-    );
+            .to_string();
     let (hide_key, _) = hkcu.create_subkey(&hide_path)?;
     hide_key.set_value(NAV_PANE_CLSID, &1u32)?;
 
@@ -638,15 +638,14 @@ pub fn ensure_nav_pane(cloud_root: &std::path::Path) -> carminedesktop_core::Res
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let clsid_path = format!(r"Software\Classes\CLSID\{NAV_PANE_CLSID}");
 
-    if let Ok(clsid_key) = hkcu.open_subkey_with_flags(&clsid_path, KEY_READ) {
-        if let Ok(bag) = clsid_key.open_subkey_with_flags(r"Instance\InitPropertyBag", KEY_READ) {
-            if let Ok(existing_target) = bag.get_value::<String, _>("TargetFolderPath") {
-                if existing_target == target.as_ref() {
-                    tracing::debug!("nav pane already registered with correct target, skipping");
-                    return Ok(());
-                }
-            }
-        }
+    if let Ok(clsid_key) = hkcu.open_subkey_with_flags(&clsid_path, KEY_READ)
+        && let Ok(bag) =
+            clsid_key.open_subkey_with_flags(r"Instance\InitPropertyBag", KEY_READ)
+        && let Ok(existing_target) = bag.get_value::<String, _>("TargetFolderPath")
+        && existing_target == target.as_ref()
+    {
+        tracing::debug!("nav pane already registered with correct target, skipping");
+        return Ok(());
     }
 
     register_nav_pane(cloud_root)
@@ -1164,7 +1163,7 @@ mod tests {
         // Verify updated path
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let prop_bag = hkcu.open_subkey_with_flags(
-            &format!(r"Software\Classes\CLSID\{NAV_PANE_CLSID}\Instance\InitPropertyBag"),
+            format!(r"Software\Classes\CLSID\{NAV_PANE_CLSID}\Instance\InitPropertyBag"),
             KEY_READ,
         )?;
         let target: String = prop_bag.get_value("TargetFolderPath")?;
