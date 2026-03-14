@@ -94,6 +94,7 @@ fn test_expand_mount_point_tilde() {
 }
 
 #[test]
+#[cfg(not(target_os = "windows"))]
 fn test_expand_mount_point_no_placeholder() {
     let path = "/mnt/carminedesktop";
     let expanded = expand_mount_point(path);
@@ -316,6 +317,7 @@ fn test_expand_mount_point_no_trailing_sep_unchanged() {
 }
 
 #[test]
+#[cfg(not(target_os = "windows"))]
 fn test_expand_mount_point_literal_path_strips_trailing_slash() {
     // Literal path (no ~ or {home}) — still normalized
     let expanded = expand_mount_point("/mnt/carminedesktop/");
@@ -326,6 +328,7 @@ fn test_expand_mount_point_literal_path_strips_trailing_slash() {
 }
 
 #[test]
+#[cfg(not(target_os = "windows"))]
 fn test_expand_mount_point_literal_path_no_trailing_unchanged() {
     let expanded = expand_mount_point("/mnt/carminedesktop");
     assert_eq!(expanded, "/mnt/carminedesktop");
