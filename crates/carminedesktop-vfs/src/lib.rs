@@ -1,7 +1,7 @@
 pub mod core_ops;
 pub mod inode;
 pub(crate) mod pending;
-pub mod process_filter;
+
 pub mod sync_processor;
 
 pub use pending::recover_pending_writes;
