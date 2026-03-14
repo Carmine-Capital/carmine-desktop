@@ -20,6 +20,14 @@ The system SHALL initialize all service components in dependency order during ap
 - **WHEN** pre-flight checks detect a critical problem (e.g., placeholder client ID or unsupported Windows version)
 - **THEN** on Windows release desktop builds, the system displays a `MessageBoxW` dialog with the full actionable error message and exits with code 1; on all other platforms and build configurations, the system prints the actionable error message to stderr and exits with code 1
 
+#### Scenario: Navigation pane reconciliation during setup
+- **WHEN** the application starts on Windows in desktop mode and the explorer_nav_pane setting is enabled
+- **THEN** the system registers or re-registers the navigation pane entry (updating the executable path and TargetFolderPath) after token restoration and before mount startup; if the setting is disabled but the navigation pane entry exists, the system unregisters it
+
+#### Scenario: Navigation pane reconciliation failure is non-fatal
+- **WHEN** the navigation pane registration or unregistration fails during startup
+- **THEN** a warning is logged and application startup continues normally; mounts and sync are not affected
+
 ### Requirement: Token restoration on startup
 The system SHALL attempt to restore authentication tokens from secure storage on startup before requiring user sign-in.
 
@@ -180,6 +188,10 @@ The system SHALL perform an ordered shutdown to prevent data loss.
 #### Scenario: Flush timeout exceeded
 - **WHEN** pending writes cannot be flushed within the 30-second timeout during shutdown
 - **THEN** the system logs a warning with the number of unflushed writes, forcefully unmounts, and exits; unflushed writes remain in the writeback buffer for recovery on next startup
+
+#### Scenario: Navigation pane children cleanup on shutdown
+- **WHEN** the application performs graceful shutdown on Windows and the navigation pane is registered
+- **THEN** the root node remains registered (persistent by design); child directories are removed as part of normal WinFsp unmount; no additional registry cleanup is needed for children since they are filesystem directories, not registry entries
 
 ### Requirement: Headless mode operation
 The system SHALL support running without the `desktop` feature flag, performing the full mount lifecycle (authentication, mounting, sync, graceful shutdown) as a foreground terminal process without Tauri or any graphical UI. The system SHALL also support running in headless mode with the `desktop` feature when `--headless` is passed. On Windows, headless mode SHALL exit with a clear error message instead of silently running as an idle process.
