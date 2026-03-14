@@ -157,22 +157,6 @@ pub fn deep_link_failed(app: &AppHandle, reason: &str) {
     );
 }
 
-pub fn collab_gate_timeout(app: &AppHandle, file_name: &str) {
-    send(
-        app,
-        "Collaborative Editing",
-        &format!("No response received for '{file_name}'. The file was opened locally."),
-    );
-}
-
-pub fn collab_open_failed(app: &AppHandle, file_name: &str, reason: &str) {
-    send(
-        app,
-        "Collaborative Editing",
-        &format!("Could not open '{file_name}' online: {reason}. Opening locally instead."),
-    );
-}
-
 pub fn files_recovered(app: &AppHandle, count: usize, path: &str) {
     send(
         app,
