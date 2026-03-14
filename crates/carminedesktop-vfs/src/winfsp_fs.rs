@@ -1047,6 +1047,37 @@ impl WinFspMountHandle {
             .sqlite
             .upsert_item(ROOT_INODE, &drive_id, &root_item, None)?;
 
+        // 2b. Pre-fetch root children to avoid blocking Explorer navigation pane enumeration.
+        // Without this, the first `list_children(ROOT_INODE)` hits the Graph API synchronously,
+        // causing a ~10s delay when Explorer enumerates the navigation pane on cold cache.
+        match tokio::task::block_in_place(|| {
+            rt.block_on(graph.list_children(&drive_id, &root_item.id))
+        }) {
+            Ok(children) => {
+                let mut children_map = std::collections::HashMap::new();
+                for item in &children {
+                    let child_ino = inodes.allocate(&item.id);
+                    children_map.insert(item.name.clone(), child_ino);
+                    cache.memory.insert(child_ino, item.clone());
+                    let _ = cache
+                        .sqlite
+                        .upsert_item(child_ino, &drive_id, item, Some(ROOT_INODE));
+                }
+                cache
+                    .memory
+                    .insert_with_children(ROOT_INODE, root_item.clone(), children_map);
+                tracing::info!(
+                    "pre-fetched {} root children for {drive_id}",
+                    children.len()
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "failed to pre-fetch root children: {e} — Explorer may be slow on first access"
+                );
+            }
+        }
+
         // 3. Create filesystem context.
         let stored_handle = sync_handle.clone();
         let fs = CarmineDesktopWinFsp::new(
