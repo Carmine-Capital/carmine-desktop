@@ -844,21 +844,23 @@ fn lookup_cached_item(
 
 /// Environment variable used as a recursion guard to prevent infinite loops
 /// when CloudMount is invoked as a file handler but cannot find the original handler.
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 const OPEN_GUARD_ENV: &str = "CLOUDMOUNT_OPEN_GUARD";
 
 /// Open a file: if on a CloudMount drive, open online; otherwise fall through to OS handler.
 ///
-/// This is the entry point for Windows file associations. When the user double-clicks
-/// an Office file, Windows invokes `CloudMount.exe --open <path>`. If the path is
+/// This is the entry point for file associations. When the user double-clicks
+/// an Office file, the OS invokes `cloudmount --open <path>`. If the path is
 /// inside a CloudMount mount, we resolve it to SharePoint and open online. If not,
 /// we pass through to the OS default handler (e.g. local Office installation).
 #[tauri::command]
 pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
-    // P1 Fix 3: Recursion guard — if we've been re-invoked in a fallback chain, bail immediately
-    #[cfg(target_os = "windows")]
+    tracing::debug!("open_file: invoked with path={path}");
+
+    // Recursion guard — if we've been re-invoked in a fallback chain, bail immediately
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     if std::env::var(OPEN_GUARD_ENV).is_ok() {
-        tracing::error!(
+        tracing::debug!(
             "open_file: recursion guard triggered — CloudMount was re-invoked in fallback chain"
         );
         crate::notify::send(
@@ -902,6 +904,8 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                 .and_then(|e| e.to_str())
                 .map(|e| format!(".{e}"))
                 .unwrap_or_default();
+
+            tracing::debug!("open_file: looking up previous handler for {ext}");
 
             if let Some(progid) = crate::shell_integration::get_previous_handler(&ext)
                 && let Some(cmd_template) = crate::shell_integration::get_progid_command(&progid)
@@ -953,7 +957,46 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
             }
         }
 
-        // Fall through to default OS handler for non-Windows or if previous handler failed
+        // On Linux: try the previous handler from saved .desktop file
+        #[cfg(target_os = "linux")]
+        {
+            let ext = std::path::Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+
+            tracing::debug!("open_file: looking up previous handler for {ext}");
+
+            if let Some(desktop_name) = crate::shell_integration::get_previous_handler(&ext)
+                && let Some(exec_template) =
+                    crate::shell_integration::get_desktop_exec(&desktop_name)
+            {
+                tracing::info!(
+                    "open_file: invoking previous handler from {desktop_name}: {exec_template}"
+                );
+
+                // Set recursion guard before spawning
+                // SAFETY: single-threaded access to this env var
+                unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
+
+                let result = launch_desktop_exec(&exec_template, &path);
+
+                // SAFETY: single-threaded access to this env var
+                unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
+
+                match result {
+                    Ok(()) => return Ok(()),
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to invoke previous handler: {e}, trying other fallbacks"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Fall through to default OS handler for non-Windows/Linux or if previous handler failed
         #[cfg(target_os = "windows")]
         {
             let ext = std::path::Path::new(&path)
@@ -962,26 +1005,16 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                 .map(|e| format!(".{e}"))
                 .unwrap_or_default();
 
-            // P0 Fix 2: Do NOT call open_with_clean_env for extensions we handle — that would
-            // cause an infinite loop since ShellExecute would find CloudMount as the handler.
+            // Use guard-protected OS fallback for ALL extensions (handled or not).
+            // The recursion guard prevents infinite loops: if the OS re-invokes
+            // CloudMount, we bail at the top of open_file(). The OS then falls
+            // through to the next registered handler (e.g. Excel).
             if crate::shell_integration::is_handled_extension(&ext) {
-                tracing::error!(
-                    "open_file: no previous handler found for {ext}, refusing to use OS fallback to avoid infinite loop"
+                tracing::debug!(
+                    "open_file: no previous handler found for {ext}, using guard-protected OS fallback"
                 );
-                crate::notify::send(
-                    &app,
-                    "Cannot open file",
-                    &format!(
-                        "CloudMount could not find the original application to open {ext} files. \
-                         Please ensure Microsoft Office or another compatible application is installed."
-                    ),
-                );
-                return Err(format!(
-                    "no previous handler found for {ext} — cannot use OS fallback for handled extension"
-                ));
             }
 
-            // For extensions we don't handle, set the recursion guard and use OS fallback
             // SAFETY: single-threaded access to this env var, guarded by cfg(windows)
             unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
             let result = crate::open_with_clean_env(&path)
@@ -991,12 +1024,197 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
             result
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
-            crate::open_with_clean_env(&path)
-                .map_err(|e| format!("failed to open with OS handler: {e}"))
+            let ext = std::path::Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+
+            // Use guard-protected OS fallback for ALL extensions (handled or not).
+            // The recursion guard prevents infinite loops: if xdg-open re-invokes
+            // CloudMount, we bail at the top of open_file(). The OS then falls
+            // through to the next registered handler (e.g. LibreOffice).
+            if crate::shell_integration::is_handled_extension(&ext) {
+                tracing::debug!(
+                    "open_file: no previous handler found for {ext}, using guard-protected OS fallback"
+                );
+            }
+
+            // SAFETY: single-threaded access to this env var
+            unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
+            let result = crate::open_with_clean_env(&path)
+                .map_err(|e| format!("failed to open with OS handler: {e}"));
+            // SAFETY: single-threaded access to this env var
+            unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
+            result
+        }
+
+        // On macOS: try the previous handler (resolved via bundle ID → app path)
+        #[cfg(target_os = "macos")]
+        {
+            let ext = std::path::Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+
+            tracing::debug!("open_file: looking up previous handler for {ext}");
+
+            if let Some(bundle_id) = crate::shell_integration::get_previous_handler(&ext) {
+                // Resolve bundle ID to app path and launch with `open -a`
+                if let Some(app_path) = crate::shell_integration::resolve_app_path(&bundle_id) {
+                    tracing::info!(
+                        "open_file: invoking previous handler {bundle_id} at {app_path}"
+                    );
+
+                    // Set recursion guard before spawning
+                    // SAFETY: single-threaded access to this env var
+                    unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
+
+                    let result = std::process::Command::new("open")
+                        .args(["-a", &app_path, &path])
+                        .spawn();
+
+                    // SAFETY: single-threaded access to this env var
+                    unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
+
+                    match result {
+                        Ok(_) => return Ok(()),
+                        Err(e) => {
+                            tracing::warn!(
+                                "failed to invoke previous handler via open -a: {e}, trying other fallbacks"
+                            );
+                        }
+                    }
+                } else {
+                    // Try launching directly with the bundle ID via `open -b`
+                    tracing::info!(
+                        "open_file: trying to launch previous handler by bundle ID {bundle_id}"
+                    );
+
+                    // SAFETY: single-threaded access to this env var
+                    unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
+
+                    let result = std::process::Command::new("open")
+                        .args(["-b", &bundle_id, &path])
+                        .spawn();
+
+                    // SAFETY: single-threaded access to this env var
+                    unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
+
+                    match result {
+                        Ok(_) => return Ok(()),
+                        Err(e) => {
+                            tracing::warn!(
+                                "failed to invoke previous handler via open -b: {e}, trying other fallbacks"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Use guard-protected OS fallback for ALL extensions (handled or not).
+            // The recursion guard prevents infinite loops: if Launch Services
+            // re-invokes CloudMount, we bail at the top of open_file(). The OS
+            // then falls through to the next registered handler (e.g. MS Office).
+            if crate::shell_integration::is_handled_extension(&ext) {
+                tracing::debug!(
+                    "open_file: no previous handler found for {ext}, using guard-protected OS fallback"
+                );
+            }
+
+            // SAFETY: single-threaded access to this env var
+            unsafe { std::env::set_var(OPEN_GUARD_ENV, "1") };
+            let result = crate::open_with_clean_env(&path)
+                .map_err(|e| format!("failed to open with OS handler: {e}"));
+            // SAFETY: single-threaded access to this env var
+            unsafe { std::env::remove_var(OPEN_GUARD_ENV) };
+            result
         }
     }
+}
+
+/// Parse and execute a .desktop file Exec= template with the given file path.
+///
+/// Handles common Exec field codes:
+/// - `%f` / `%F`: single file path
+/// - `%u` / `%U`: file URI
+/// - No field code: append file path as argument
+///
+/// Strips LD_LIBRARY_PATH and LD_PRELOAD for AppImage compatibility.
+#[cfg(target_os = "linux")]
+fn launch_desktop_exec(exec_template: &str, file_path: &str) -> Result<(), String> {
+    // Split the Exec line into tokens, respecting quotes
+    let tokens = shell_tokenize(exec_template);
+    if tokens.is_empty() {
+        return Err("empty Exec= template".to_string());
+    }
+
+    let exe = &tokens[0];
+    let mut args: Vec<String> = Vec::new();
+    let mut has_field_code = false;
+
+    for token in &tokens[1..] {
+        match token.as_str() {
+            "%f" | "%F" => {
+                args.push(file_path.to_string());
+                has_field_code = true;
+            }
+            "%u" | "%U" => {
+                // Convert path to file:// URI
+                let uri = format!("file://{file_path}");
+                args.push(uri);
+                has_field_code = true;
+            }
+            // Skip other desktop entry field codes (%i, %c, %k, etc.)
+            s if s.starts_with('%') && s.len() == 2 => {}
+            other => args.push(other.to_string()),
+        }
+    }
+
+    // If no field code was found, append the file path
+    if !has_field_code {
+        args.push(file_path.to_string());
+    }
+
+    tracing::debug!("launch_desktop_exec: {exe} {args:?}");
+
+    std::process::Command::new(exe)
+        .args(&args)
+        .env_remove("LD_LIBRARY_PATH")
+        .env_remove("LD_PRELOAD")
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("failed to spawn {exe}: {e}"))
+}
+
+/// Simple shell-like tokenizer for .desktop Exec= lines.
+///
+/// Splits on whitespace but respects double-quoted strings.
+/// Does not handle escape sequences (not needed for .desktop files).
+#[cfg(target_os = "linux")]
+fn shell_tokenize(s: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for ch in s.chars() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            ' ' | '\t' if !in_quotes => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
 /// Find a child item by name under a parent inode.

@@ -80,6 +80,7 @@ impl TestFixture {
             None,
             None,
             None,
+            false,
         )
         .expect("FUSE mount failed — is FUSE available?");
 
@@ -217,6 +218,7 @@ async fn mount_fails_when_root_fetch_returns_error() {
         None,
         None,
         None,
+        false,
     );
 
     assert!(result.is_err(), "mount should fail when root fetch fails");

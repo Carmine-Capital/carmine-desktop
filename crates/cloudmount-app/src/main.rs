@@ -690,8 +690,7 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
             }
         }
 
-        // Reconcile Windows file association registration with config.
-        #[cfg(target_os = "windows")]
+        // Reconcile file association registration with config.
         {
             let register_file_assoc = {
                 let config = state.effective_config.lock().unwrap();
@@ -701,10 +700,10 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
                 if let Err(e) = shell_integration::register_file_associations() {
                     tracing::warn!("file association registration failed: {e}");
                 }
-            } else if shell_integration::are_file_associations_registered() {
-                if let Err(e) = shell_integration::unregister_file_associations() {
-                    tracing::warn!("file association unregistration failed: {e}");
-                }
+            } else if shell_integration::are_file_associations_registered()
+                && let Err(e) = shell_integration::unregister_file_associations()
+            {
+                tracing::warn!("file association unregistration failed: {e}");
             }
         }
 
@@ -1180,6 +1179,8 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
     };
     let (collab_tx, collab_rx) = tokio::sync::mpsc::channel(8);
 
+    let file_associations_registered = shell_integration::are_file_associations_registered();
+
     let mut handle = MountHandle::mount(
         state.graph.clone(),
         ctx.cache.clone(),
@@ -1191,6 +1192,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         Some(sync_handle),
         Some(collab_tx),
         Some(collab_config),
+        file_associations_registered,
     )
     .map_err(|e| e.to_string())?;
 
@@ -1704,6 +1706,7 @@ fn run_headless(
                     None, // no sync processor in headless mode
                     None, // no collab channel in headless mode
                     None,
+                    false, // no file associations in headless mode
                 ) {
                     Ok(handle) => {
                         tracing::info!("mount '{}' started at {mountpoint}", mount_config.name);
