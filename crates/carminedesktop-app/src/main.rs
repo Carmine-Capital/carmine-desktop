@@ -713,7 +713,15 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
             }
         }
 
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if !fuse_available() {
+            notify::fuse_unavailable(app);
+        }
+        start_all_mounts(app);
+
         // Reconcile Explorer navigation pane registration with config.
+        // Placed after start_all_mounts so WinFsp is serving before Explorer
+        // is notified via SHChangeNotify (on first registration).
         #[cfg(target_os = "windows")]
         {
             let (nav_pane_enabled, cloud_root) = {
@@ -723,7 +731,7 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
             };
             if nav_pane_enabled {
                 if let Err(e) =
-                    shell_integration::register_nav_pane(std::path::Path::new(&cloud_root))
+                    shell_integration::ensure_nav_pane(std::path::Path::new(&cloud_root))
                 {
                     tracing::warn!("Explorer navigation pane registration failed: {e}");
                 }
@@ -734,11 +742,6 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
             }
         }
 
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        if !fuse_available() {
-            notify::fuse_unavailable(app);
-        }
-        start_all_mounts(app);
         run_crash_recovery(app);
         start_delta_sync(app);
         // Only spawn periodic update checker if the updater endpoint is configured

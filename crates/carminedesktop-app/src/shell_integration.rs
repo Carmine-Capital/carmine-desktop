@@ -468,7 +468,14 @@ pub fn register_nav_pane(cloud_root: &std::path::Path) -> carminedesktop_core::R
     // ShellFolder
     let (shell_folder_key, _) = clsid_key.create_subkey("ShellFolder")?;
     shell_folder_key.set_value("FolderValueFlags", &0x28u32)?;
-    shell_folder_key.set_value("Attributes", &0xF080004Du32)?;
+    // SFGAO_FILESYSTEM | SFGAO_FOLDER | SFGAO_FILESYSANCESTOR |
+    // SFGAO_STORAGEANCESTOR | SFGAO_ISSLOW | SFGAO_HASPROPSHEET |
+    // SFGAO_STORAGE | SFGAO_CANLINK | SFGAO_CANCOPY
+    // Notably: SFGAO_HASSUBFOLDER (0x80000000) is omitted to prevent Explorer
+    // from eagerly enumerating WinFsp mount children (Graph API calls).
+    // SFGAO_ISSLOW (0x00004000) signals slow storage so Explorer avoids
+    // aggressive prefetching.
+    shell_folder_key.set_value("Attributes", &0x7080404Du32)?;
 
     // shell\open\command
     let (shell_key, _) = clsid_key.create_subkey("shell")?;
@@ -613,6 +620,36 @@ pub fn update_nav_pane_target(cloud_root: &std::path::Path) -> carminedesktop_co
         cloud_root.display()
     );
     Ok(())
+}
+
+/// Ensure the navigation pane entry is registered and up-to-date.
+///
+/// Compares the current `TargetFolderPath` in the registry against `cloud_root`.
+/// If the CLSID key exists and the target matches, this is a no-op — avoiding
+/// the costly `SHChangeNotify(SHCNE_ASSOCCHANGED)` that a full
+/// [`register_nav_pane`] call would trigger.
+///
+/// If the entry is missing or the target differs, delegates to
+/// [`register_nav_pane`] (which sends the notification).
+#[cfg(target_os = "windows")]
+pub fn ensure_nav_pane(cloud_root: &std::path::Path) -> carminedesktop_core::Result<()> {
+    let target = cloud_root.to_string_lossy();
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let clsid_path = format!(r"Software\Classes\CLSID\{NAV_PANE_CLSID}");
+
+    if let Ok(clsid_key) = hkcu.open_subkey_with_flags(&clsid_path, KEY_READ) {
+        if let Ok(bag) = clsid_key.open_subkey_with_flags(r"Instance\InitPropertyBag", KEY_READ) {
+            if let Ok(existing_target) = bag.get_value::<String, _>("TargetFolderPath") {
+                if existing_target == target.as_ref() {
+                    tracing::debug!("nav pane already registered with correct target, skipping");
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    register_nav_pane(cloud_root)
 }
 
 // ---------------------------------------------------------------------------
@@ -1547,6 +1584,11 @@ mod tests {
         assert_eq!(inproc_val.vtype, RegType::REG_EXPAND_SZ);
         let threading: String = inproc_key.get_value("ThreadingModel")?;
         assert_eq!(threading, "Both");
+
+        // Verify ShellFolder attributes include SFGAO_ISSLOW and exclude SFGAO_HASSUBFOLDER
+        let shell_folder = clsid_key.open_subkey_with_flags("ShellFolder", KEY_READ)?;
+        let attrs: u32 = shell_folder.get_value("Attributes")?;
+        assert_eq!(attrs, 0x7080404D);
 
         // Verify HideDesktopIcons value
         let hide_path =
