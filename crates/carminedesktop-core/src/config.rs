@@ -71,6 +71,7 @@ impl UserConfig {
                 "collaborative_open" => g.collaborative_open = None,
                 "register_file_associations" => g.register_file_associations = None,
                 "file_handler_overrides" => g.file_handler_overrides = None,
+                "explorer_nav_pane" => g.explorer_nav_pane = None,
                 _ => {}
             }
         }
@@ -182,6 +183,10 @@ pub struct UserGeneralSettings {
     /// Linux, bundle ID on macOS).
     #[serde(default)]
     pub file_handler_overrides: Option<HashMap<String, String>>,
+    /// Show Carmine Desktop in the Windows Explorer navigation pane.
+    /// Default: true on Windows, false on other platforms.
+    #[serde(default)]
+    pub explorer_nav_pane: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,6 +268,9 @@ pub struct EffectiveConfig {
     /// values are handler identifiers (ProgID on Windows, .desktop name on
     /// Linux, bundle ID on macOS). Default: empty.
     pub file_handler_overrides: HashMap<String, String>,
+    /// Show Carmine Desktop in Windows Explorer navigation pane.
+    /// Default: true on Windows, false on other platforms.
+    pub explorer_nav_pane: bool,
 }
 
 impl EffectiveConfig {
@@ -311,6 +319,16 @@ impl EffectiveConfig {
             .and_then(|g| g.file_handler_overrides.clone())
             .unwrap_or_default();
 
+        // Default: true on Windows, false on other platforms
+        #[cfg(target_os = "windows")]
+        let default_nav_pane = true;
+        #[cfg(not(target_os = "windows"))]
+        let default_nav_pane = false;
+
+        let explorer_nav_pane = user_general
+            .and_then(|g| g.explorer_nav_pane)
+            .unwrap_or(default_nav_pane);
+
         Self {
             auto_start,
             cache_max_size,
@@ -325,6 +343,7 @@ impl EffectiveConfig {
             collaborative_open,
             register_file_associations,
             file_handler_overrides,
+            explorer_nav_pane,
         }
     }
 }

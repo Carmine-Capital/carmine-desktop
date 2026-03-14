@@ -7,6 +7,7 @@ function snapshotValues() {
   _savedValues = {
     auto_start: document.getElementById('auto-start').checked,
     notifications: document.getElementById('notifications').checked,
+    explorer_nav_pane: document.getElementById('explorer-nav-pane').checked,
     sync_interval: document.getElementById('sync-interval').value,
     cache_dir: document.getElementById('cache-dir').value,
     cache_max_size: document.getElementById('cache-max-size').value,
@@ -19,6 +20,7 @@ function checkDirty() {
   const dirty =
     _savedValues.auto_start !== document.getElementById('auto-start').checked ||
     _savedValues.notifications !== document.getElementById('notifications').checked ||
+    _savedValues.explorer_nav_pane !== document.getElementById('explorer-nav-pane').checked ||
     _savedValues.sync_interval !== document.getElementById('sync-interval').value ||
     _savedValues.cache_dir !== document.getElementById('cache-dir').value ||
     _savedValues.cache_max_size !== document.getElementById('cache-max-size').value ||
@@ -80,6 +82,12 @@ async function loadSettings() {
     document.getElementById('metadata-ttl').value = String(s.metadata_ttl_secs);
     document.getElementById('log-level').value = s.log_level;
     document.getElementById('account-email').textContent = s.account_display || 'Not signed in';
+    // Show nav pane toggle only on Windows
+    const navPaneField = document.getElementById('nav-pane-field');
+    if (navPaneField && s.platform === 'windows') {
+      navPaneField.style.display = '';
+      document.getElementById('explorer-nav-pane').checked = s.explorer_nav_pane;
+    }
     snapshotValues();
   } catch (e) {
     console.error(e);
@@ -150,6 +158,7 @@ async function saveGeneral() {
       autoStart: document.getElementById('auto-start').checked,
       notifications: document.getElementById('notifications').checked,
       syncIntervalSecs: syncInterval,
+      explorerNavPane: document.getElementById('explorer-nav-pane').checked,
     });
     btn.disabled = false;
     btn.textContent = 'Save';
@@ -405,7 +414,7 @@ document.getElementById('btn-sign-out').addEventListener('click', signOut);
 document.getElementById('btn-clear-cache').addEventListener('click', clearCache);
 document.getElementById('btn-redetect').addEventListener('click', redetectHandlers);
 
-['auto-start', 'notifications', 'sync-interval', 'log-level'].forEach(id =>
+['auto-start', 'notifications', 'explorer-nav-pane', 'sync-interval', 'log-level'].forEach(id =>
   document.getElementById(id).addEventListener('change', checkDirty));
 ['cache-dir', 'cache-max-size', 'metadata-ttl'].forEach(id =>
   document.getElementById(id).addEventListener('input', checkDirty));

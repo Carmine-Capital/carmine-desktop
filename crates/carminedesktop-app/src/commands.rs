@@ -35,6 +35,8 @@ pub struct SettingsInfo {
     pub notifications: bool,
     pub root_dir: String,
     pub account_display: Option<String>,
+    pub explorer_nav_pane: bool,
+    pub platform: String,
 }
 
 #[derive(Serialize)]
@@ -413,6 +415,8 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsInfo, String> {
         notifications: config.notifications,
         root_dir: config.root_dir.clone(),
         account_display,
+        explorer_nav_pane: config.explorer_nav_pane,
+        platform: std::env::consts::OS.to_string(),
     })
 }
 
@@ -428,8 +432,11 @@ pub fn save_settings(
     log_level: Option<String>,
     notifications: Option<bool>,
     root_dir: Option<String>,
+    explorer_nav_pane: Option<bool>,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
+    #[cfg(target_os = "windows")]
+    let root_dir_changed = root_dir.is_some();
 
     {
         let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
@@ -459,6 +466,9 @@ pub fn save_settings(
         if let Some(v) = root_dir {
             general.root_dir = Some(v);
         }
+        if let Some(v) = explorer_nav_pane {
+            general.explorer_nav_pane = Some(v);
+        }
 
         let cfg_path = config_file_path().map_err(|e| e.to_string())?;
         user_config
@@ -485,6 +495,32 @@ pub fn save_settings(
             Err(e) => {
                 tracing::warn!("failed to resolve exe path for auto-start: {e}");
                 crate::notify::auto_start_failed(&app, &e.to_string());
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(true) = explorer_nav_pane {
+            let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+            let cloud_root = expand_mount_point(&format!("~/{}", config.root_dir));
+            if let Err(e) =
+                crate::shell_integration::register_nav_pane(std::path::Path::new(&cloud_root))
+            {
+                tracing::warn!("Explorer navigation pane registration failed: {e}");
+            }
+        } else if let Some(false) = explorer_nav_pane
+            && let Err(e) = crate::shell_integration::unregister_nav_pane()
+        {
+            tracing::warn!("Explorer navigation pane unregistration failed: {e}");
+        }
+        if root_dir_changed && crate::shell_integration::is_nav_pane_registered() {
+            let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+            let cloud_root = expand_mount_point(&format!("~/{}", config.root_dir));
+            if let Err(e) = crate::shell_integration::update_nav_pane_target(
+                std::path::Path::new(&cloud_root),
+            ) {
+                tracing::warn!("Explorer navigation pane target update failed: {e}");
             }
         }
     }

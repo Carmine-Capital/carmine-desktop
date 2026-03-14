@@ -713,6 +713,27 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
             }
         }
 
+        // Reconcile Explorer navigation pane registration with config.
+        #[cfg(target_os = "windows")]
+        {
+            let (nav_pane_enabled, cloud_root) = {
+                let config = state.effective_config.lock().unwrap();
+                let root = expand_mount_point(&format!("~/{}", config.root_dir));
+                (config.explorer_nav_pane, root)
+            };
+            if nav_pane_enabled {
+                if let Err(e) =
+                    shell_integration::register_nav_pane(std::path::Path::new(&cloud_root))
+                {
+                    tracing::warn!("Explorer navigation pane registration failed: {e}");
+                }
+            } else if shell_integration::is_nav_pane_registered()
+                && let Err(e) = shell_integration::unregister_nav_pane()
+            {
+                tracing::warn!("Explorer navigation pane unregistration failed: {e}");
+            }
+        }
+
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         if !fuse_available() {
             notify::fuse_unavailable(app);
