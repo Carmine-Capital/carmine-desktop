@@ -148,32 +148,30 @@ impl MountHandle {
 
         // Helper: create filesystem, extract observer, and mount.
         // Returns (session, observer) on success.
-        let try_mount = |auto_unmount: bool,
-                         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
-                         sync_handle: Option<crate::sync_processor::SyncHandle>| {
-            let fs = CarmineDesktopFs::new(
-                graph.clone(),
-                cache.clone(),
-                inodes.clone(),
-                drive_id.clone(),
-                rt.clone(),
-                event_tx,
-                sync_handle,
-            );
-            let observer = fs.create_delta_observer();
-            let session = fs.mount(mountpoint, auto_unmount)?;
-            observer.set_notifier(session.notifier());
-            Ok::<_, carminedesktop_core::Error>((session, observer))
-        };
+        let try_mount =
+            |auto_unmount: bool,
+             event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
+             sync_handle: Option<crate::sync_processor::SyncHandle>| {
+                let fs = CarmineDesktopFs::new(
+                    graph.clone(),
+                    cache.clone(),
+                    inodes.clone(),
+                    drive_id.clone(),
+                    rt.clone(),
+                    event_tx,
+                    sync_handle,
+                );
+                let observer = fs.create_delta_observer();
+                let session = fs.mount(mountpoint, auto_unmount)?;
+                observer.set_notifier(session.notifier());
+                Ok::<_, carminedesktop_core::Error>((session, observer))
+            };
 
         // Try with auto_unmount first (crash safety net), fall back without it
         // since it requires fusermount3 + non-Owner ACL which isn't always available.
         let stored_handle = sync_handle.clone();
-        let (session, delta_observer) = match try_mount(
-            true,
-            event_tx.clone(),
-            sync_handle.clone(),
-        ) {
+        let (session, delta_observer) = match try_mount(true, event_tx.clone(), sync_handle.clone())
+        {
             Ok(result) => result,
             Err(_) => {
                 tracing::warn!("auto_unmount not supported, mounting without it");

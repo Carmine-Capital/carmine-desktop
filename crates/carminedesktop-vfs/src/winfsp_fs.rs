@@ -348,10 +348,7 @@ impl FileSystemContext for CarmineDesktopWinFsp {
         let fh = if is_dir {
             None
         } else {
-            let handle = self
-                .ops
-                .open_file(ino)
-                .map_err(vfs_err_to_ntstatus)?;
+            let handle = self.ops.open_file(ino).map_err(vfs_err_to_ntstatus)?;
             Some(handle)
         };
 
