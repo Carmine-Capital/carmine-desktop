@@ -134,7 +134,8 @@ async fn test_sync_processor_debounce() {
         event_tx: None,
     };
 
-    let (handle, join) = spawn_sync_processor(deps, fast_config());
+    let (handle, join) =
+        spawn_sync_processor(deps, fast_config(), &tokio::runtime::Handle::current());
 
     // Send 10 rapid flush requests for the same inode
     for _ in 0..10 {
@@ -201,7 +202,7 @@ async fn test_sync_processor_concurrency() {
         event_tx: None,
     };
 
-    let (handle, join) = spawn_sync_processor(deps, config);
+    let (handle, join) = spawn_sync_processor(deps, config, &tokio::runtime::Handle::current());
 
     for ino in &inos {
         handle.send(SyncRequest::Flush { ino: *ino });
@@ -274,7 +275,7 @@ async fn test_sync_processor_retry_with_backoff() {
         event_tx: None,
     };
 
-    let (handle, join) = spawn_sync_processor(deps, config);
+    let (handle, join) = spawn_sync_processor(deps, config, &tokio::runtime::Handle::current());
 
     handle.send(SyncRequest::Flush { ino });
 
@@ -343,7 +344,8 @@ async fn test_sync_processor_shutdown() {
         event_tx: None,
     };
 
-    let (handle, join) = spawn_sync_processor(deps, fast_config());
+    let (handle, join) =
+        spawn_sync_processor(deps, fast_config(), &tokio::runtime::Handle::current());
 
     // Enqueue all 3 flushes
     for ino in &inos {
@@ -403,7 +405,8 @@ async fn test_sync_processor_crash_recovery() {
     };
 
     // Spawn processor — it should auto-recover the pending writeback entry
-    let (handle, join) = spawn_sync_processor(deps, fast_config());
+    let (handle, join) =
+        spawn_sync_processor(deps, fast_config(), &tokio::runtime::Handle::current());
 
     // Do NOT send any Flush — recovery should enqueue it automatically
     // Wait a bit for the tick to fire and dispatch the upload
@@ -456,7 +459,8 @@ async fn test_sync_processor_metrics() {
         event_tx: None,
     };
 
-    let (handle, join) = spawn_sync_processor(deps, fast_config());
+    let (handle, join) =
+        spawn_sync_processor(deps, fast_config(), &tokio::runtime::Handle::current());
 
     // Send the same ino multiple times to trigger deduplication
     handle.send(SyncRequest::Flush { ino });
@@ -596,7 +600,8 @@ async fn test_sync_processor_flush_handle_with_sync_processor() {
         drive_id: DRIVE_ID.to_string(),
         event_tx: None,
     };
-    let (sync_handle, join) = spawn_sync_processor(deps, fast_config());
+    let (sync_handle, join) =
+        spawn_sync_processor(deps, fast_config(), &tokio::runtime::Handle::current());
 
     // Clone the handle so we can send Shutdown after moving it into CoreOps
     let shutdown_handle = sync_handle.clone();

@@ -1186,6 +1186,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
             event_tx: Some(ctx.event_tx.clone()),
         },
         carminedesktop_vfs::SyncProcessorConfig::default(),
+        &ctx.rt,
     );
 
     // Read collab config and create the CollabGate channel
@@ -1260,6 +1261,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
             event_tx: Some(ctx.event_tx.clone()),
         },
         carminedesktop_vfs::SyncProcessorConfig::default(),
+        &ctx.rt,
     );
 
     // Read collab config and create the CollabGate channel

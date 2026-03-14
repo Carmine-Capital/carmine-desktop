@@ -117,9 +117,13 @@ fn backoff_duration(retry_count: u32) -> Duration {
 /// Spawn the sync processor task.
 ///
 /// Returns a `SyncHandle` for sending requests and a `JoinHandle` for awaiting termination.
+///
+/// Requires an explicit `tokio::runtime::Handle` because callers may run outside a Tokio
+/// context (e.g. sync Tauri commands on the Windows GUI thread).
 pub fn spawn_sync_processor(
     deps: SyncProcessorDeps,
     config: SyncProcessorConfig,
+    rt: &tokio::runtime::Handle,
 ) -> (SyncHandle, JoinHandle<()>) {
     let (req_tx, req_rx) = mpsc::unbounded_channel::<SyncRequest>();
     let (result_tx, result_rx) = mpsc::channel::<UploadResult>(config.max_concurrent_uploads);
@@ -130,7 +134,7 @@ pub fn spawn_sync_processor(
         metrics_rx,
     };
 
-    let join = tokio::spawn(processor_loop(
+    let join = rt.spawn(processor_loop(
         deps, config, req_rx, result_tx, result_rx, metrics_tx,
     ));
 
