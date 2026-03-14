@@ -517,9 +517,9 @@ pub fn save_settings(
         if root_dir_changed && crate::shell_integration::is_nav_pane_registered() {
             let config = state.effective_config.lock().map_err(|e| e.to_string())?;
             let cloud_root = expand_mount_point(&format!("~/{}", config.root_dir));
-            if let Err(e) = crate::shell_integration::update_nav_pane_target(
-                std::path::Path::new(&cloud_root),
-            ) {
+            if let Err(e) =
+                crate::shell_integration::update_nav_pane_target(std::path::Path::new(&cloud_root))
+            {
                 tracing::warn!("Explorer navigation pane target update failed: {e}");
             }
         }

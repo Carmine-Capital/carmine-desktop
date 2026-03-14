@@ -13,7 +13,9 @@
 #[cfg(target_os = "windows")]
 use winreg::RegKey;
 #[cfg(target_os = "windows")]
-use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
+use winreg::RegValue;
+#[cfg(target_os = "windows")]
+use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, RegType};
 
 /// Office file extensions we register as handlers for.
 #[cfg(target_os = "windows")]
@@ -435,9 +437,22 @@ pub fn register_nav_pane(cloud_root: &std::path::Path) -> carminedesktop_core::R
     let (icon_key, _) = clsid_key.create_subkey("DefaultIcon")?;
     icon_key.set_value("", &format!("{exe_str},0"))?;
 
-    // InProcServer32 — must be a literal (unexpanded) string
+    // InProcServer32 — REG_EXPAND_SZ so that %SystemRoot% is expanded by COM
     let (inproc_key, _) = clsid_key.create_subkey("InProcServer32")?;
-    inproc_key.set_value("", &r"%SystemRoot%\system32\shell32.dll")?;
+    let shell32_path = r"%SystemRoot%\system32\shell32.dll";
+    let wide: Vec<u16> = shell32_path
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let bytes: Vec<u8> = wide.iter().flat_map(|&w| w.to_le_bytes()).collect();
+    inproc_key.set_raw_value(
+        "",
+        &RegValue {
+            bytes,
+            vtype: RegType::REG_EXPAND_SZ,
+        },
+    )?;
+    inproc_key.set_value("ThreadingModel", &"Both")?;
 
     // Instance
     let (instance_key, _) = clsid_key.create_subkey("Instance")?;
@@ -512,8 +527,7 @@ pub fn unregister_nav_pane() -> carminedesktop_core::Result<()> {
     }
 
     // 2. Remove Desktop\NameSpace entry
-    let ns_parent_path =
-        r"Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace";
+    let ns_parent_path = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace";
     match hkcu.open_subkey_with_flags(ns_parent_path, KEY_READ | KEY_WRITE) {
         Ok(ns_parent) => match ns_parent.delete_subkey_all(NAV_PANE_CLSID) {
             Ok(()) => tracing::debug!("removed Desktop\\NameSpace entry for nav pane"),
@@ -1509,8 +1523,7 @@ mod tests {
         assert_eq!(default_val, "Carmine Desktop");
 
         // Verify TargetFolderPath
-        let prop_bag =
-            clsid_key.open_subkey_with_flags(r"Instance\InitPropertyBag", KEY_READ)?;
+        let prop_bag = clsid_key.open_subkey_with_flags(r"Instance\InitPropertyBag", KEY_READ)?;
         let target: String = prop_bag.get_value("TargetFolderPath")?;
         assert_eq!(target, cloud_root.to_string_lossy().as_ref());
 
@@ -1521,6 +1534,13 @@ mod tests {
         let ns_key = hkcu.open_subkey_with_flags(&ns_path, KEY_READ)?;
         let ns_val: String = ns_key.get_value("")?;
         assert_eq!(ns_val, "Carmine Desktop");
+
+        // Verify InProcServer32 is REG_EXPAND_SZ and ThreadingModel is set
+        let inproc_key = clsid_key.open_subkey_with_flags("InProcServer32", KEY_READ)?;
+        let inproc_val = inproc_key.get_raw_value("")?;
+        assert_eq!(inproc_val.vtype, RegType::REG_EXPAND_SZ);
+        let threading: String = inproc_key.get_value("ThreadingModel")?;
+        assert_eq!(threading, "Both");
 
         // Verify HideDesktopIcons value
         let hide_path =
