@@ -41,6 +41,10 @@ jobs:
           echo "WINFSP_INSTALL_DIR=C:\Program Files (x86)\WinFsp" >> $env:GITHUB_ENV
           echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
 
+      - name: Create winfsp.msi placeholder for Tauri build (Windows)
+        if: runner.os == 'Windows'
+        run: New-Item -ItemType File -Path crates/carminedesktop-app/resources/winfsp.msi -Force
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
