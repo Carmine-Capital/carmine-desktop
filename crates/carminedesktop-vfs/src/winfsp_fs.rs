@@ -157,8 +157,7 @@ fn item_to_file_info(item: &DriveItem, handle_size: Option<u64>) -> winfsp::file
     };
 
     // Round up to nearest ALLOC_GRANULARITY (4096) bytes.
-    let allocation_size =
-        (file_size + ALLOC_GRANULARITY - 1) / ALLOC_GRANULARITY * ALLOC_GRANULARITY;
+    let allocation_size = file_size.div_ceil(ALLOC_GRANULARITY) * ALLOC_GRANULARITY;
 
     let file_attributes = if is_dir {
         FILE_ATTRIBUTE_DIRECTORY
@@ -536,25 +535,18 @@ impl FileSystemContext for CarmineDesktopWinFsp {
             Some(_) => true,    // marker is a child name → skip dots and children before marker
         };
 
-        let skip_dotdot = match marker_name.as_deref() {
-            None | Some(".") => false,
-            _ => true,
-        };
+        let skip_dotdot = !matches!(marker_name.as_deref(), None | Some("."));
 
         // Emit "." if not past it.
-        if !skip_dots {
-            if !emit_entry(".", dir_item.as_ref(), true) {
-                DirInfo::<255>::finalize_buffer(buffer, &mut cursor);
-                return Ok(cursor);
-            }
+        if !skip_dots && !emit_entry(".", dir_item.as_ref(), true) {
+            DirInfo::<255>::finalize_buffer(buffer, &mut cursor);
+            return Ok(cursor);
         }
 
         // Emit ".." if not past it.
-        if !skip_dotdot {
-            if !emit_entry("..", dir_item.as_ref(), true) {
-                DirInfo::<255>::finalize_buffer(buffer, &mut cursor);
-                return Ok(cursor);
-            }
+        if !skip_dotdot && !emit_entry("..", dir_item.as_ref(), true) {
+            DirInfo::<255>::finalize_buffer(buffer, &mut cursor);
+            return Ok(cursor);
         }
 
         // For child entries, skip up to and including the marker name.
@@ -567,11 +559,10 @@ impl FileSystemContext for CarmineDesktopWinFsp {
 
         for (_child_ino, item) in &children {
             if !past_marker {
-                if let Some(ref m) = child_marker {
-                    if item.name.eq_ignore_ascii_case(m) {
-                        past_marker = true;
-                        continue; // skip the marker entry itself
-                    }
+                if let Some(ref m) = child_marker
+                    && item.name.eq_ignore_ascii_case(m)
+                {
+                    past_marker = true;
                 }
                 continue;
             }
@@ -786,25 +777,25 @@ impl FileSystemContext for CarmineDesktopWinFsp {
         }
 
         // Execute delete-on-close if flagged.
-        if flags & FSP_CLEANUP_DELETE != 0 {
-            if let Some(fname) = file_name {
-                let components = split_path(fname);
-                if !components.is_empty() {
-                    let (parent_components, name_slice) = components.split_at(components.len() - 1);
-                    let name = &name_slice[0];
+        if flags & FSP_CLEANUP_DELETE != 0
+            && let Some(fname) = file_name
+        {
+            let components = split_path(fname);
+            if !components.is_empty() {
+                let (parent_components, name_slice) = components.split_at(components.len() - 1);
+                let name = &name_slice[0];
 
-                    let parent_ino = if parent_components.is_empty() {
-                        Some(ROOT_INODE)
+                let parent_ino = if parent_components.is_empty() {
+                    Some(ROOT_INODE)
+                } else {
+                    self.ops.resolve_path(parent_components).map(|(ino, _)| ino)
+                };
+
+                if let Some(parent_ino) = parent_ino {
+                    if context.is_dir {
+                        let _ = self.ops.rmdir(parent_ino, name);
                     } else {
-                        self.ops.resolve_path(parent_components).map(|(ino, _)| ino)
-                    };
-
-                    if let Some(parent_ino) = parent_ino {
-                        if context.is_dir {
-                            let _ = self.ops.rmdir(parent_ino, name);
-                        } else {
-                            let _ = self.ops.unlink(parent_ino, name);
-                        }
+                        let _ = self.ops.unlink(parent_ino, name);
                     }
                 }
             }
