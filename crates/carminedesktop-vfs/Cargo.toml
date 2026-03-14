@@ -1,0 +1,33 @@
+[package]
+name = "carminedesktop-vfs"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+carminedesktop-core = { workspace = true }
+carminedesktop-graph = { workspace = true }
+carminedesktop-cache = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+bytes = { workspace = true }
+futures-util = { workspace = true }
+dashmap = { workspace = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+fuser = { workspace = true }
+libc = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winfsp = { workspace = true }
+winfsp-sys = { workspace = true }
+nt-time = { workspace = true }
+windows-sys = { workspace = true }
+winreg = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+wiremock = { workspace = true }
+serde_json = { workspace = true }

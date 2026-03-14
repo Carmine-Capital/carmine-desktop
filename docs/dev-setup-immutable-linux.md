@@ -19,8 +19,8 @@ rpm -q fuse3 fuse-libs
 ## Create a build toolbox
 
 ```bash
-toolbox create cloudmount-build
-toolbox enter cloudmount-build
+toolbox create carminedesktop-build
+toolbox enter carminedesktop-build
 ```
 
 Install build dependencies inside the toolbox:
@@ -49,13 +49,13 @@ sudo dnf install -y \
 ### Headless (no GUI)
 
 ```bash
-toolbox run -c cloudmount-build cargo build -p cloudmount-app --release
+toolbox run -c carminedesktop-build cargo build -p carminedesktop-app --release
 ```
 
 Run on the host:
 
 ```bash
-./target/release/cloudmount-app --headless \
+./target/release/carminedesktop-app --headless \
   --client-id "your-client-id" \
   --tenant-id "your-tenant-id"
 ```
@@ -63,13 +63,13 @@ Run on the host:
 ### Desktop (Tauri GUI)
 
 ```bash
-toolbox run -c cloudmount-build cargo build -p cloudmount-app --release --features desktop
+toolbox run -c carminedesktop-build cargo build -p carminedesktop-app --release --features desktop
 ```
 
 Run on the host:
 
 ```bash
-./target/release/cloudmount-app
+./target/release/carminedesktop-app
 ```
 
 ### AppImage
@@ -77,7 +77,7 @@ Run on the host:
 AppImage bundles all runtime dependencies — ideal for immutable distros since nothing needs to be layered on the host.
 
 ```bash
-toolbox run -c cloudmount-build env \
+toolbox run -c carminedesktop-build env \
   APPIMAGE_EXTRACT_AND_RUN=1 \
   NO_STRIP=true \
   cargo tauri build --features desktop --bundles appimage
@@ -86,7 +86,7 @@ toolbox run -c cloudmount-build env \
 Run on the host:
 
 ```bash
-./target/release/bundle/appimage/CloudMount_0.1.0_amd64.AppImage
+./target/release/bundle/appimage/Carmine Desktop_0.1.0_amd64.AppImage
 ```
 
 The two extra env vars work around toolbox limitations:
@@ -107,7 +107,7 @@ FUSE mounts created inside a toolbox container are isolated in the container's m
 These run fine inside toolbox (no FUSE needed):
 
 ```bash
-toolbox run -c cloudmount-build cargo test --all-targets
-toolbox run -c cloudmount-build cargo clippy --all-targets --all-features
-toolbox run -c cloudmount-build cargo fmt --all -- --check
+toolbox run -c carminedesktop-build cargo test --all-targets
+toolbox run -c carminedesktop-build cargo clippy --all-targets --all-features
+toolbox run -c carminedesktop-build cargo fmt --all -- --check
 ```

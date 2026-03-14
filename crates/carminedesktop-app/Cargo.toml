@@ -1,0 +1,49 @@
+[package]
+name = "carminedesktop-app"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+desktop = ["tauri", "tauri-plugin-dialog", "tauri-plugin-notification", "tauri-plugin-updater", "tauri-plugin-process", "tauri-plugin-opener", "tauri-plugin-deep-link", "tauri-plugin-single-instance", "tauri-build"]
+
+[dependencies]
+carminedesktop-core = { workspace = true }
+carminedesktop-auth = { workspace = true }
+carminedesktop-graph = { workspace = true }
+carminedesktop-cache = { workspace = true }
+carminedesktop-vfs = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dirs = { workspace = true }
+chrono = { workspace = true }
+open = { workspace = true }
+uuid = { workspace = true }
+bytes = { workspace = true }
+clap = { workspace = true }
+dotenvy = { workspace = true }
+tauri = { workspace = true, optional = true }
+tauri-plugin-dialog = { workspace = true, optional = true }
+tauri-plugin-notification = { workspace = true, optional = true }
+tauri-plugin-updater = { workspace = true, optional = true }
+tauri-plugin-process = { workspace = true, optional = true }
+tauri-plugin-opener = { workspace = true, optional = true }
+tauri-plugin-deep-link = { workspace = true, optional = true }
+tauri-plugin-single-instance = { workspace = true, optional = true, features = ["deep-link"] }
+url = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+winreg = { workspace = true }
+
+[build-dependencies]
+tauri-build = { workspace = true, optional = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }

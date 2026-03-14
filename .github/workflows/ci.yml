@@ -64,7 +64,7 @@ jobs:
 
       - name: Build VFS crate (Windows WinFsp)
         if: runner.os == 'Windows'
-        run: cargo build -p cloudmount-vfs --all-targets
+        run: cargo build -p carminedesktop-vfs --all-targets
 
       - name: Test
         run: cargo test --all-targets

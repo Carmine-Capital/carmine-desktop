@@ -1,32 +1,32 @@
-# CLOUDMOUNT
+# CARMINE DESKTOP
 
-CloudMount mounts Microsoft OneDrive and SharePoint document libraries as local filesystems on Linux, macOS, and Windows. Rust 2024 workspace with 6 crates, Tauri desktop app with system tray. Organizational Microsoft 365 accounts only (v1).
+Carmine Desktop mounts Microsoft OneDrive and SharePoint document libraries as local filesystems on Linux, macOS, and Windows. Rust 2024 workspace with 6 crates, Tauri desktop app with system tray. Organizational Microsoft 365 accounts only (v1).
 
 ## STRUCTURE
 
 ```
 crates/
-├── cloudmount-app/      # Tauri entry point — runtime orchestration, commands, tray, notifications
-├── cloudmount-auth/     # OAuth2 PKCE + token storage (keyring → encrypted fallback)
-├── cloudmount-cache/    # Multi-tier cache: memory (DashMap) → SQLite → disk + writeback
-├── cloudmount-core/     # Shared types (DriveItem, Drive, Site, errors) + config system
-├── cloudmount-graph/    # Microsoft Graph API v1.0 client with retry/backoff
-└── cloudmount-vfs/      # VFS: FUSE (Linux/macOS), WinFsp (Windows)
+├── carminedesktop-app/      # Tauri entry point — runtime orchestration, commands, tray, notifications
+├── carminedesktop-auth/     # OAuth2 PKCE + token storage (keyring → encrypted fallback)
+├── carminedesktop-cache/    # Multi-tier cache: memory (DashMap) → SQLite → disk + writeback
+├── carminedesktop-core/     # Shared types (DriveItem, Drive, Site, errors) + config system
+├── carminedesktop-graph/    # Microsoft Graph API v1.0 client with retry/backoff
+└── carminedesktop-vfs/      # VFS: FUSE (Linux/macOS), WinFsp (Windows)
 ```
 
 ## WHERE TO LOOK
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Shared VFS logic | `cloudmount-vfs/src/core_ops.rs` | Both FUSE and WinFsp delegate here — cache lookups, Graph calls, writeback, conflict detection |
+| Shared VFS logic | `carminedesktop-vfs/src/core_ops.rs` | Both FUSE and WinFsp delegate here — cache lookups, Graph calls, writeback, conflict detection |
 | FUSE / WinFsp backends | `fuse_fs.rs` / `winfsp_fs.rs` | Implement platform trait methods, delegate to `CoreOps` |
-| Mount lifecycle | `cloudmount-app/src/main.rs` | `start_mount`, `stop_mount`, `setup_after_launch`, `graceful_shutdown`, `start_delta_sync` |
-| Tauri commands | `cloudmount-app/src/commands.rs` | `#[tauri::command]` fns — register in `invoke_handler!` |
-| Frontend | `cloudmount-app/dist/` | Vanilla JS, no build step. Tauri IPC via `window.__TAURI__.core.invoke()` |
+| Mount lifecycle | `carminedesktop-app/src/main.rs` | `start_mount`, `stop_mount`, `setup_after_launch`, `graceful_shutdown`, `start_delta_sync` |
+| Tauri commands | `carminedesktop-app/src/commands.rs` | `#[tauri::command]` fns — register in `invoke_handler!` |
+| Frontend | `carminedesktop-app/dist/` | Vanilla JS, no build step. Tauri IPC via `window.__TAURI__.core.invoke()` |
 
 ## CONVENTIONS
 
-- **Errors**: `thiserror` enum in `cloudmount-core::Error`. Propagate via `cloudmount_core::Result<T>`. `anyhow` for the `Other` variant only.
+- **Errors**: `thiserror` enum in `carminedesktop-core::Error`. Propagate via `carminedesktop_core::Result<T>`. `anyhow` for the `Other` variant only.
 - **Async**: Tokio throughout. VFS uses `rt.block_on()` because FUSE/WinFsp trait methods are sync.
 - **Dependencies**: ALL deps in workspace root `[workspace.dependencies]`. Crates reference `{ workspace = true }`.
 - **Serde**: `#[serde(rename = "camelCase")]` to match Microsoft Graph API JSON field names.
@@ -44,13 +44,13 @@ crates/
 - Tests in `crates/<name>/tests/` — integration test convention, NOT inline `#[cfg(test)]` modules.
 - Naming: `test_<module>_<operation>_<scenario>()` (cache/auth) or `<operation>_<scenario>()` (graph).
 - HTTP mocking: `wiremock` — `MockServer::start().await`, `Mock::given(...).respond_with(...)`.
-- Async tests: `#[tokio::test]`, return `cloudmount_core::Result<()>` for `?` propagation.
+- Async tests: `#[tokio::test]`, return `carminedesktop_core::Result<()>` for `?` propagation.
 - Time-sensitive: `tokio::time::pause()` for deterministic retry testing.
 - File I/O tests: `std::env::temp_dir()` with explicit cleanup before each test.
 
 ## COMMANDS
 
-All cargo commands run inside the `cloudmount-build` toolbox container — see `Makefile` for targets (`make build`, `make test`, `make clippy`, `make check`). The app itself must run on the host (FUSE mounts are invisible inside toolbox).
+All cargo commands run inside the `carminedesktop-build` toolbox container — see `Makefile` for targets (`make build`, `make test`, `make clippy`, `make check`). The app itself must run on the host (FUSE mounts are invisible inside toolbox).
 
 GitHub interactions use the `gh` CLI (not GitHub MCP).
 

@@ -6,7 +6,7 @@ on:
       app_name:
         description: 'Application name (e.g. "Contoso Drive")'
         required: false
-        default: 'CloudMount'
+        default: 'Carmine Desktop'
       tenant_id:
         description: 'Azure AD tenant ID'
         required: false
@@ -60,10 +60,10 @@ jobs:
       - name: Download WinFsp MSI for bundling (Windows)
         if: runner.os == 'Windows'
         run: |
-          New-Item -ItemType Directory -Force -Path crates/cloudmount-app/resources
+          New-Item -ItemType Directory -Force -Path crates/carminedesktop-app/resources
           $url = "https://github.com/winfsp/winfsp/releases/download/v$($env:WINFSP_MSI_VERSION.Split('.')[0..1] -join '.')/winfsp-$env:WINFSP_MSI_VERSION.msi"
           Write-Host "Downloading WinFsp MSI from $url"
-          Invoke-WebRequest -Uri $url -OutFile crates/cloudmount-app/resources/winfsp.msi
+          Invoke-WebRequest -Uri $url -OutFile crates/carminedesktop-app/resources/winfsp.msi
         shell: pwsh
 
       - name: Generate build/defaults.toml
@@ -101,7 +101,7 @@ jobs:
 
       - name: Build installer
         run: cargo tauri build --features desktop
-        working-directory: crates/cloudmount-app
+        working-directory: crates/carminedesktop-app
 
       - name: Upload artifacts (Linux)
         if: runner.os == 'Linux'

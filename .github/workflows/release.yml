@@ -8,55 +8,45 @@ env:
   CARGO_TERM_COLOR: always
   # Pinned WinFsp version for bundling — update alongside winfsp crate dependency
   WINFSP_MSI_VERSION: "2.0.23075"
+  UPLOAD_HOST: "static.carminecapital.com"
+  UPLOAD_PATH: "/var/www/users/carminec/carmine-desktop"
 
 jobs:
   check-version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Verify tag matches tauri.conf.json version
+        id: extract
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          CONF_VERSION=$(jq -r '.version' crates/cloudmount-app/tauri.conf.json)
+          CONF_VERSION=$(jq -r '.version' crates/carminedesktop-app/tauri.conf.json)
           echo "Tag version:  $TAG_VERSION"
           echo "Conf version: $CONF_VERSION"
           if [ "$TAG_VERSION" != "$CONF_VERSION" ]; then
             echo "::error::Version mismatch: tag=$TAG_VERSION, tauri.conf.json=$CONF_VERSION"
             exit 1
           fi
-
-  create-release:
-    needs: check-version
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      release_id: ${{ steps.create.outputs.id }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create draft release
-        id: create
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          generate_release_notes: true
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
 
   build:
-    needs: create-release
-    permissions:
-      contents: write
+    needs: check-version
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            platform_key: linux-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
+            platform_key: darwin-aarch64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            platform_key: windows-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -85,10 +75,10 @@ jobs:
       - name: Download WinFsp MSI for bundling (Windows)
         if: runner.os == 'Windows'
         run: |
-          New-Item -ItemType Directory -Force -Path crates/cloudmount-app/resources
+          New-Item -ItemType Directory -Force -Path crates/carminedesktop-app/resources
           $url = "https://github.com/winfsp/winfsp/releases/download/v$($env:WINFSP_MSI_VERSION.Split('.')[0..1] -join '.')/winfsp-$env:WINFSP_MSI_VERSION.msi"
           Write-Host "Downloading WinFsp MSI from $url"
-          Invoke-WebRequest -Uri $url -OutFile crates/cloudmount-app/resources/winfsp.msi
+          Invoke-WebRequest -Uri $url -OutFile crates/carminedesktop-app/resources/winfsp.msi
         shell: pwsh
 
       - name: Cache cargo
@@ -101,30 +91,157 @@ jobs:
           key: ${{ runner.os }}-release-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-release-
 
-      - name: Build and upload with tauri-action
+      - name: Build with tauri-action
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --features desktop --target ${{ matrix.target }}
-          projectPath: crates/cloudmount-app
+          projectPath: crates/carminedesktop-app
 
-  publish-release:
-    needs: [create-release, build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Publish release
-        uses: actions/github-script@v7
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          VERSION="${{ needs.check-version.outputs.version }}"
+
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # Tauri produces .AppImage and .AppImage.tar.gz (updater bundle) + .sig
+            cp target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.tar.gz artifacts/ 2>/dev/null || true
+            cp target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.tar.gz.sig artifacts/ 2>/dev/null || true
+            cp target/${{ matrix.target }}/release/bundle/appimage/*.AppImage artifacts/ 2>/dev/null || true
+            cp target/${{ matrix.target }}/release/bundle/deb/*.deb artifacts/ 2>/dev/null || true
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            cp target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz artifacts/ 2>/dev/null || true
+            cp target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz.sig artifacts/ 2>/dev/null || true
+            cp target/${{ matrix.target }}/release/bundle/dmg/*.dmg artifacts/ 2>/dev/null || true
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            cp target/${{ matrix.target }}/release/bundle/msi/*.msi artifacts/ 2>/dev/null || true
+            cp target/${{ matrix.target }}/release/bundle/msi/*.msi.zip artifacts/ 2>/dev/null || true
+            cp target/${{ matrix.target }}/release/bundle/msi/*.msi.zip.sig artifacts/ 2>/dev/null || true
+            cp target/${{ matrix.target }}/release/bundle/nsis/*.exe artifacts/ 2>/dev/null || true
+            cp target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip artifacts/ 2>/dev/null || true
+            cp target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip.sig artifacts/ 2>/dev/null || true
+          fi
+
+          echo "=== Collected artifacts ==="
+          ls -la artifacts/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
         with:
-          script: |
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: ${{ needs.create-release.outputs.release_id }},
-              draft: false,
-            });
+          name: release-${{ matrix.platform_key }}
+          path: artifacts/*
+
+  publish:
+    needs: [check-version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List all artifacts
+        run: ls -laR artifacts/
+
+      - name: Generate latest.json manifest
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+          PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          BASE_URL="https://static.carminecapital.com/carmine-desktop"
+
+          # Read signatures from .sig files
+          read_sig() {
+            local sig_file="$1"
+            if [ -f "$sig_file" ]; then
+              cat "$sig_file"
+            else
+              echo ""
+            fi
+          }
+
+          # Find platform-specific updater bundles and signatures
+          # Linux: .AppImage.tar.gz + .sig
+          LINUX_BUNDLE=$(find artifacts -name '*.AppImage.tar.gz' ! -name '*.sig' | head -1)
+          LINUX_SIG=$(read_sig "${LINUX_BUNDLE}.sig" 2>/dev/null || echo "")
+          LINUX_FILENAME=$(basename "$LINUX_BUNDLE" 2>/dev/null || echo "")
+
+          # macOS: .app.tar.gz + .sig
+          MACOS_BUNDLE=$(find artifacts -name '*.app.tar.gz' ! -name '*.sig' | head -1)
+          MACOS_SIG=$(read_sig "${MACOS_BUNDLE}.sig" 2>/dev/null || echo "")
+          MACOS_FILENAME=$(basename "$MACOS_BUNDLE" 2>/dev/null || echo "")
+
+          # Windows: .msi.zip or .nsis.zip + .sig
+          WIN_BUNDLE=$(find artifacts -name '*.msi.zip' ! -name '*.sig' | head -1)
+          if [ -z "$WIN_BUNDLE" ]; then
+            WIN_BUNDLE=$(find artifacts -name '*.nsis.zip' ! -name '*.sig' | head -1)
+          fi
+          WIN_SIG=$(read_sig "${WIN_BUNDLE}.sig" 2>/dev/null || echo "")
+          WIN_FILENAME=$(basename "$WIN_BUNDLE" 2>/dev/null || echo "")
+
+          # Build latest.json for Tauri updater
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "Release v${VERSION}" \
+            --arg pub_date "$PUB_DATE" \
+            --arg linux_sig "$LINUX_SIG" \
+            --arg linux_url "${BASE_URL}/${LINUX_FILENAME}" \
+            --arg macos_sig "$MACOS_SIG" \
+            --arg macos_url "${BASE_URL}/${MACOS_FILENAME}" \
+            --arg win_sig "$WIN_SIG" \
+            --arg win_url "${BASE_URL}/${WIN_FILENAME}" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "linux-x86_64": {
+                  signature: $linux_sig,
+                  url: $linux_url
+                },
+                "darwin-x86_64": {
+                  signature: $macos_sig,
+                  url: $macos_url
+                },
+                "darwin-aarch64": {
+                  signature: $macos_sig,
+                  url: $macos_url
+                },
+                "windows-x86_64": {
+                  signature: $win_sig,
+                  url: $win_url
+                }
+              }
+            }' > artifacts/latest.json
+
+          echo "=== latest.json ==="
+          cat artifacts/latest.json
+
+      - name: Upload to private server
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          # Set up SSH key
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ env.UPLOAD_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+          # Upload all artifacts + manifest via rsync
+          rsync -avz --chmod=D755,F644 \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" \
+            artifacts/ \
+            "carminec@${{ env.UPLOAD_HOST }}:${{ env.UPLOAD_PATH }}/"
+
+          echo "=== Upload complete ==="
+          echo "Artifacts available at: https://${{ env.UPLOAD_HOST }}/carmine-desktop/"
+          echo "Updater manifest: https://${{ env.UPLOAD_HOST }}/carmine-desktop/latest.json"
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

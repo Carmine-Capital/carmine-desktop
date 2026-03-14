@@ -1,25 +1,25 @@
 # Azure AD App Registration
 
-This document describes the official CloudMount app registration for developers contributing to or building the project.
+This document describes the official Carmine Desktop app registration for developers contributing to or building the project.
 
 ## Official App Registration
 
-CloudMount uses a single, shared Azure AD app registration:
+Carmine Desktop uses a single, shared Azure AD app registration:
 
 - **Client ID**: `8ebe3ef7-f509-4146-8fef-c9b5d7c22252`
 - **Supported account types**: Microsoft 365 org accounts and personal Microsoft accounts (`AzureADandPersonalMicrosoftAccount`)
 - **Redirect URI**: `http://localhost:8400/callback` (Public client/native)
 
-This client ID is hardcoded in `crates/cloudmount-app/src/main.rs` as `CLIENT_ID`. No build-time configuration is required.
+This client ID is hardcoded in `crates/carminedesktop-app/src/main.rs` as `CLIENT_ID`. No build-time configuration is required.
 
 ## For Local Development
 
 No Azure AD setup is needed for most contributors. The shared client ID works out of the box:
 
 ```bash
-cargo run -p cloudmount-app -- --help
-cargo run -p cloudmount-app  # headless mode
-cargo run -p cloudmount-app --features desktop  # with tray UI
+cargo run -p carminedesktop-app -- --help
+cargo run -p carminedesktop-app  # headless mode
+cargo run -p carminedesktop-app --features desktop  # with tray UI
 ```
 
 ## If You Need Your Own App Registration
@@ -61,9 +61,9 @@ For forks, testing, or enterprise deployments requiring a separate app registrat
 Pass it at runtime — no rebuild required:
 
 ```bash
-cargo run -p cloudmount-app -- --client-id <your-client-id>
+cargo run -p carminedesktop-app -- --client-id <your-client-id>
 # or
-CLOUDMOUNT_CLIENT_ID=<your-client-id> cargo run -p cloudmount-app
+CARMINEDESKTOP_CLIENT_ID=<your-client-id> cargo run -p carminedesktop-app
 ```
 
 ## Permissions Summary

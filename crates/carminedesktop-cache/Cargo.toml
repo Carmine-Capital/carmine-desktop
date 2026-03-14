@@ -1,0 +1,24 @@
+[package]
+name = "carminedesktop-cache"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+carminedesktop-core = { workspace = true }
+carminedesktop-graph = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+rusqlite = { workspace = true }
+dashmap = { workspace = true }
+chrono = { workspace = true }
+bytes = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+wiremock = { workspace = true }
+serde_json = { workspace = true }

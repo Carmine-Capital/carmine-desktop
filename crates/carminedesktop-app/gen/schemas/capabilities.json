@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capabilities for Carmine Desktop","local":true,"windows":["wizard","settings"],"permissions":["core:default","core:window:allow-close","opener:default","dialog:allow-confirm"]}}

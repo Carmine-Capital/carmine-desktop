@@ -558,6 +558,156 @@ dependencies = [
 ]
 
 [[package]]
+name = "carminedesktop-app"
+version = "0.1.0-rc.5"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "carminedesktop-auth",
+ "carminedesktop-cache",
+ "carminedesktop-core",
+ "carminedesktop-graph",
+ "carminedesktop-vfs",
+ "chrono",
+ "clap",
+ "dirs",
+ "dotenvy",
+ "open",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-dialog",
+ "tauri-plugin-notification",
+ "tauri-plugin-opener",
+ "tauri-plugin-process",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tokio",
+ "tokio-util",
+ "toml 0.8.2",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "windows 0.58.0",
+ "winreg 0.52.0",
+ "wiremock",
+]
+
+[[package]]
+name = "carminedesktop-auth"
+version = "0.1.0-rc.5"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "argon2",
+ "base64 0.22.1",
+ "carminedesktop-core",
+ "chrono",
+ "dirs",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "keyring",
+ "rand 0.9.2",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+ "wiremock",
+ "zeroize",
+]
+
+[[package]]
+name = "carminedesktop-cache"
+version = "0.1.0-rc.5"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "carminedesktop-core",
+ "carminedesktop-graph",
+ "chrono",
+ "dashmap",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
+name = "carminedesktop-core"
+version = "0.1.0-rc.5"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dirs",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "toml 0.8.2",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "carminedesktop-graph"
+version = "0.1.0-rc.5"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "carminedesktop-core",
+ "chrono",
+ "futures-util",
+ "rand 0.9.2",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+ "urlencoding",
+ "wiremock",
+]
+
+[[package]]
+name = "carminedesktop-vfs"
+version = "0.1.0-rc.5"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "carminedesktop-cache",
+ "carminedesktop-core",
+ "carminedesktop-graph",
+ "chrono",
+ "dashmap",
+ "fuser",
+ "futures-util",
+ "libc",
+ "nt-time",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "windows-sys 0.59.0",
+ "winfsp",
+ "winfsp-sys",
+ "winreg 0.52.0",
+ "wiremock",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -689,156 +839,6 @@ name = "clap_lex"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
-
-[[package]]
-name = "cloudmount-app"
-version = "0.1.0-rc.5"
-dependencies = [
- "anyhow",
- "bytes",
- "chrono",
- "clap",
- "cloudmount-auth",
- "cloudmount-cache",
- "cloudmount-core",
- "cloudmount-graph",
- "cloudmount-vfs",
- "dirs",
- "dotenvy",
- "open",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-deep-link",
- "tauri-plugin-dialog",
- "tauri-plugin-notification",
- "tauri-plugin-opener",
- "tauri-plugin-process",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tokio",
- "tokio-util",
- "toml 0.8.2",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
- "windows 0.58.0",
- "winreg 0.52.0",
- "wiremock",
-]
-
-[[package]]
-name = "cloudmount-auth"
-version = "0.1.0-rc.5"
-dependencies = [
- "aes-gcm",
- "anyhow",
- "argon2",
- "base64 0.22.1",
- "chrono",
- "cloudmount-core",
- "dirs",
- "http-body-util",
- "hyper",
- "hyper-util",
- "keyring",
- "rand 0.9.2",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
- "url",
- "wiremock",
- "zeroize",
-]
-
-[[package]]
-name = "cloudmount-cache"
-version = "0.1.0-rc.5"
-dependencies = [
- "anyhow",
- "bytes",
- "chrono",
- "cloudmount-core",
- "cloudmount-graph",
- "dashmap",
- "rusqlite",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
- "wiremock",
-]
-
-[[package]]
-name = "cloudmount-core"
-version = "0.1.0-rc.5"
-dependencies = [
- "anyhow",
- "chrono",
- "dirs",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "toml 0.8.2",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "cloudmount-graph"
-version = "0.1.0-rc.5"
-dependencies = [
- "anyhow",
- "bytes",
- "chrono",
- "cloudmount-core",
- "futures-util",
- "rand 0.9.2",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "url",
- "urlencoding",
- "wiremock",
-]
-
-[[package]]
-name = "cloudmount-vfs"
-version = "0.1.0-rc.5"
-dependencies = [
- "anyhow",
- "bytes",
- "chrono",
- "cloudmount-cache",
- "cloudmount-core",
- "cloudmount-graph",
- "dashmap",
- "fuser",
- "futures-util",
- "libc",
- "nt-time",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "windows-sys 0.59.0",
- "winfsp",
- "winfsp-sys",
- "winreg 0.52.0",
- "wiremock",
-]
 
 [[package]]
 name = "colorchoice"

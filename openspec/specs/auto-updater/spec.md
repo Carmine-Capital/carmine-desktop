@@ -29,7 +29,7 @@ The system SHALL check for available updates shortly after application startup i
 
 #### Scenario: Default endpoint for release builds
 - **WHEN** the application is built with the release pipeline and the updater endpoint is configured in `tauri.conf.json`
-- **THEN** the endpoint points to `https://github.com/{owner}/{repo}/releases/latest/download/latest.json`
+- **THEN** the endpoint points to `https://static.carminecapital.com/carmine-desktop/latest.json`
 
 ### Requirement: Periodic update checks
 The system SHALL periodically check for updates while running in desktop mode.

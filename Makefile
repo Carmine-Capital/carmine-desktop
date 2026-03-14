@@ -1,8 +1,8 @@
-# All cargo commands run inside the cloudmount-build toolbox container.
+# All cargo commands run inside the carminedesktop-build toolbox container.
 # The app itself must run on the host (FUSE mounts are invisible inside toolbox).
 # See docs/dev-setup-immutable-linux.md for setup instructions.
 
-TOOLBOX = toolbox run -c cloudmount-build
+TOOLBOX = toolbox run -c carminedesktop-build
 
 .PHONY: build test fmt fmt-check clippy run run-desktop help
 

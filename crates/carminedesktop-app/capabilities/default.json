@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/capabilities.json",
+  "identifier": "default",
+  "description": "Default capabilities for Carmine Desktop",
+  "windows": ["wizard", "settings"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "opener:default",
+    "dialog:allow-confirm"
+  ]
+}
