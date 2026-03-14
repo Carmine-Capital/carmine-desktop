@@ -161,20 +161,3 @@ pub struct CopyMonitorResponse {
     pub resource_id: Option<String>,
     pub error: Option<GraphErrorBody>,
 }
-
-/// Request sent from VFS to Tauri app when a collaborative file is opened
-/// by an interactive shell process.
-#[derive(Debug, Clone)]
-pub struct CollabOpenRequest {
-    pub path: String,
-    pub extension: String,
-    pub item_id: String,
-    pub web_url: Option<String>,
-}
-
-/// Response from Tauri app indicating how to handle the file open.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CollabOpenResponse {
-    OpenLocally,
-    OpenOnline,
-}

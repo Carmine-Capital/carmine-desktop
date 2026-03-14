@@ -9,7 +9,7 @@ pub fn office_uri(extension: &str, direct_url: &str) -> Option<String> {
 
 /// Returns the Office URI scheme for the given file extension.
 fn office_uri_scheme(extension: &str) -> Option<&'static str> {
-    if cfg!(target_os = "linux") {
+    if cfg!(not(target_os = "windows")) {
         return None;
     }
 
@@ -39,24 +39,4 @@ pub fn direct_document_url(drive_web_url: &str, parent_path: &str, name: &str) -
     } else {
         format!("{base}/{relative}/{name}")
     }
-}
-
-/// Returns `true` if the file extension is editable collaboratively via Microsoft 365 Online.
-pub fn is_collaborative(extension: &str) -> bool {
-    matches!(
-        extension.to_ascii_lowercase().as_str(),
-        ".doc"
-            | ".docx"
-            | ".docm"
-            | ".xls"
-            | ".xlsx"
-            | ".xlsm"
-            | ".ppt"
-            | ".pptx"
-            | ".pptm"
-            | ".odt"
-            | ".ods"
-            | ".odp"
-            | ".vsdx"
-    )
 }
