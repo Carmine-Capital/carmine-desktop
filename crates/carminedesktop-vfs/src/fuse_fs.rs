@@ -89,13 +89,9 @@ impl CarmineDesktopFs {
         cache: Arc<CacheManager>,
         inodes: Arc<InodeTable>,
         drive_id: String,
-        mountpoint: &str,
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
         sync_handle: Option<crate::sync_processor::SyncHandle>,
-        collab_tx: Option<crate::core_ops::CollabSender>,
-        collab_config: Option<carminedesktop_core::config::CollaborativeOpenConfig>,
-        file_associations_registered: bool,
     ) -> Self {
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
@@ -114,20 +110,12 @@ impl CarmineDesktopFs {
         });
 
         let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt);
-        ops = ops.with_mountpoint(mountpoint.to_string());
         ops = ops.with_inode_invalidator(invalidator);
-        ops = ops.with_file_associations_registered(file_associations_registered);
         if let Some(tx) = event_tx {
             ops = ops.with_event_sender(tx);
         }
         if let Some(sh) = sync_handle {
             ops = ops.with_sync_handle(sh);
-        }
-        if let Some(tx) = collab_tx {
-            ops = ops.with_collab_sender(tx);
-        }
-        if let Some(cfg) = collab_config {
-            ops = ops.with_collab_config(cfg);
         }
         Self {
             ops,
@@ -231,7 +219,7 @@ impl CarmineDesktopFs {
             VfsError::NotFound => Errno::ENOENT,
             VfsError::NotADirectory => Errno::ENOTDIR,
             VfsError::DirectoryNotEmpty => Errno::ENOTEMPTY,
-            VfsError::PermissionDenied | VfsError::CollabRedirect => Errno::EACCES,
+            VfsError::PermissionDenied => Errno::EACCES,
             VfsError::TimedOut => Errno::ETIMEDOUT,
             VfsError::QuotaExceeded => Errno::ENOSPC,
             VfsError::IoError(_) => Errno::EIO,
@@ -413,10 +401,8 @@ impl Filesystem for CarmineDesktopFs {
         }
     }
 
-    fn open(&self, req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
-        let caller_pid = Some(req.pid());
-        let file_path = self.ops.lookup_item(ino.0).map(|item| item.name.clone());
-        match self.ops.open_file(ino.0, caller_pid, file_path.as_deref()) {
+    fn open(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
+        match self.ops.open_file(ino.0) {
             Ok(fh) => reply.opened(FileHandle(fh), FopenFlags::empty()),
             Err(e) => reply.error(Self::vfs_err_to_errno(e)),
         }
