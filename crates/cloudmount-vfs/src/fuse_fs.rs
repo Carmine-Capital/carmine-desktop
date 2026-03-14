@@ -95,6 +95,7 @@ impl CloudMountFs {
         sync_handle: Option<crate::sync_processor::SyncHandle>,
         collab_tx: Option<crate::core_ops::CollabSender>,
         collab_config: Option<cloudmount_core::config::CollaborativeOpenConfig>,
+        file_associations_registered: bool,
     ) -> Self {
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
@@ -115,6 +116,7 @@ impl CloudMountFs {
         let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt);
         ops = ops.with_mountpoint(mountpoint.to_string());
         ops = ops.with_inode_invalidator(invalidator);
+        ops = ops.with_file_associations_registered(file_associations_registered);
         if let Some(tx) = event_tx {
             ops = ops.with_event_sender(tx);
         }

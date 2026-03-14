@@ -266,14 +266,144 @@ async function clearCache() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// File Associations
+// ---------------------------------------------------------------------------
+
+/** Human-readable labels for handler source */
+const SOURCE_LABELS = {
+  override: 'Manual override',
+  saved: 'Saved',
+  discovered: 'Auto-detected',
+  none: 'Not found',
+};
+
+function renderHandlerList(handlers) {
+  const list = document.getElementById('handler-list');
+  list.innerHTML = '';
+
+  handlers.forEach(h => {
+    const li = document.createElement('li');
+    li.className = 'handler-item';
+
+    const info = document.createElement('div');
+    info.className = 'handler-info';
+
+    const extEl = document.createElement('span');
+    extEl.className = 'handler-ext';
+    extEl.textContent = h.extension;
+    info.appendChild(extEl);
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'handler-name';
+    nameEl.textContent = h.handler_name || 'None';
+    info.appendChild(nameEl);
+
+    const sourceEl = document.createElement('span');
+    sourceEl.className = 'handler-source badge';
+    sourceEl.textContent = SOURCE_LABELS[h.source] || h.source;
+    info.appendChild(sourceEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'handler-actions';
+
+    const overrideInput = document.createElement('input');
+    overrideInput.type = 'text';
+    overrideInput.className = 'handler-override-input';
+    overrideInput.placeholder = 'Handler ID';
+    overrideInput.value = h.source === 'override' ? h.handler_id : '';
+    overrideInput.title = 'Enter handler identifier (ProgID, .desktop file, or bundle ID)';
+
+    const setBtn = document.createElement('button');
+    setBtn.className = 'btn-sm';
+    setBtn.textContent = 'Set';
+    setBtn.addEventListener('click', () => saveHandlerOverride(h.extension, overrideInput.value));
+
+    actions.appendChild(overrideInput);
+    actions.appendChild(setBtn);
+
+    if (h.source === 'override') {
+      const clearBtn = document.createElement('button');
+      clearBtn.className = 'btn-sm btn-secondary';
+      clearBtn.textContent = 'Clear';
+      clearBtn.addEventListener('click', () => clearHandlerOverride(h.extension));
+      actions.appendChild(clearBtn);
+    }
+
+    li.appendChild(info);
+    li.appendChild(actions);
+    list.appendChild(li);
+  });
+
+  if (handlers.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'handler-empty';
+    empty.textContent = 'No file handlers found';
+    list.appendChild(empty);
+  }
+}
+
+async function loadFileHandlers() {
+  try {
+    const handlers = await invoke('get_file_handlers');
+    renderHandlerList(handlers);
+  } catch (e) {
+    console.error(e);
+    showStatus('Failed to load file handlers', 'error');
+  }
+}
+
+async function redetectHandlers() {
+  const btn = document.getElementById('btn-redetect');
+  btn.disabled = true;
+  btn.textContent = 'Detecting\u2026';
+  try {
+    const handlers = await invoke('redetect_file_handlers');
+    renderHandlerList(handlers);
+    btn.disabled = false;
+    btn.textContent = 'Re-detect Handlers';
+    showStatus('Handlers re-detected', 'success');
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Re-detect Handlers';
+    showStatus(formatError(e), 'error');
+  }
+}
+
+async function saveHandlerOverride(extension, handlerId) {
+  if (!handlerId.trim()) {
+    showStatus('Please enter a handler identifier', 'error');
+    return;
+  }
+  try {
+    await invoke('save_file_handler_override', { extension, handlerId: handlerId.trim() });
+    showStatus('Handler override saved for ' + extension, 'success');
+    loadFileHandlers();
+  } catch (e) {
+    showStatus(formatError(e), 'error');
+  }
+}
+
+async function clearHandlerOverride(extension) {
+  try {
+    await invoke('clear_file_handler_override', { extension });
+    showStatus('Handler override cleared for ' + extension, 'success');
+    loadFileHandlers();
+  } catch (e) {
+    showStatus(formatError(e), 'error');
+  }
+}
+
 loadSettings().catch(e => showStatus(formatError(e), 'error'));
 loadMounts().catch(e => showStatus(formatError(e), 'error'));
+loadFileHandlers().catch(e => showStatus(formatError(e), 'error'));
 
 document.getElementById('btn-save-general').addEventListener('click', saveGeneral);
 document.getElementById('btn-save-advanced').addEventListener('click', saveAdvanced);
 document.getElementById('btn-add-mount').addEventListener('click', addMount);
 document.getElementById('btn-sign-out').addEventListener('click', signOut);
 document.getElementById('btn-clear-cache').addEventListener('click', clearCache);
+document.getElementById('btn-redetect').addEventListener('click', redetectHandlers);
 
 ['auto-start', 'notifications', 'sync-interval', 'log-level'].forEach(id =>
   document.getElementById(id).addEventListener('change', checkDirty));

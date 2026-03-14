@@ -102,6 +102,7 @@ impl MountHandle {
         sync_handle: Option<crate::sync_processor::SyncHandle>,
         collab_tx: Option<crate::core_ops::CollabSender>,
         collab_config: Option<cloudmount_core::config::CollaborativeOpenConfig>,
+        file_associations_registered: bool,
     ) -> cloudmount_core::Result<Self> {
         let root_item =
             tokio::task::block_in_place(|| rt.block_on(graph.get_item(&drive_id, "root")))
@@ -136,6 +137,7 @@ impl MountHandle {
                     sync_handle,
                     collab_tx,
                     collab_config,
+                    file_associations_registered,
                 );
                 let observer = fs.create_delta_observer();
                 let session = fs.mount(mountpoint, auto_unmount)?;

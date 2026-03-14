@@ -187,7 +187,7 @@ fn app_display_name(_app: &AppHandle) -> String {
     "CloudMount".to_string()
 }
 
-fn send(app: &AppHandle, title: &str, body: &str) {
+pub(crate) fn send(app: &AppHandle, title: &str, body: &str) {
     if let Err(e) = app.notification().builder().title(title).body(body).show() {
         tracing::warn!("failed to send notification '{title}': {e}");
     }

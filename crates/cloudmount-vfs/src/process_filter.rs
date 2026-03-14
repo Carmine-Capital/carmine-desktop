@@ -33,7 +33,10 @@ pub const KNOWN_SHELLS: &[&str] = &[];
 /// unsupported platform) — fail-safe to local open.
 pub fn is_interactive_shell(pid: u32, extra_shells: &[String]) -> bool {
     let Some(name) = resolve_process_name(pid) else {
-        tracing::debug!(pid, "CollabGate process_filter: could not resolve process name");
+        tracing::debug!(
+            pid,
+            "CollabGate process_filter: could not resolve process name"
+        );
         return false;
     };
 

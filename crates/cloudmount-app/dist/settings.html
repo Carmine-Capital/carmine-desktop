@@ -12,6 +12,7 @@
     <div class="tab active" data-panel="general" role="tab" tabindex="0" aria-selected="true" aria-controls="general" id="tab-general">General</div>
     <div class="tab" data-panel="mounts" role="tab" tabindex="-1" aria-selected="false" aria-controls="mounts" id="tab-mounts">Mounts</div>
     <div class="tab" data-panel="account" role="tab" tabindex="-1" aria-selected="false" aria-controls="account" id="tab-account">Account</div>
+    <div class="tab" data-panel="file-handlers" role="tab" tabindex="-1" aria-selected="false" aria-controls="file-handlers" id="tab-file-handlers">File Associations</div>
     <div class="tab" data-panel="advanced" role="tab" tabindex="-1" aria-selected="false" aria-controls="advanced" id="tab-advanced">Advanced</div>
     <div class="tab" data-panel="about" role="tab" tabindex="-1" aria-selected="false" aria-controls="about" id="tab-about">About</div>
   </div>
@@ -50,6 +51,15 @@
     <p id="account-email">Not signed in</p>
     <div class="actions">
       <button id="btn-sign-out" class="btn-danger">Sign Out</button>
+    </div>
+  </div>
+
+  <div id="file-handlers" class="panel" role="tabpanel" aria-labelledby="tab-file-handlers">
+    <p class="section-heading">Application Handlers</p>
+    <p class="handler-description">Choose which application opens each Office file type when the file is not on a CloudMount drive.</p>
+    <ul class="handler-list" id="handler-list"></ul>
+    <div class="actions">
+      <button id="btn-redetect" class="btn-secondary">Re-detect Handlers</button>
     </div>
   </div>
 

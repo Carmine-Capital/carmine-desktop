@@ -1,6 +1,6 @@
 use cloudmount_core::config::{
-    AccountMetadata, EffectiveConfig, MountConfig, UserConfig, UserGeneralSettings,
-    expand_mount_point,
+    expand_mount_point, AccountMetadata, EffectiveConfig, MountConfig, UserConfig,
+    UserGeneralSettings,
 };
 use std::env;
 use std::path::PathBuf;
@@ -162,6 +162,8 @@ fn test_user_config_save_and_load_roundtrip() -> cloudmount_core::Result<()> {
             notifications: Some(false),
             root_dir: None,
             collaborative_open: None,
+            register_file_associations: None,
+            file_handler_overrides: None,
         }),
         mounts: vec![MountConfig {
             id: "user-mount1".to_string(),

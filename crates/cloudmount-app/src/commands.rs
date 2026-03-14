@@ -9,6 +9,8 @@ use cloudmount_core::config::{
 };
 use cloudmount_core::types::DriveItem;
 
+use std::collections::HashMap;
+
 use crate::AppState;
 
 #[derive(Serialize)]
@@ -656,6 +658,168 @@ pub fn get_default_mount_root(app: AppHandle) -> Result<String, String> {
         .into_owned())
 }
 
+// ---------------------------------------------------------------------------
+// File handler overrides
+// ---------------------------------------------------------------------------
+
+/// The extensions we manage handlers for.
+const HANDLED_EXTENSIONS: &[&str] = &[".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt"];
+
+#[derive(Serialize)]
+pub struct FileHandlerInfo {
+    pub extension: String,
+    pub handler_name: String,
+    pub handler_id: String,
+    /// One of: "override", "saved", "discovered", "none"
+    pub source: String,
+}
+
+/// Return handler info for all managed extensions.
+///
+/// Resolution order per extension:
+/// 1. Config override (`file_handler_overrides`)
+/// 2. Saved previous handler (`get_previous_handler`)
+/// 3. Runtime discovery (`discover_office_handler`)
+/// 4. None
+#[tauri::command]
+pub fn get_file_handlers(app: AppHandle) -> Result<Vec<FileHandlerInfo>, String> {
+    let state = app.state::<AppState>();
+    let overrides: HashMap<String, String> = {
+        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+        config.file_handler_overrides.clone()
+    };
+
+    let mut results = Vec::with_capacity(HANDLED_EXTENSIONS.len());
+
+    for &ext in HANDLED_EXTENSIONS {
+        // 1. Config override
+        if let Some(handler_id) = overrides.get(ext) {
+            results.push(FileHandlerInfo {
+                extension: ext.to_string(),
+                handler_name: handler_id.clone(),
+                handler_id: handler_id.clone(),
+                source: "override".to_string(),
+            });
+            continue;
+        }
+
+        // 2. Saved previous handler
+        if let Some(handler_id) = crate::shell_integration::get_previous_handler(ext) {
+            results.push(FileHandlerInfo {
+                extension: ext.to_string(),
+                handler_name: handler_id.clone(),
+                handler_id,
+                source: "saved".to_string(),
+            });
+            continue;
+        }
+
+        // 3. Runtime discovery
+        if let Some(handler_id) = crate::shell_integration::discover_office_handler(ext) {
+            results.push(FileHandlerInfo {
+                extension: ext.to_string(),
+                handler_name: handler_id.clone(),
+                handler_id,
+                source: "discovered".to_string(),
+            });
+            continue;
+        }
+
+        // 4. None
+        results.push(FileHandlerInfo {
+            extension: ext.to_string(),
+            handler_name: String::new(),
+            handler_id: String::new(),
+            source: "none".to_string(),
+        });
+    }
+
+    Ok(results)
+}
+
+/// Re-run handler discovery for all managed extensions.
+///
+/// Returns fresh results ignoring saved handlers — only discovers what is
+/// currently installed on the system.
+#[tauri::command]
+pub fn redetect_file_handlers(_app: AppHandle) -> Result<Vec<FileHandlerInfo>, String> {
+    let mut results = Vec::with_capacity(HANDLED_EXTENSIONS.len());
+
+    for &ext in HANDLED_EXTENSIONS {
+        if let Some(handler_id) = crate::shell_integration::discover_office_handler(ext) {
+            results.push(FileHandlerInfo {
+                extension: ext.to_string(),
+                handler_name: handler_id.clone(),
+                handler_id,
+                source: "discovered".to_string(),
+            });
+        } else {
+            results.push(FileHandlerInfo {
+                extension: ext.to_string(),
+                handler_name: String::new(),
+                handler_id: String::new(),
+                source: "none".to_string(),
+            });
+        }
+    }
+
+    Ok(results)
+}
+
+/// Save a per-extension handler override to config.
+#[tauri::command]
+pub fn save_file_handler_override(
+    app: AppHandle,
+    extension: String,
+    handler_id: String,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+
+    {
+        let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
+        let general = user_config.general.get_or_insert_with(Default::default);
+        let overrides = general.file_handler_overrides.get_or_insert_with(HashMap::new);
+        overrides.insert(extension.clone(), handler_id.clone());
+
+        let cfg_path = config_file_path().map_err(|e| e.to_string())?;
+        user_config
+            .save_to_file(&cfg_path)
+            .map_err(|e| e.to_string())?;
+    }
+
+    rebuild_effective_config(&app)?;
+    tracing::info!("saved handler override for {extension}: {handler_id}");
+    Ok(())
+}
+
+/// Remove a per-extension handler override from config.
+#[tauri::command]
+pub fn clear_file_handler_override(app: AppHandle, extension: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+
+    {
+        let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
+        if let Some(ref mut general) = user_config.general
+            && let Some(ref mut overrides) = general.file_handler_overrides
+        {
+            overrides.remove(&extension);
+            // Clean up empty map
+            if overrides.is_empty() {
+                general.file_handler_overrides = None;
+            }
+        }
+
+        let cfg_path = config_file_path().map_err(|e| e.to_string())?;
+        user_config
+            .save_to_file(&cfg_path)
+            .map_err(|e| e.to_string())?;
+    }
+
+    rebuild_effective_config(&app)?;
+    tracing::info!("cleared handler override for {extension}");
+    Ok(())
+}
+
 fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let user_config = state.user_config.lock().map_err(|e| e.to_string())?;
@@ -708,14 +872,14 @@ pub async fn open_online(app: AppHandle, path: String) -> Result<(), String> {
     // Try the Office URI scheme with a direct document URL (requires the
     // drive's webUrl to construct).  Falls back to the browser if anything
     // in the chain fails.
-    if let Some(direct_url) = build_direct_url(&state.graph, &drive_id, &item).await {
-        if let Some(uri) = cloudmount_core::open_online::office_uri(&extension, &direct_url) {
-            tracing::info!("open_online: launching Office URI {uri}");
-            if crate::open_with_clean_env(&uri).is_ok() {
-                return Ok(());
-            }
-            tracing::warn!("Office URI scheme failed, falling back to browser");
+    if let Some(direct_url) = build_direct_url(&state.graph, &drive_id, &item).await
+        && let Some(uri) = cloudmount_core::open_online::office_uri(&extension, &direct_url)
+    {
+        tracing::info!("open_online: launching Office URI {uri}");
+        if crate::open_with_clean_env(&uri).is_ok() {
+            return Ok(());
         }
+        tracing::warn!("Office URI scheme failed, falling back to browser");
     }
 
     // Fallback: open the _layouts web view URL in the browser.
@@ -840,6 +1004,563 @@ fn lookup_cached_item(
         return Some(item);
     }
     None
+}
+
+/// Environment variable used as a recursion guard to prevent infinite loops
+/// when CloudMount is invoked as a file handler but cannot find the original handler.
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+const OPEN_GUARD_ENV: &str = "CLOUDMOUNT_OPEN_GUARD";
+
+/// Open a file: if on a CloudMount drive, open online; otherwise fall through to OS handler.
+///
+/// This is the entry point for file associations. When the user double-clicks
+/// an Office file, the OS invokes `cloudmount --open <path>`. If the path is
+/// inside a CloudMount mount, we resolve it to SharePoint and open online. If not,
+/// we pass through to the OS default handler (e.g. local Office installation).
+#[tauri::command]
+pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
+    tracing::debug!("open_file: invoked with path={path}");
+
+    // Recursion guard — if we've been re-invoked in a fallback chain, bail immediately
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    if std::env::var(OPEN_GUARD_ENV).is_ok() {
+        tracing::debug!(
+            "open_file: recursion guard triggered — CloudMount was re-invoked in fallback chain"
+        );
+        crate::notify::send(
+            &app,
+            "Cannot open file",
+            "CloudMount detected an infinite loop while trying to open the file. \
+             The original application handler could not be found.",
+        );
+        return Err(
+            "recursion guard: CloudMount was re-invoked while trying to open the file".to_string(),
+        );
+    }
+
+    let state = app.state::<AppState>();
+
+    // Check if the path is inside any CloudMount mount
+    let is_cloudmount_path = {
+        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+        let path_obj = std::path::Path::new(&path);
+        config.mounts.iter().any(|m| {
+            let expanded = expand_mount_point(&m.mount_point);
+            path_obj.starts_with(&expanded)
+        })
+    };
+
+    if is_cloudmount_path {
+        // Path is on a CloudMount drive — delegate to open_online
+        tracing::info!("open_file: path is on CloudMount, delegating to open_online");
+        open_online(app, path).await
+    } else {
+        // Path is NOT on a CloudMount drive — use the previous handler to avoid infinite loop
+        tracing::info!("open_file: path is not on CloudMount, falling through to OS handler");
+
+        // On Windows: try the previous handler first to avoid infinite loop when
+        // CloudMount is registered as the default handler for Office files
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            let ext = std::path::Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+
+            // Check config override first
+            let override_handler = {
+                let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+                config.file_handler_overrides.get(&ext).cloned()
+            };
+
+            if let Some(ref progid) = override_handler
+                && let Some(cmd_template) = crate::shell_integration::get_progid_command(progid)
+            {
+                let cmd = cmd_template.replace("%1", &path);
+                tracing::info!("open_file: using config override handler {progid}: {cmd}");
+
+                let result = if cmd.starts_with('"') {
+                    if let Some(end_quote) = cmd[1..].find('"') {
+                        let exe = &cmd[1..=end_quote];
+                        let args = cmd[end_quote + 2..].trim();
+                        std::process::Command::new(exe).raw_arg(args).spawn()
+                    } else {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "malformed command template",
+                        ))
+                    }
+                } else {
+                    let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
+                    let exe = parts[0];
+                    let args = parts.get(1).unwrap_or(&"");
+                    std::process::Command::new(exe).raw_arg(args).spawn()
+                };
+
+                match result {
+                    Ok(_) => return Ok(()),
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to invoke config override handler: {e}, trying other fallbacks"
+                        );
+                    }
+                }
+            }
+
+            tracing::debug!("open_file: looking up previous handler for {ext}");
+
+            if let Some(progid) = crate::shell_integration::get_previous_handler(&ext)
+                && let Some(cmd_template) = crate::shell_integration::get_progid_command(&progid)
+            {
+                // Parse the command template: typically "C:\...\app.exe" "%1" or similar
+                // Replace %1 with the actual path
+                let cmd = cmd_template.replace("%1", &path);
+
+                tracing::info!("open_file: invoking previous handler: {cmd}");
+
+                // Parse the command line to extract executable and arguments
+                // The command is typically: "C:\path\to\app.exe" args...
+                let result = if cmd.starts_with('"') {
+                    // Quoted executable path
+                    if let Some(end_quote) = cmd[1..].find('"') {
+                        let exe = &cmd[1..=end_quote];
+                        let args = cmd[end_quote + 2..].trim();
+                        std::process::Command::new(exe).raw_arg(args).spawn()
+                    } else {
+                        // Malformed command, fall through
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "malformed command template",
+                        ))
+                    }
+                } else {
+                    // Unquoted — split on first space
+                    let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
+                    let exe = parts[0];
+                    let args = parts.get(1).unwrap_or(&"");
+                    std::process::Command::new(exe).raw_arg(args).spawn()
+                };
+
+                match result {
+                    Ok(_) => return Ok(()),
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to invoke previous handler: {e}, trying other fallbacks"
+                        );
+                    }
+                }
+            }
+        }
+
+        // On Linux: try the previous handler from saved .desktop file
+        #[cfg(target_os = "linux")]
+        {
+            let ext = std::path::Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+
+            // Check config override first
+            let override_handler = {
+                let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+                config.file_handler_overrides.get(&ext).cloned()
+            };
+
+            if let Some(ref desktop_name) = override_handler
+                && let Some(exec_template) =
+                    crate::shell_integration::get_desktop_exec(desktop_name)
+            {
+                tracing::info!(
+                    "open_file: using config override handler {desktop_name}: {exec_template}"
+                );
+
+                match launch_desktop_exec(&exec_template, &path) {
+                    Ok(()) => return Ok(()),
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to invoke config override handler: {e}, trying other fallbacks"
+                        );
+                    }
+                }
+            }
+
+            tracing::debug!("open_file: looking up previous handler for {ext}");
+
+            if let Some(desktop_name) = crate::shell_integration::get_previous_handler(&ext)
+                && let Some(exec_template) =
+                    crate::shell_integration::get_desktop_exec(&desktop_name)
+            {
+                tracing::info!(
+                    "open_file: invoking previous handler from {desktop_name}: {exec_template}"
+                );
+
+                let result = launch_desktop_exec(&exec_template, &path);
+
+                match result {
+                    Ok(()) => return Ok(()),
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to invoke previous handler: {e}, trying other fallbacks"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Fall through to default OS handler for non-Windows/Linux or if previous handler failed
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            let ext = std::path::Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+
+            if crate::shell_integration::is_handled_extension(&ext) {
+                // Try runtime discovery before giving up
+                if let Some(discovered) =
+                    crate::shell_integration::discover_office_handler(&ext)
+                    && let Some(cmd_template) =
+                        crate::shell_integration::get_progid_command(&discovered)
+                {
+                    let cmd = cmd_template.replace("%1", &path);
+                    tracing::info!(
+                        "open_file: using discovered handler {discovered}: {cmd}"
+                    );
+
+                    let result = if cmd.starts_with('"') {
+                        if let Some(end_quote) = cmd[1..].find('"') {
+                            let exe = &cmd[1..=end_quote];
+                            let args = cmd[end_quote + 2..].trim();
+                            std::process::Command::new(exe).raw_arg(args).spawn()
+                        } else {
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidInput,
+                                "malformed command template",
+                            ))
+                        }
+                    } else {
+                        let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
+                        let exe = parts[0];
+                        let args = parts.get(1).unwrap_or(&"");
+                        std::process::Command::new(exe).raw_arg(args).spawn()
+                    };
+
+                    match result {
+                        Ok(_) => return Ok(()),
+                        Err(e) => {
+                            tracing::warn!(
+                                "failed to invoke discovered handler: {e}"
+                            );
+                        }
+                    }
+                }
+
+                // Truly no handler found
+                tracing::warn!(
+                    "open_file: no previous or discovered handler for {ext}, cannot fall through (we are the handler)"
+                );
+                let msg = format!(
+                    "CloudMount could not find the original application to open {ext} files. \
+                     Please right-click the file and choose 'Open with' to select your \
+                     preferred application, then try again."
+                );
+                crate::notify::send(&app, "Cannot open file", &msg);
+                return Err(msg);
+            }
+
+            // Non-handled extension — safe to delegate to OS (no loop risk)
+            crate::open_with_clean_env(&path)
+                .map_err(|e| format!("failed to open with OS handler: {e}"))
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let ext = std::path::Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+
+            if crate::shell_integration::is_handled_extension(&ext) {
+                // Try runtime discovery before giving up
+                if let Some(discovered) =
+                    crate::shell_integration::discover_office_handler(&ext)
+                    && let Some(exec_template) =
+                        crate::shell_integration::get_desktop_exec(&discovered)
+                {
+                    tracing::info!(
+                        "open_file: using discovered handler {discovered}: {exec_template}"
+                    );
+
+                    match launch_desktop_exec(&exec_template, &path) {
+                        Ok(()) => return Ok(()),
+                        Err(e) => {
+                            tracing::warn!(
+                                "failed to invoke discovered handler: {e}"
+                            );
+                        }
+                    }
+                }
+
+                // Truly no handler found
+                tracing::warn!(
+                    "open_file: no previous or discovered handler for {ext}, cannot fall through (we are the handler)"
+                );
+                let msg = format!(
+                    "CloudMount could not find the original application to open {ext} files. \
+                     Please right-click the file and choose 'Open with' to select your \
+                     preferred application, then try again."
+                );
+                crate::notify::send(&app, "Cannot open file", &msg);
+                return Err(msg);
+            }
+
+            // Non-handled extension — safe to delegate to OS (no loop risk)
+            crate::open_with_clean_env(&path)
+                .map_err(|e| format!("failed to open with OS handler: {e}"))
+        }
+
+        // On macOS: try the previous handler (resolved via bundle ID → app path)
+        #[cfg(target_os = "macos")]
+        {
+            let ext = std::path::Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+
+            // Check config override first
+            let override_handler = {
+                let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+                config.file_handler_overrides.get(&ext).cloned()
+            };
+
+            if let Some(ref bundle_id) = override_handler {
+                if let Some(app_path) = crate::shell_integration::resolve_app_path(bundle_id) {
+                    tracing::info!(
+                        "open_file: using config override handler {bundle_id} at {app_path}"
+                    );
+
+                    match std::process::Command::new("open")
+                        .args(["-a", &app_path, &path])
+                        .spawn()
+                    {
+                        Ok(_) => return Ok(()),
+                        Err(e) => {
+                            tracing::warn!(
+                                "failed to invoke config override handler via open -a: {e}, trying other fallbacks"
+                            );
+                        }
+                    }
+                } else {
+                    tracing::info!(
+                        "open_file: trying config override handler by bundle ID {bundle_id}"
+                    );
+
+                    match std::process::Command::new("open")
+                        .args(["-b", bundle_id, &path])
+                        .spawn()
+                    {
+                        Ok(_) => return Ok(()),
+                        Err(e) => {
+                            tracing::warn!(
+                                "failed to invoke config override handler via open -b: {e}, trying other fallbacks"
+                            );
+                        }
+                    }
+                }
+            }
+
+            tracing::debug!("open_file: looking up previous handler for {ext}");
+
+            if let Some(bundle_id) = crate::shell_integration::get_previous_handler(&ext) {
+                // Resolve bundle ID to app path and launch with `open -a`
+                if let Some(app_path) = crate::shell_integration::resolve_app_path(&bundle_id) {
+                    tracing::info!(
+                        "open_file: invoking previous handler {bundle_id} at {app_path}"
+                    );
+
+                    let result = std::process::Command::new("open")
+                        .args(["-a", &app_path, &path])
+                        .spawn();
+
+                    match result {
+                        Ok(_) => return Ok(()),
+                        Err(e) => {
+                            tracing::warn!(
+                                "failed to invoke previous handler via open -a: {e}, trying other fallbacks"
+                            );
+                        }
+                    }
+                } else {
+                    // Try launching directly with the bundle ID via `open -b`
+                    tracing::info!(
+                        "open_file: trying to launch previous handler by bundle ID {bundle_id}"
+                    );
+
+                    let result = std::process::Command::new("open")
+                        .args(["-b", &bundle_id, &path])
+                        .spawn();
+
+                    match result {
+                        Ok(_) => return Ok(()),
+                        Err(e) => {
+                            tracing::warn!(
+                                "failed to invoke previous handler via open -b: {e}, trying other fallbacks"
+                            );
+                        }
+                    }
+                }
+            }
+
+            if crate::shell_integration::is_handled_extension(&ext) {
+                // Try runtime discovery before giving up
+                if let Some(discovered) =
+                    crate::shell_integration::discover_office_handler(&ext)
+                {
+                    // Try to resolve bundle ID to app path and launch with `open -a`
+                    if let Some(app_path) =
+                        crate::shell_integration::resolve_app_path(&discovered)
+                    {
+                        tracing::info!(
+                            "open_file: using discovered handler {discovered} at {app_path}"
+                        );
+
+                        match std::process::Command::new("open")
+                            .args(["-a", &app_path, &path])
+                            .spawn()
+                        {
+                            Ok(_) => return Ok(()),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "failed to invoke discovered handler via open -a: {e}"
+                                );
+                            }
+                        }
+                    } else {
+                        // Try launching by bundle ID directly
+                        tracing::info!(
+                            "open_file: trying discovered handler by bundle ID {discovered}"
+                        );
+
+                        match std::process::Command::new("open")
+                            .args(["-b", &discovered, &path])
+                            .spawn()
+                        {
+                            Ok(_) => return Ok(()),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "failed to invoke discovered handler via open -b: {e}"
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Truly no handler found
+                tracing::warn!(
+                    "open_file: no previous or discovered handler for {ext}, cannot fall through (we are the handler)"
+                );
+                let msg = format!(
+                    "CloudMount could not find the original application to open {ext} files. \
+                     Please right-click the file and choose 'Open with' to select your \
+                     preferred application, then try again."
+                );
+                crate::notify::send(&app, "Cannot open file", &msg);
+                return Err(msg);
+            }
+
+            // Non-handled extension — safe to delegate to OS (no loop risk)
+            crate::open_with_clean_env(&path)
+                .map_err(|e| format!("failed to open with OS handler: {e}"))
+        }
+    }
+}
+
+/// Parse and execute a .desktop file Exec= template with the given file path.
+///
+/// Handles common Exec field codes:
+/// - `%f` / `%F`: single file path
+/// - `%u` / `%U`: file URI
+/// - No field code: append file path as argument
+///
+/// Strips LD_LIBRARY_PATH and LD_PRELOAD for AppImage compatibility.
+#[cfg(target_os = "linux")]
+fn launch_desktop_exec(exec_template: &str, file_path: &str) -> Result<(), String> {
+    // Split the Exec line into tokens, respecting quotes
+    let tokens = shell_tokenize(exec_template);
+    if tokens.is_empty() {
+        return Err("empty Exec= template".to_string());
+    }
+
+    let exe = &tokens[0];
+    let mut args: Vec<String> = Vec::new();
+    let mut has_field_code = false;
+
+    for token in &tokens[1..] {
+        match token.as_str() {
+            "%f" | "%F" => {
+                args.push(file_path.to_string());
+                has_field_code = true;
+            }
+            "%u" | "%U" => {
+                // Convert path to file:// URI
+                let uri = format!("file://{file_path}");
+                args.push(uri);
+                has_field_code = true;
+            }
+            // Skip other desktop entry field codes (%i, %c, %k, etc.)
+            s if s.starts_with('%') && s.len() == 2 => {}
+            other => args.push(other.to_string()),
+        }
+    }
+
+    // If no field code was found, append the file path
+    if !has_field_code {
+        args.push(file_path.to_string());
+    }
+
+    tracing::debug!("launch_desktop_exec: {exe} {args:?}");
+
+    std::process::Command::new(exe)
+        .args(&args)
+        .env_remove("LD_LIBRARY_PATH")
+        .env_remove("LD_PRELOAD")
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("failed to spawn {exe}: {e}"))
+}
+
+/// Simple shell-like tokenizer for .desktop Exec= lines.
+///
+/// Splits on whitespace but respects double-quoted strings.
+/// Does not handle escape sequences (not needed for .desktop files).
+#[cfg(target_os = "linux")]
+fn shell_tokenize(s: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for ch in s.chars() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            ' ' | '\t' if !in_quotes => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
 /// Find a child item by name under a parent inode.
