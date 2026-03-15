@@ -31,6 +31,24 @@ pub fn is_handled_extension(ext: &str) -> bool {
         .any(|&e| e.eq_ignore_ascii_case(ext))
 }
 
+/// Icon resource ordinals embedded in the Windows executable via `file_icons.rc`.
+///
+/// Each entry maps a file extension (with leading dot) to the resource ordinal
+/// of its file-type icon. Referenced in `DefaultIcon` registry values using the
+/// negative ordinal syntax (`,-N`), which directly addresses the resource ordinal
+/// regardless of icon group enumeration order.
+///
+/// Ordinals start at 101 to avoid conflict with Tauri's app icon at ordinal 1.
+#[cfg(target_os = "windows")]
+const ICON_ORDINALS: &[(&str, u16)] = &[
+    (".doc", 101),
+    (".docx", 101),
+    (".xls", 102),
+    (".xlsx", 102),
+    (".ppt", 103),
+    (".pptx", 103),
+];
+
 /// Registry value name where we store the previous default handler ProgID.
 #[cfg(target_os = "windows")]
 const PREVIOUS_HANDLER_VALUE: &str = "CarmineDesktop.PreviousHandler";
@@ -101,6 +119,14 @@ pub fn register_file_associations() -> carminedesktop_core::Result<()> {
         // Set the display name
         let display_name = format!("Office Document (Carmine Desktop){ext}");
         progid_key.set_value("", &display_name)?;
+
+        // Set DefaultIcon to the embedded file-type icon resource (if mapped).
+        // Uses negative ordinal syntax (,-N) which addresses the resource ordinal
+        // directly, independent of icon group enumeration order.
+        if let Some(&(_, ordinal)) = ICON_ORDINALS.iter().find(|(e, _)| e == ext) {
+            let (icon_key, _) = progid_key.create_subkey("DefaultIcon")?;
+            icon_key.set_value("", &format!("{exe_str},-{ordinal}"))?;
+        }
 
         // Create shell\open\command with the handler command
         let (shell_key, _) = progid_key.create_subkey("shell")?;

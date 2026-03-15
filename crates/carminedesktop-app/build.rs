@@ -14,6 +14,12 @@ fn main() {
         println!("cargo:rustc-link-arg=/DELAYLOAD:winfsp-a64.dll");
     }
 
+    // Embed per-file-type icon resources (doc, xls, ppt, pdf) for Windows
+    // shell integration. On non-Windows this is a no-op via manifest_optional().
+    embed_resource::compile("icons/files/file_icons.rc", embed_resource::NONE)
+        .manifest_optional()
+        .unwrap();
+
     #[cfg(feature = "desktop")]
     tauri_build::build();
 }
