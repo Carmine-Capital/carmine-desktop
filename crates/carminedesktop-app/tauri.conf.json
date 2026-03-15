@@ -39,6 +39,12 @@
       "wix": {
         "language": "en-US"
       }
+    },
+    "resources": {
+      "icons/files/doc.ico": "icons/doc.ico",
+      "icons/files/xls.ico": "icons/xls.ico",
+      "icons/files/ppt.ico": "icons/ppt.ico",
+      "icons/files/pdf.ico": "icons/pdf.ico"
     }
   },
   "app": {

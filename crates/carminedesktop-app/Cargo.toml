@@ -44,7 +44,6 @@ winreg = { workspace = true }
 
 [build-dependencies]
 tauri-build = { workspace = true, optional = true }
-embed-resource = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }

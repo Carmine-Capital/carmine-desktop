@@ -1,8 +1,0 @@
-// File-type icon resources for Windows shell integration.
-// Ordinals 101-104 are used to avoid conflict with Tauri's app icon (ordinal 1).
-// Referenced via negative ordinal syntax in DefaultIcon registry values: "exe_path,-101"
-
-101 ICON "doc.ico"
-102 ICON "xls.ico"
-103 ICON "ppt.ico"
-104 ICON "pdf.ico"

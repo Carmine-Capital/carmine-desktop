@@ -87,7 +87,6 @@ winreg = "0.52"
 # Tauri v2 (desktop GUI)
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-build = "2"
-embed-resource = "3.0"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"

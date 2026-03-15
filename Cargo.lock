@@ -572,7 +572,6 @@ dependencies = [
  "clap",
  "dirs",
  "dotenvy",
- "embed-resource",
  "open",
  "serde",
  "serde_json",

@@ -31,22 +31,20 @@ pub fn is_handled_extension(ext: &str) -> bool {
         .any(|&e| e.eq_ignore_ascii_case(ext))
 }
 
-/// Icon resource ordinals embedded in the Windows executable via `file_icons.rc`.
+/// Icon files bundled alongside the executable for Windows shell integration.
 ///
-/// Each entry maps a file extension (with leading dot) to the resource ordinal
-/// of its file-type icon. Referenced in `DefaultIcon` registry values using the
-/// negative ordinal syntax (`,-N`), which directly addresses the resource ordinal
-/// regardless of icon group enumeration order.
-///
-/// Ordinals start at 101 to avoid conflict with Tauri's app icon at ordinal 1.
+/// Each entry maps a file extension (with leading dot) to the `.ico` filename
+/// in the `icons/` subdirectory next to the executable. Referenced in
+/// `DefaultIcon` registry values as an absolute path to the `.ico` file.
 #[cfg(target_os = "windows")]
-const ICON_ORDINALS: &[(&str, u16)] = &[
-    (".doc", 101),
-    (".docx", 101),
-    (".xls", 102),
-    (".xlsx", 102),
-    (".ppt", 103),
-    (".pptx", 103),
+const ICON_FILES: &[(&str, &str)] = &[
+    (".doc", "doc.ico"),
+    (".docx", "doc.ico"),
+    (".xls", "xls.ico"),
+    (".xlsx", "xls.ico"),
+    (".ppt", "ppt.ico"),
+    (".pptx", "ppt.ico"),
+    (".pdf", "pdf.ico"),
 ];
 
 /// Registry value name where we store the previous default handler ProgID.
@@ -120,12 +118,19 @@ pub fn register_file_associations() -> carminedesktop_core::Result<()> {
         let display_name = format!("Office Document (Carmine Desktop){ext}");
         progid_key.set_value("", &display_name)?;
 
-        // Set DefaultIcon to the embedded file-type icon resource (if mapped).
-        // Uses negative ordinal syntax (,-N) which addresses the resource ordinal
-        // directly, independent of icon group enumeration order.
-        if let Some(&(_, ordinal)) = ICON_ORDINALS.iter().find(|(e, _)| e == ext) {
-            let (icon_key, _) = progid_key.create_subkey("DefaultIcon")?;
-            icon_key.set_value("", &format!("{exe_str},-{ordinal}"))?;
+        // Set DefaultIcon to the bundled .ico file (if mapped).
+        // In dev builds the icon may not exist — skip gracefully.
+        if let Some(&(_, icon_name)) = ICON_FILES.iter().find(|(e, _)| e == ext) {
+            let exe_dir = exe_path.parent().ok_or_else(|| {
+                carminedesktop_core::Error::Config(
+                    "current exe has no parent directory".to_string(),
+                )
+            })?;
+            let icon_path = exe_dir.join("icons").join(icon_name);
+            if icon_path.exists() {
+                let (icon_key, _) = progid_key.create_subkey("DefaultIcon")?;
+                icon_key.set_value("", &icon_path.to_string_lossy().as_ref())?;
+            }
         }
 
         // Create shell\open\command with the handler command
