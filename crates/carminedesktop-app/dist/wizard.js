@@ -317,7 +317,7 @@ async function selectSiteInSources(site) {
   libraries.forEach(lib => {
     const isMounted = mountedDriveIds.has(lib.id);
     const row = document.createElement('div');
-    row.className = 'sp-lib-row' + (isMounted ? ' mounted' : '');
+    row.className = 'lib-row' + (isMounted ? ' mounted' : '');
     row.dataset.driveId = lib.id;
     if (!isMounted) {
       row.setAttribute('role', 'checkbox');
@@ -423,7 +423,7 @@ async function confirmSelectedLibraries() {
       addSourceEntry(library.name + ' (' + site.display_name + ')', mountId);
 
       // Transition row to mounted state
-      const row = document.querySelector('.sp-lib-row[data-drive-id="' + CSS.escape(driveId) + '"]');
+      const row = document.querySelector('.lib-row[data-drive-id="' + CSS.escape(driveId) + '"]');
       if (row) {
         row.classList.remove('selected');
         row.classList.add('mounted');
@@ -431,7 +431,7 @@ async function confirmSelectedLibraries() {
         const badge = document.createElement('div');
         badge.className = 'lib-badge';
         badge.textContent = 'Already added';
-        const mountedRow = document.querySelector('.sp-lib-row[data-drive-id="' + CSS.escape(driveId) + '"]');
+        const mountedRow = document.querySelector('.lib-row[data-drive-id="' + CSS.escape(driveId) + '"]');
         if (mountedRow) {
           mountedRow.removeAttribute('role');
           mountedRow.removeAttribute('tabindex');
@@ -479,17 +479,15 @@ function addSourceEntry(label, mountId) {
   nameEl.textContent = label;
 
   const removeBtn = document.createElement('button');
-  removeBtn.className = 'btn-remove';
-  removeBtn.textContent = 'Remove';
+  removeBtn.className = 'btn-icon btn-icon-danger';
+  removeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
   removeBtn.addEventListener('click', async () => {
     removeBtn.disabled = true;
-    removeBtn.textContent = 'Removing\u2026';
     if (mountId) {
       try {
         await invoke('remove_mount', { id: mountId });
       } catch (e) {
         removeBtn.disabled = false;
-        removeBtn.textContent = 'Remove';
         showStatus(formatError(e), 'error');
         return;
       }
@@ -514,6 +512,13 @@ function updateGetStartedBtn() {
     document.getElementById('sources-onedrive-section').style.display !== 'none';
   const hasAdded = document.getElementById('sources-added-list').children.length > 0;
   document.getElementById('get-started-btn').disabled = !(onedriveChecked || hasAdded);
+  // Update stepper footer
+  const footer = document.getElementById('wizard-footer');
+  if (footer) {
+    const count = document.getElementById('sources-added-list').children.length;
+    footer.textContent = count > 0 ? count + ' sources added' : '';
+    footer.style.display = count > 0 ? '' : 'none';
+  }
 }
 
 async function getStarted() {
@@ -600,10 +605,41 @@ const _stepTitles = {
   'step-success': 'All Set \u2014 Carmine Desktop Setup',
 };
 
+const STEP_MAP = {
+  'step-welcome': 1,
+  'step-signing-in': 2,
+  'step-sources': 3,
+  'step-success': 4,
+};
+
+function updateStepper(stepId) {
+  const currentStep = STEP_MAP[stepId] || 1;
+  for (let i = 1; i <= 4; i++) {
+    const el = document.getElementById('stepper-' + i);
+    if (!el) continue;
+    el.classList.remove('active', 'done');
+    if (i < currentStep) el.classList.add('done');
+    else if (i === currentStep) el.classList.add('active');
+  }
+  // Update footer
+  const footer = document.getElementById('wizard-footer');
+  if (footer) {
+    if (currentStep === 3) {
+      const count = document.getElementById('sources-added-list').children.length;
+      footer.textContent = count > 0 ? count + ' sources added' : '';
+      footer.style.display = count > 0 ? '' : 'none';
+    } else {
+      footer.textContent = '';
+      footer.style.display = 'none';
+    }
+  }
+}
+
 function showStep(id) {
   document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   if (_stepTitles[id]) document.title = _stepTitles[id];
+  updateStepper(id);
 }
 
 async function init() {
