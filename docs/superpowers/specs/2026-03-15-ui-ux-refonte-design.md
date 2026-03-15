@@ -88,15 +88,14 @@ Rows plats organisés en sections :
 
 **FILE ASSOCIATIONS**
 - Liste de rows : `.ext` (bold) + nom de l'app (muted) à gauche, bouton "Override" ghost à droite
+- Interaction Override : clic sur "Override" → le bouton est remplacé par un inline input (10rem) + bouton "Set" (ghost) + bouton "Clear" (texte muted). L'input accepte un identifiant d'application (ex: `libreoffice-writer.desktop`). "Set" persiste via `save_file_handler_override`, "Clear" restaure le handler par défaut via `clear_file_handler_override`. L'inline input se ferme après l'action.
 - "Re-detect handlers" en texte link en bas
 
-**ADVANCED**
-- Cache directory — label + sous-titre "Where downloaded files are stored" + valeur à droite
-- Cache size limit — label + sous-titre "X.X GB used" + valeur select + bouton "Clear" en texte accent
+**ADVANCED** (pas de collapsible — tout visible, cohérent avec le design compact)
+- Cache directory — label + sous-titre "Where downloaded files are stored" + input text compact à droite
+- Cache size limit — label + sous-titre descriptif + input text compact (placeholder "5GB") + bouton "Clear" en texte accent
 - Metadata TTL — label + sous-titre "Seconds before re-fetching folder listings" + input compact
 - Log level — label + sous-titre "Verbosity of diagnostic output" + select compact
-
-Note : la section Advanced reste dans un `<details>` collapsible ou non — à décider lors de l'implémentation selon la densité réelle. Le style du summary sera un heading cliquable standard.
 
 ### Panel Mounts
 
@@ -121,7 +120,7 @@ Note : la section Advanced reste dans un `<details>` collapsible ou non — à d
 
 ### Layout
 
-Même layout sidebar + contenu que les settings. La sidebar sert de stepper vertical (4 étapes).
+Même layout sidebar + contenu que les settings. La sidebar sert de stepper vertical (4 étapes). La fenêtre wizard utilise les mêmes dimensions que la fenêtre settings (défini dans la config Tauri).
 
 ### Sidebar stepper
 
@@ -132,7 +131,11 @@ Même layout sidebar + contenu que les settings. La sidebar sert de stepper vert
   - Steps passées : check vert (`#22c55e`) dans le cercle, texte `--text-secondary`
   - Steps futures : cercle bordure muted, texte très muted
 - Pas de clic libre sur les steps (flow linéaire)
-- Footer contextuel : compteur de sources ajoutées (step 3)
+- Footer contextuel par step :
+  - Step 1 : vide (pas de footer)
+  - Step 2 : vide
+  - Step 3 : compteur "N sources added"
+  - Step 4 : vide
 
 ### Step 1 — Welcome
 
@@ -158,6 +161,7 @@ Deux sous-vues (comme actuellement) :
 - OneDrive toggle en row plate (comme un setting)
 - Barre de recherche SharePoint + liste de sites en rows plats
 - Sites suivis listés en rows
+- "Sign in with a different account" en texte link muted en bas de la vue sites
 
 **Vue libraries** (après sélection d'un site) :
 - Back link "← Back to sites" en texte accent
@@ -167,12 +171,14 @@ Deux sous-vues (comme actuellement) :
 - Libraries déjà montées : opacité réduite, check vert, label "Already mounted"
 - Bouton "Add N selected" (primaire) en bas
 
+**Mount creation** : les mounts sont créés au step 3 — `add_mount` est appelé quand l'utilisateur active le toggle OneDrive ou clique "Add N selected" pour les libraries SharePoint. La transition vers le step 4 se fait après que les mounts ont été créés avec succès.
+
 ### Step 4 — Done
 
 - Titre "You're all set" (16px)
 - Sous-titre explicatif
 - Résumé des mounts ajoutés en rows plats (nom + path)
-- Bouton "Get Started" (primaire)
+- Bouton "Get Started" (primaire) — appelle `complete_wizard` et ferme la fenêtre
 - Hint muted "Carmine will continue running in the system tray."
 
 ## Status Bar
@@ -185,7 +191,7 @@ Supprimer :
 - `.tabs`, `.tab`, `.tab.active` (legacy, inutilisé)
 - `.settings-group` (remplacé par rows plats)
 - `.welcome-hero`, `.welcome-hero::before` (hero gradient supprimé)
-- `.btn-remove` (remplacé par `.btn-icon` trash)
+- `.btn-remove` (wizard — migré vers le `.btn-icon` existant)
 - `.unsaved-badge` (auto-save, plus besoin)
 - `.wizard-container` centré (remplacé par sidebar layout)
 - `.source-card` avec checkbox (remplacé par rows plats)
@@ -204,6 +210,8 @@ Ajouter :
 - Implémenter l'auto-save : ajouter des event listeners `change` sur chaque input/toggle/select qui appellent `saveSettings()` avec debounce
 - Supprimer la logique dirty tracking (`_savedValues`, `checkDirty()`, badge unsaved)
 - Supprimer le listener et le DOM du bouton Save
+- Conserver le listener `listen('refresh-settings')` qui recharge settings et mounts depuis le backend
+- Conserver le listener `listen('navigate-add-mount')` dans le wizard
 
 ## JS Changes (Phase 2 — refactoring)
 
