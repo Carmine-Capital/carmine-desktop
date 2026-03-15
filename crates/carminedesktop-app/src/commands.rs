@@ -438,10 +438,19 @@ pub fn save_settings(
     #[cfg(target_os = "windows")]
     let root_dir_changed = root_dir.is_some();
 
+    let old_auto_start;
+    #[cfg(target_os = "windows")]
+    let old_explorer_nav_pane;
+
     {
         let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
 
         let general = user_config.general.get_or_insert_with(Default::default);
+        old_auto_start = general.auto_start;
+        #[cfg(target_os = "windows")]
+        {
+            old_explorer_nav_pane = general.explorer_nav_pane;
+        }
         if let Some(v) = auto_start {
             general.auto_start = Some(v);
         }
@@ -478,7 +487,9 @@ pub fn save_settings(
 
     rebuild_effective_config(&app)?;
 
-    if let Some(v) = auto_start {
+    if let Some(v) = auto_start
+        && old_auto_start != Some(v)
+    {
         match std::env::current_exe() {
             Ok(exe) => {
                 let exe_path = exe.to_string_lossy();
@@ -501,7 +512,9 @@ pub fn save_settings(
 
     #[cfg(target_os = "windows")]
     {
-        if let Some(true) = explorer_nav_pane {
+        if let Some(true) = explorer_nav_pane
+            && old_explorer_nav_pane != Some(true)
+        {
             let config = state.effective_config.lock().map_err(|e| e.to_string())?;
             let cloud_root = expand_mount_point(&format!("~/{}", config.root_dir));
             if let Err(e) =
@@ -510,6 +523,7 @@ pub fn save_settings(
                 tracing::warn!("Explorer navigation pane registration failed: {e}");
             }
         } else if let Some(false) = explorer_nav_pane
+            && old_explorer_nav_pane != Some(false)
             && let Err(e) = crate::shell_integration::unregister_nav_pane()
         {
             tracing::warn!("Explorer navigation pane unregistration failed: {e}");
