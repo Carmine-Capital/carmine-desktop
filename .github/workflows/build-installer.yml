@@ -20,7 +20,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # Pinned WinFsp version for bundling — update alongside winfsp crate dependency
   WINFSP_MSI_VERSION: "2.0.23075"
 
@@ -37,7 +36,7 @@ jobs:
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install system deps (Linux)
