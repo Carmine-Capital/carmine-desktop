@@ -31,41 +31,44 @@ function checkDirty() {
   if (badge) badge.style.display = dirty ? 'block' : 'none';
 }
 
-const tabs = Array.from(document.querySelectorAll('.tab'));
+// Sidebar navigation
+const navItems = Array.from(document.querySelectorAll('.nav-item'));
 
-function activateTab(tab) {
-  tabs.forEach(t => {
-    t.classList.remove('active');
-    t.setAttribute('aria-selected', 'false');
-    t.setAttribute('tabindex', '-1');
+function activatePanel(navItem) {
+  navItems.forEach(n => {
+    n.classList.remove('active');
+    n.setAttribute('aria-selected', 'false');
+    n.setAttribute('tabindex', '-1');
   });
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-  tab.classList.add('active');
-  tab.setAttribute('aria-selected', 'true');
-  tab.setAttribute('tabindex', '0');
-  document.getElementById(tab.dataset.panel).classList.add('active');
-  tab.focus();
+  navItem.classList.add('active');
+  navItem.setAttribute('aria-selected', 'true');
+  navItem.setAttribute('tabindex', '0');
+  const panelId = 'panel-' + navItem.dataset.panel;
+  const panel = document.getElementById(panelId);
+  if (panel) panel.classList.add('active');
+  navItem.focus();
 }
 
-tabs.forEach(tab => {
-  tab.addEventListener('click', () => activateTab(tab));
-  tab.addEventListener('keydown', (e) => {
-    const idx = tabs.indexOf(tab);
-    if (e.key === 'ArrowRight') {
+navItems.forEach(item => {
+  item.addEventListener('click', () => activatePanel(item));
+  item.addEventListener('keydown', (e) => {
+    const idx = navItems.indexOf(item);
+    if (e.key === 'ArrowDown') {
       e.preventDefault();
-      activateTab(tabs[(idx + 1) % tabs.length]);
-    } else if (e.key === 'ArrowLeft') {
+      activatePanel(navItems[(idx + 1) % navItems.length]);
+    } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      activateTab(tabs[(idx - 1 + tabs.length) % tabs.length]);
+      activatePanel(navItems[(idx - 1 + navItems.length) % navItems.length]);
     } else if (e.key === 'Home') {
       e.preventDefault();
-      activateTab(tabs[0]);
+      activatePanel(navItems[0]);
     } else if (e.key === 'End') {
       e.preventDefault();
-      activateTab(tabs[tabs.length - 1]);
+      activatePanel(navItems[navItems.length - 1]);
     } else if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      activateTab(tab);
+      activatePanel(item);
     }
   });
 });
@@ -81,6 +84,7 @@ async function loadSettings() {
     document.getElementById('cache-max-size').value = s.cache_max_size;
     document.getElementById('metadata-ttl').value = String(s.metadata_ttl_secs);
     document.getElementById('log-level').value = s.log_level;
+    // Populate account email in sidebar footer
     document.getElementById('account-email').textContent = s.account_display || 'Not signed in';
     // Show nav pane toggle only on Windows
     const navPaneField = document.getElementById('nav-pane-field');
@@ -102,9 +106,10 @@ async function loadMounts() {
     list.innerHTML = '';
     mounts.forEach(m => {
       const li = document.createElement('li');
-      li.className = 'mount-item';
+      li.className = 'mount-item' + (m.enabled ? '' : ' mount-disabled');
 
       const info = document.createElement('div');
+      info.className = 'mount-info';
       const nameEl = document.createElement('div');
       nameEl.className = 'mount-name';
       nameEl.textContent = m.name;
@@ -115,17 +120,29 @@ async function loadMounts() {
       info.appendChild(pathEl);
 
       const actions = document.createElement('div');
-      const toggleBtn = document.createElement('button');
-      toggleBtn.id = 'toggle-btn-' + m.id;
-      toggleBtn.textContent = m.enabled ? 'Disable' : 'Enable';
-      toggleBtn.addEventListener('click', () => toggleMount(m.id));
+      actions.className = 'mount-actions';
+
+      const toggleLabel = document.createElement('label');
+      toggleLabel.className = 'toggle-switch';
+      toggleLabel.title = m.enabled ? 'Disable mount' : 'Enable mount';
+      const toggleInput = document.createElement('input');
+      toggleInput.type = 'checkbox';
+      toggleInput.id = 'toggle-btn-' + m.id;
+      toggleInput.checked = m.enabled;
+      toggleInput.addEventListener('change', () => toggleMount(m.id));
+      const toggleTrack = document.createElement('span');
+      toggleTrack.className = 'toggle-track';
+      toggleLabel.appendChild(toggleInput);
+      toggleLabel.appendChild(toggleTrack);
+
       const removeBtn = document.createElement('button');
       removeBtn.id = 'remove-btn-' + m.id;
-      removeBtn.className = 'btn-danger';
-      removeBtn.textContent = 'Remove';
+      removeBtn.className = 'btn-icon btn-icon-danger';
+      removeBtn.title = 'Remove mount';
+      removeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
       removeBtn.addEventListener('click', () => removeMount(m.id));
-      actions.className = 'mount-actions';
-      actions.appendChild(toggleBtn);
+
+      actions.appendChild(toggleLabel);
       actions.appendChild(removeBtn);
 
       li.appendChild(info);
@@ -144,45 +161,27 @@ async function loadMounts() {
   }
 }
 
-async function saveGeneral() {
+// Combined save function for all settings (general + advanced)
+async function saveSettings() {
   const syncInterval = parseInt(document.getElementById('sync-interval').value);
   if (isNaN(syncInterval) || syncInterval <= 0) {
     showStatus('Sync interval must be a positive number', 'error');
     return;
   }
-  const btn = document.querySelector('#general .actions button');
+  const metadataTtl = parseInt(document.getElementById('metadata-ttl').value);
+  if (isNaN(metadataTtl) || metadataTtl <= 0) {
+    showStatus('Metadata TTL must be a positive number', 'error');
+    return;
+  }
+  const btn = document.getElementById('save-settings');
   btn.disabled = true;
-  btn.textContent = 'Saving\u2026';
+  btn.textContent = 'Saving…';
   try {
     await invoke('save_settings', {
       autoStart: document.getElementById('auto-start').checked,
       notifications: document.getElementById('notifications').checked,
       syncIntervalSecs: syncInterval,
       explorerNavPane: document.getElementById('explorer-nav-pane').checked,
-    });
-    btn.disabled = false;
-    btn.textContent = 'Save';
-    snapshotValues();
-    checkDirty();
-    showStatus('Settings saved', 'success');
-  } catch (e) {
-    btn.disabled = false;
-    btn.textContent = 'Save';
-    showStatus(formatError(e), 'error');
-  }
-}
-
-async function saveAdvanced() {
-  const metadataTtl = parseInt(document.getElementById('metadata-ttl').value);
-  if (isNaN(metadataTtl) || metadataTtl <= 0) {
-    showStatus('Metadata TTL must be a positive number', 'error');
-    return;
-  }
-  const btn = document.getElementById('btn-save-advanced');
-  btn.disabled = true;
-  btn.textContent = 'Saving\u2026';
-  try {
-    await invoke('save_settings', {
       cacheDir: document.getElementById('cache-dir').value || null,
       cacheMaxSize: document.getElementById('cache-max-size').value,
       metadataTtlSecs: metadataTtl,
@@ -201,17 +200,15 @@ async function saveAdvanced() {
 }
 
 async function toggleMount(id) {
-  const btn = document.getElementById('toggle-btn-' + id);
-  const origLabel = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = 'Updating\u2026';
+  const toggle = document.getElementById('toggle-btn-' + id);
+  toggle.disabled = true;
   try {
     await invoke('toggle_mount', { id });
     showStatus('Mount updated', 'success');
     loadMounts();
   } catch (e) {
-    btn.disabled = false;
-    btn.textContent = origLabel;
+    toggle.checked = !toggle.checked;
+    toggle.disabled = false;
     showStatus(formatError(e), 'error');
   }
 }
@@ -221,14 +218,12 @@ async function removeMount(id) {
   if (!ok) return;
   const btn = document.getElementById('remove-btn-' + id);
   btn.disabled = true;
-  btn.textContent = 'Removing\u2026';
   try {
     await invoke('remove_mount', { id });
     showStatus('Mount removed', 'success');
     loadMounts();
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = 'Remove';
     showStatus(formatError(e), 'error');
   }
 }
@@ -244,9 +239,9 @@ async function addMount() {
 async function signOut() {
   const ok = await window.__TAURI__.dialog.confirm('Sign out? All mounts will stop.', { title: 'Sign Out', kind: 'warning' });
   if (!ok) return;
-  const btn = document.getElementById('btn-sign-out');
+  const btn = document.getElementById('sign-out-btn');
   btn.disabled = true;
-  btn.textContent = 'Signing out\u2026';
+  btn.textContent = 'Signing out…';
   try {
     await invoke('sign_out');
     btn.disabled = false;
@@ -262,7 +257,7 @@ async function signOut() {
 async function clearCache() {
   const btn = document.getElementById('btn-clear-cache');
   btn.disabled = true;
-  btn.textContent = 'Clearing\u2026';
+  btn.textContent = 'Clearing…';
   try {
     await invoke('clear_cache');
     btn.disabled = false;
@@ -324,7 +319,7 @@ function renderHandlerList(handlers) {
     overrideInput.title = 'Enter handler identifier (ProgID, .desktop file, or bundle ID)';
 
     const setBtn = document.createElement('button');
-    setBtn.className = 'btn-sm';
+    setBtn.className = 'btn-sm btn-secondary';
     setBtn.textContent = 'Set';
     setBtn.addEventListener('click', () => saveHandlerOverride(h.extension, overrideInput.value));
 
@@ -365,7 +360,7 @@ async function loadFileHandlers() {
 async function redetectHandlers() {
   const btn = document.getElementById('btn-redetect');
   btn.disabled = true;
-  btn.textContent = 'Detecting\u2026';
+  btn.textContent = 'Detecting…';
   try {
     const handlers = await invoke('redetect_file_handlers');
     renderHandlerList(handlers);
@@ -407,10 +402,9 @@ loadSettings().catch(e => showStatus(formatError(e), 'error'));
 loadMounts().catch(e => showStatus(formatError(e), 'error'));
 loadFileHandlers().catch(e => showStatus(formatError(e), 'error'));
 
-document.getElementById('btn-save-general').addEventListener('click', saveGeneral);
-document.getElementById('btn-save-advanced').addEventListener('click', saveAdvanced);
+document.getElementById('save-settings').addEventListener('click', saveSettings);
 document.getElementById('btn-add-mount').addEventListener('click', addMount);
-document.getElementById('btn-sign-out').addEventListener('click', signOut);
+document.getElementById('sign-out-btn').addEventListener('click', signOut);
 document.getElementById('btn-clear-cache').addEventListener('click', clearCache);
 document.getElementById('btn-redetect').addEventListener('click', redetectHandlers);
 

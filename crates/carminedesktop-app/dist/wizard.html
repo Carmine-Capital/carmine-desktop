@@ -9,6 +9,7 @@
 </head>
 <body>
   <div class="wizard-container">
+    <!-- Step 1: Welcome -->
     <div id="step-welcome" class="step active">
       <div class="welcome-hero">
         <h1>Carmine Desktop</h1>
@@ -17,6 +18,7 @@
       </div>
     </div>
 
+    <!-- Step 2: Signing In -->
     <div id="step-signing-in" class="step">
       <div class="spinner step-signing-in-spinner"></div>
       <h1>Waiting for login&hellip;</h1>
@@ -27,14 +29,19 @@
         <button id="copy-btn" class="btn-secondary btn-sm">Copy URL</button>
       </div>
       <div id="auth-error" class="error-msg" role="alert" style="display:none"></div>
-      <button id="cancel-btn" class="btn-secondary" style="margin-top:1rem">Cancel</button>
+      <button id="cancel-btn" class="btn-secondary" style="margin-top:var(--space-4)">Cancel</button>
     </div>
 
+    <!-- Step 3: Add Cloud Sources -->
     <div id="step-sources" class="step">
       <h1>Add Cloud Sources</h1>
       <p>Select what to mount on your computer.</p>
+      
+      <!-- Loading spinner -->
       <div id="sources-loading" class="sources-spinner"><div class="spinner"></div></div>
-      <div id="sources-onedrive-section" style="display:none">
+      
+      <!-- OneDrive Section -->
+      <div id="sources-onedrive-section" class="settings-group" style="display:none">
         <label class="source-card" id="onedrive-card">
           <input type="checkbox" id="onedrive-check" checked>
           <div class="source-card-info">
@@ -43,6 +50,8 @@
           </div>
         </label>
       </div>
+      
+      <!-- SharePoint Section -->
       <div id="sources-sp-section" style="display:none">
         <div class="section-heading">SharePoint Libraries</div>
         <div class="sp-search-row">
@@ -57,21 +66,28 @@
           <button id="add-selected-btn" style="display:none" disabled>Add selected (0)</button>
         </div>
       </div>
+      
+      <!-- Added Sources Section -->
       <div id="sources-added-section" style="display:none">
         <div class="section-heading">Added</div>
         <div id="sources-added-list"></div>
       </div>
+      
+      <!-- Error and Actions -->
       <div id="sources-error" class="error-msg" role="alert" style="display:none"></div>
-      <button id="get-started-btn" disabled style="margin-top:1.5rem">Get started</button>
-      <button id="switch-account-btn" class="btn-link" style="margin-top:0.5rem">Sign in with a different account</button>
+      <div style="margin-top:var(--space-6);display:flex;flex-direction:column;align-items:center;gap:var(--space-2)">
+        <button id="get-started-btn" disabled>Get started</button>
+        <button id="switch-account-btn" class="btn-link">Sign in with a different account</button>
+      </div>
     </div>
 
+    <!-- Step 4: Success -->
     <div id="step-success" class="step">
       <h1>All Set</h1>
       <p>Your drives are mounted and ready to use.</p>
       <ul id="done-mount-list" class="mount-list" style="list-style:none"></ul>
       <p class="success-hint">Your files are accessible in your file manager. Carmine Desktop runs in the system tray &mdash; right-click the tray icon to manage mounts or open settings.</p>
-      <button id="wizard-close-btn">Close</button>
+      <button id="wizard-close-btn" style="margin-top:var(--space-4)">Close</button>
     </div>
   </div>
   <div id="status-bar" role="status" aria-live="polite"></div>
