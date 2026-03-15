@@ -1,36 +1,6 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
-let _savedValues = {};
-
-function snapshotValues() {
-  _savedValues = {
-    auto_start: document.getElementById('auto-start').checked,
-    notifications: document.getElementById('notifications').checked,
-    explorer_nav_pane: document.getElementById('explorer-nav-pane').checked,
-    sync_interval: document.getElementById('sync-interval').value,
-    cache_dir: document.getElementById('cache-dir').value,
-    cache_max_size: document.getElementById('cache-max-size').value,
-    metadata_ttl: document.getElementById('metadata-ttl').value,
-    log_level: document.getElementById('log-level').value,
-  };
-}
-
-function checkDirty() {
-  const dirty =
-    _savedValues.auto_start !== document.getElementById('auto-start').checked ||
-    _savedValues.notifications !== document.getElementById('notifications').checked ||
-    _savedValues.explorer_nav_pane !== document.getElementById('explorer-nav-pane').checked ||
-    _savedValues.sync_interval !== document.getElementById('sync-interval').value ||
-    _savedValues.cache_dir !== document.getElementById('cache-dir').value ||
-    _savedValues.cache_max_size !== document.getElementById('cache-max-size').value ||
-    _savedValues.metadata_ttl !== document.getElementById('metadata-ttl').value ||
-    _savedValues.log_level !== document.getElementById('log-level').value;
-
-  const badge = document.getElementById('unsaved-badge');
-  if (badge) badge.style.display = dirty ? 'block' : 'none';
-}
-
 // Sidebar navigation
 const navItems = Array.from(document.querySelectorAll('.nav-item'));
 
@@ -92,7 +62,6 @@ async function loadSettings() {
       navPaneField.style.display = '';
       document.getElementById('explorer-nav-pane').checked = s.explorer_nav_pane;
     }
-    snapshotValues();
   } catch (e) {
     console.error(e);
     showStatus('Failed to load settings', 'error');
@@ -106,7 +75,7 @@ async function loadMounts() {
     list.innerHTML = '';
     mounts.forEach(m => {
       const li = document.createElement('li');
-      li.className = 'mount-item' + (m.enabled ? '' : ' mount-disabled');
+      li.className = 'setting-row' + (m.enabled ? '' : ' mount-disabled');
 
       const info = document.createElement('div');
       info.className = 'mount-info';
@@ -139,7 +108,7 @@ async function loadMounts() {
       removeBtn.id = 'remove-btn-' + m.id;
       removeBtn.className = 'btn-icon btn-icon-danger';
       removeBtn.title = 'Remove mount';
-      removeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
+      removeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
       removeBtn.addEventListener('click', () => removeMount(m.id));
 
       actions.appendChild(toggleLabel);
@@ -173,9 +142,6 @@ async function saveSettings() {
     showStatus('Metadata TTL must be a positive number', 'error');
     return;
   }
-  const btn = document.getElementById('save-settings');
-  btn.disabled = true;
-  btn.textContent = 'Saving…';
   try {
     await invoke('save_settings', {
       autoStart: document.getElementById('auto-start').checked,
@@ -187,14 +153,7 @@ async function saveSettings() {
       metadataTtlSecs: metadataTtl,
       logLevel: document.getElementById('log-level').value,
     });
-    btn.disabled = false;
-    btn.textContent = 'Save';
-    snapshotValues();
-    checkDirty();
-    showStatus('Settings saved', 'success');
   } catch (e) {
-    btn.disabled = false;
-    btn.textContent = 'Save';
     showStatus(formatError(e), 'error');
   }
 }
@@ -256,16 +215,17 @@ async function signOut() {
 
 async function clearCache() {
   const btn = document.getElementById('btn-clear-cache');
+  const origText = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Clearing…';
   try {
     await invoke('clear_cache');
     btn.disabled = false;
-    btn.textContent = 'Clear Cache';
+    btn.textContent = origText;
     showStatus('Cache cleared', 'success');
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = 'Clear Cache';
+    btn.textContent = origText;
     showStatus('Failed to clear cache: ' + formatError(e), 'error');
   }
 }
@@ -274,24 +234,19 @@ async function clearCache() {
 // File Associations
 // ---------------------------------------------------------------------------
 
-/** Human-readable labels for handler source */
-const SOURCE_LABELS = {
-  override: 'Manual override',
-  saved: 'Saved',
-  discovered: 'Auto-detected',
-  none: 'Not found',
-};
-
 function renderHandlerList(handlers) {
   const list = document.getElementById('handler-list');
   list.innerHTML = '';
 
   handlers.forEach(h => {
     const li = document.createElement('li');
-    li.className = 'handler-item';
+    li.className = 'setting-row';
 
     const info = document.createElement('div');
-    info.className = 'handler-info';
+    info.className = 'setting-label';
+    info.style.display = 'flex';
+    info.style.alignItems = 'center';
+    info.style.gap = '10px';
 
     const extEl = document.createElement('span');
     extEl.className = 'handler-ext';
@@ -303,37 +258,41 @@ function renderHandlerList(handlers) {
     nameEl.textContent = h.handler_name || 'None';
     info.appendChild(nameEl);
 
-    const sourceEl = document.createElement('span');
-    sourceEl.className = 'handler-source badge';
-    sourceEl.textContent = SOURCE_LABELS[h.source] || h.source;
-    info.appendChild(sourceEl);
-
     const actions = document.createElement('div');
-    actions.className = 'handler-actions';
+    actions.className = 'setting-control';
 
-    const overrideInput = document.createElement('input');
-    overrideInput.type = 'text';
-    overrideInput.className = 'handler-override-input';
-    overrideInput.placeholder = 'Handler ID';
-    overrideInput.value = h.source === 'override' ? h.handler_id : '';
-    overrideInput.title = 'Enter handler identifier (ProgID, .desktop file, or bundle ID)';
+    const overrideBtn = document.createElement('button');
+    overrideBtn.className = 'btn-ghost btn-sm';
+    overrideBtn.textContent = h.source === 'override' ? 'Change' : 'Override';
 
-    const setBtn = document.createElement('button');
-    setBtn.className = 'btn-sm btn-secondary';
-    setBtn.textContent = 'Set';
-    setBtn.addEventListener('click', () => saveHandlerOverride(h.extension, overrideInput.value));
+    overrideBtn.addEventListener('click', () => {
+      actions.innerHTML = '';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'handler-override-input';
+      input.placeholder = 'Handler ID';
+      input.value = h.source === 'override' ? h.handler_id : '';
 
-    actions.appendChild(overrideInput);
-    actions.appendChild(setBtn);
+      const setBtn = document.createElement('button');
+      setBtn.className = 'btn-ghost btn-sm';
+      setBtn.textContent = 'Set';
+      setBtn.addEventListener('click', () => saveHandlerOverride(h.extension, input.value));
 
-    if (h.source === 'override') {
-      const clearBtn = document.createElement('button');
-      clearBtn.className = 'btn-sm btn-secondary';
-      clearBtn.textContent = 'Clear';
-      clearBtn.addEventListener('click', () => clearHandlerOverride(h.extension));
-      actions.appendChild(clearBtn);
-    }
+      actions.appendChild(input);
+      actions.appendChild(setBtn);
 
+      if (h.source === 'override') {
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'btn-link btn-sm';
+        clearBtn.textContent = 'Clear';
+        clearBtn.addEventListener('click', () => clearHandlerOverride(h.extension));
+        actions.appendChild(clearBtn);
+      }
+
+      input.focus();
+    });
+
+    actions.appendChild(overrideBtn);
     li.appendChild(info);
     li.appendChild(actions);
     list.appendChild(li);
@@ -402,16 +361,21 @@ loadSettings().catch(e => showStatus(formatError(e), 'error'));
 loadMounts().catch(e => showStatus(formatError(e), 'error'));
 loadFileHandlers().catch(e => showStatus(formatError(e), 'error'));
 
-document.getElementById('save-settings').addEventListener('click', saveSettings);
 document.getElementById('btn-add-mount').addEventListener('click', addMount);
 document.getElementById('sign-out-btn').addEventListener('click', signOut);
 document.getElementById('btn-clear-cache').addEventListener('click', clearCache);
 document.getElementById('btn-redetect').addEventListener('click', redetectHandlers);
 
+let _saveTimer = null;
+function debouncedSave() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveSettings, 500);
+}
+
 ['auto-start', 'notifications', 'explorer-nav-pane', 'sync-interval', 'log-level'].forEach(id =>
-  document.getElementById(id).addEventListener('change', checkDirty));
+  document.getElementById(id).addEventListener('change', saveSettings));
 ['cache-dir', 'cache-max-size', 'metadata-ttl'].forEach(id =>
-  document.getElementById(id).addEventListener('input', checkDirty));
+  document.getElementById(id).addEventListener('input', debouncedSave));
 
 listen('refresh-settings', () => {
   loadSettings();
