@@ -1239,7 +1239,7 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
                 return Err(no_handler_error(&app, &ext));
             }
 
-            return open_with_os_default(&path);
+            open_with_os_default(&path)
         }
 
         // On Linux: no file associations, just open with OS default handler
