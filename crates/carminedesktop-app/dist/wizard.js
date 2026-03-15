@@ -1,26 +1,35 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
-let signingIn = false;
-let activeListeners = [];
-let onedriveDriveId = null;
-let sourcesSpSearchTimer = null;
-let sourcesSelectedSite = null;
-let addMountMode = false;
-let selectedLibraries = new Map(); // driveId → { site, library }
-let cachedFollowedSites = null;
-let defaultMountRoot = '~/Cloud';
-let countdownTimer = null;
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
 
-// -- path sanitization --
+const state = {
+  step: 'step-welcome',
+  signingIn: false,
+  addMountMode: false,
+  onedriveDriveId: null,
+  defaultMountRoot: '~/Cloud',
+  followedSites: [],
+  selectedSite: null,
+  libraries: [],
+  selectedLibraries: new Map(),
+  addedSources: [],
+  authUnlisteners: [],
+  finalMounts: [],
+};
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
 
 function sanitizePath(name) {
   return name.replace(/[/\\:*?"<>|]/g, '_').trim() || '_';
 }
 
-// -- auth countdown --
-
 const AUTH_TIMEOUT_SECS = 120;
+let countdownTimer = null;
 
 function startCountdown() {
   stopCountdown();
@@ -55,12 +64,66 @@ function stopCountdown() {
   }
 }
 
-// -- sign-in flow --
+// ---------------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------------
+
+const _stepTitles = {
+  'step-welcome': 'Carmine Desktop Setup',
+  'step-signing-in': 'Sign In \u2014 Carmine Desktop Setup',
+  'step-sources': 'Add Sources \u2014 Carmine Desktop Setup',
+  'step-success': 'All Set \u2014 Carmine Desktop Setup',
+};
+
+const STEP_MAP = {
+  'step-welcome': 1,
+  'step-signing-in': 2,
+  'step-sources': 3,
+  'step-success': 4,
+};
+
+function updateStepper(stepId) {
+  const currentStep = STEP_MAP[stepId] || 1;
+  for (let i = 1; i <= 4; i++) {
+    const el = document.getElementById('stepper-' + i);
+    if (!el) continue;
+    el.classList.remove('active', 'done');
+    if (i < currentStep) el.classList.add('done');
+    else if (i === currentStep) el.classList.add('active');
+  }
+  const footer = document.getElementById('wizard-footer');
+  if (footer) {
+    if (currentStep === 3) {
+      const count = state.addedSources.length;
+      footer.textContent = count > 0 ? count + ' sources added' : '';
+      footer.style.display = count > 0 ? '' : 'none';
+    } else {
+      footer.textContent = '';
+      footer.style.display = 'none';
+    }
+  }
+}
+
+function goToStep(stepId) {
+  state.step = stepId;
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+  document.getElementById(stepId).classList.add('active');
+  updateStepper(stepId);
+  if (_stepTitles[stepId]) document.title = _stepTitles[stepId];
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+function cleanupAuthListeners() {
+  state.authUnlisteners.forEach(fn => { try { fn(); } catch (_) {} });
+  state.authUnlisteners = [];
+}
 
 async function startSignIn() {
-  if (signingIn) return;
+  if (state.signingIn) return;
 
-  // FUSE pre-check: block sign-in if FUSE is unavailable
   try {
     const fuseOk = await invoke('check_fuse_available');
     if (!fuseOk) {
@@ -71,24 +134,23 @@ async function startSignIn() {
     console.warn('FUSE check failed, proceeding:', e);
   }
 
-  signingIn = true;
+  state.signingIn = true;
   document.getElementById('auth-error').style.display = 'none';
-  showStep('step-signing-in');
+  goToStep('step-signing-in');
   startCountdown();
 
-  // Register event listeners before invoking so we don't miss events.
-  activeListeners.push(await listen('auth-complete', async () => {
-    if (!signingIn) return;
-    signingIn = false;
+  state.authUnlisteners.push(await listen('auth-complete', async () => {
+    if (!state.signingIn) return;
+    state.signingIn = false;
     stopCountdown();
-    cleanupListeners();
+    cleanupAuthListeners();
     await onSignInComplete();
   }));
-  activeListeners.push(await listen('auth-error', (event) => {
-    if (!signingIn) return;
-    signingIn = false;
+  state.authUnlisteners.push(await listen('auth-error', (event) => {
+    if (!state.signingIn) return;
+    state.signingIn = false;
     stopCountdown();
-    cleanupListeners();
+    cleanupAuthListeners();
     const errEl = document.getElementById('auth-error');
     errEl.textContent = 'Sign-in failed: ' + (event.payload || 'unknown error');
     errEl.style.display = 'block';
@@ -98,21 +160,21 @@ async function startSignIn() {
     const authUrl = await invoke('start_sign_in');
     document.getElementById('auth-url').value = authUrl;
   } catch (e) {
-    signingIn = false;
+    state.signingIn = false;
     stopCountdown();
-    cleanupListeners();
+    cleanupAuthListeners();
     console.error('start_sign_in failed:', e);
     showStatus('Sign-in failed', 'error');
-    showStep('step-welcome');
+    goToStep('step-welcome');
   }
 }
 
 async function cancelSignIn() {
-  signingIn = false;
+  state.signingIn = false;
   stopCountdown();
   try { await invoke('cancel_sign_in'); } catch (e) { console.warn('cancel failed:', e); }
-  cleanupListeners();
-  showStep('step-welcome');
+  cleanupAuthListeners();
+  goToStep('step-welcome');
   document.getElementById('auth-url').value = '';
   const errEl = document.getElementById('auth-error');
   errEl.style.display = 'none';
@@ -134,21 +196,18 @@ async function copyAuthUrl() {
 }
 
 async function onSignInComplete() {
-  showStep('step-sources');
+  goToStep('step-sources');
   await loadSources();
 }
 
 async function goToAddMount() {
-  addMountMode = true;
+  state.addMountMode = true;
   await onSignInComplete();
 }
 
-function cleanupListeners() {
-  activeListeners.forEach(fn => { try { fn(); } catch (_) {} });
-  activeListeners = [];
-}
-
-// -- step-sources: loading drive info and followed sites --
+// ---------------------------------------------------------------------------
+// Sources — loading
+// ---------------------------------------------------------------------------
 
 async function loadSources() {
   document.getElementById('sources-loading').style.display = 'block';
@@ -165,13 +224,13 @@ async function loadSources() {
 
   if (driveResult.status === 'fulfilled') {
     const drive = driveResult.value;
-    onedriveDriveId = drive.id;
+    state.onedriveDriveId = drive.id;
     document.getElementById('onedrive-drive-name').textContent = drive.name || 'OneDrive';
-    document.getElementById('onedrive-mount-path').textContent = defaultMountRoot + '/OneDrive';
+    document.getElementById('onedrive-mount-path').textContent = state.defaultMountRoot + '/OneDrive';
     document.getElementById('sources-onedrive-section').style.display = 'block';
   }
 
-  if (addMountMode) {
+  if (state.addMountMode) {
     document.getElementById('sources-onedrive-section').style.display = 'none';
     const btn = document.getElementById('get-started-btn');
     btn.textContent = 'Close';
@@ -179,7 +238,7 @@ async function loadSources() {
   }
 
   if (sitesResult.status === 'fulfilled') {
-    cachedFollowedSites = sitesResult.value;
+    state.followedSites = sitesResult.value;
     document.getElementById('sources-sp-section').style.display = 'block';
     renderFollowedSites(sitesResult.value);
   }
@@ -197,7 +256,14 @@ async function loadSources() {
   updateGetStartedBtn();
 }
 
+// ---------------------------------------------------------------------------
+// Sources — rendering
+// ---------------------------------------------------------------------------
+
+let _displayedSites = [];
+
 function renderFollowedSites(sites) {
+  _displayedSites = sites;
   const sitesEl = document.getElementById('sources-sp-sites');
   sitesEl.innerHTML = '';
   if (sites.length === 0) {
@@ -210,6 +276,8 @@ function renderFollowedSites(sites) {
   sites.forEach(site => {
     const row = document.createElement('div');
     row.className = 'sp-result-row';
+    row.dataset.action = 'select-site';
+    row.dataset.siteId = site.id;
     row.setAttribute('role', 'button');
     row.setAttribute('tabindex', '0');
     const name = document.createElement('div');
@@ -219,30 +287,49 @@ function renderFollowedSites(sites) {
     url.textContent = site.web_url;
     row.appendChild(name);
     row.appendChild(url);
-    row.addEventListener('click', () => selectSiteInSources(site));
-    row.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        selectSiteInSources(site);
-      }
-    });
     sitesEl.appendChild(row);
   });
 }
 
-// -- step-sources: SharePoint search (debounced) --
+function renderAddedSources() {
+  const section = document.getElementById('sources-added-section');
+  const list = document.getElementById('sources-added-list');
+  list.innerHTML = '';
+  state.addedSources.forEach(s => {
+    const row = document.createElement('div');
+    row.className = 'added-source-row';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'added-source-name';
+    nameEl.textContent = s.label;
+    const btn = document.createElement('button');
+    btn.className = 'btn-icon btn-icon-danger';
+    btn.dataset.action = 'remove-source';
+    btn.dataset.mountId = s.mountId;
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
+    row.appendChild(nameEl);
+    row.appendChild(btn);
+    list.appendChild(row);
+  });
+  section.style.display = state.addedSources.length > 0 ? 'block' : 'none';
+}
+
+function addSourceEntry(label, mountId) {
+  state.addedSources.push({ label, mountId });
+  renderAddedSources();
+}
+
+// ---------------------------------------------------------------------------
+// Sources — search
+// ---------------------------------------------------------------------------
+
+let sourcesSpSearchTimer = null;
 
 function onSourcesSpSearchInput() {
   clearTimeout(sourcesSpSearchTimer);
   const query = document.getElementById('sources-sp-search').value.trim();
   if (!query) {
-    // Restore followed sites on empty query (from cache if available)
-    if (cachedFollowedSites) {
-      renderFollowedSites(cachedFollowedSites);
-      document.getElementById('sources-sp-libraries').style.display = 'none';
-    } else {
-      loadSources();
-    }
+    renderFollowedSites(state.followedSites);
+    document.getElementById('sources-sp-libraries').style.display = 'none';
     return;
   }
   sourcesSpSearchTimer = setTimeout(() => searchSitesInSources(query), 300);
@@ -279,15 +366,22 @@ async function searchSitesInSources(query) {
   renderFollowedSites(sites);
 }
 
-// -- step-sources: site and library selection --
+// ---------------------------------------------------------------------------
+// Sources — site & library selection
+// ---------------------------------------------------------------------------
+
+function selectSiteById(siteId) {
+  const site = _displayedSites.find(s => s.id === siteId);
+  if (site) selectSiteInSources(site);
+}
 
 async function selectSiteInSources(site) {
-  sourcesSelectedSite = site;
-  if (selectedLibraries.size > 0) {
-    selectedLibraries.clear();
+  state.selectedSite = site;
+  if (state.selectedLibraries.size > 0) {
+    state.selectedLibraries.clear();
     showStatus('Previous selections cleared', 'info');
   } else {
-    selectedLibraries.clear();
+    state.selectedLibraries.clear();
   }
   const spinner = document.getElementById('sources-sp-spinner');
   const errEl = document.getElementById('sources-sp-error');
@@ -312,6 +406,7 @@ async function selectSiteInSources(site) {
   }
   spinner.style.display = 'none';
 
+  state.libraries = libraries;
   const mountedDriveIds = new Set(mounts.map(m => m.drive_id).filter(Boolean));
 
   libraries.forEach(lib => {
@@ -320,6 +415,7 @@ async function selectSiteInSources(site) {
     row.className = 'lib-row' + (isMounted ? ' mounted' : '');
     row.dataset.driveId = lib.id;
     if (!isMounted) {
+      row.dataset.action = 'toggle-lib';
       row.setAttribute('role', 'checkbox');
       row.setAttribute('aria-checked', 'false');
       row.setAttribute('tabindex', '0');
@@ -346,30 +442,6 @@ async function selectSiteInSources(site) {
 
     row.appendChild(check);
     row.appendChild(info);
-
-    if (!isMounted) {
-      const toggleLib = () => {
-        const driveId = lib.id;
-        if (selectedLibraries.has(driveId)) {
-          selectedLibraries.delete(driveId);
-          row.classList.remove('selected');
-          row.setAttribute('aria-checked', 'false');
-        } else {
-          selectedLibraries.set(driveId, { site, library: lib });
-          row.classList.add('selected');
-          row.setAttribute('aria-checked', 'true');
-        }
-        updateAddSelectedBtn();
-      };
-      row.addEventListener('click', toggleLib);
-      row.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          toggleLib();
-        }
-      });
-    }
-
     libList.appendChild(row);
   });
 
@@ -377,9 +449,27 @@ async function selectSiteInSources(site) {
   updateAddSelectedBtn();
 }
 
+function toggleLibrary(driveId) {
+  if (state.selectedLibraries.has(driveId)) {
+    state.selectedLibraries.delete(driveId);
+  } else {
+    const lib = state.libraries.find(l => l.id === driveId);
+    if (lib && state.selectedSite) {
+      state.selectedLibraries.set(driveId, { site: state.selectedSite, library: lib });
+    }
+  }
+  const row = document.querySelector('.lib-row[data-drive-id="' + CSS.escape(driveId) + '"]');
+  if (row) {
+    const isSelected = state.selectedLibraries.has(driveId);
+    row.classList.toggle('selected', isSelected);
+    row.setAttribute('aria-checked', isSelected ? 'true' : 'false');
+  }
+  updateAddSelectedBtn();
+}
+
 function updateAddSelectedBtn() {
   const btn = document.getElementById('add-selected-btn');
-  const count = selectedLibraries.size;
+  const count = state.selectedLibraries.size;
   if (count > 0) {
     btn.style.display = 'block';
     btn.disabled = false;
@@ -390,15 +480,23 @@ function updateAddSelectedBtn() {
   }
 }
 
+function backToSites() {
+  state.selectedSite = null;
+  state.libraries = [];
+  state.selectedLibraries.clear();
+  document.getElementById('sources-sp-libraries').style.display = 'none';
+  updateAddSelectedBtn();
+}
+
 async function confirmSelectedLibraries() {
-  if (selectedLibraries.size === 0) return;
+  if (state.selectedLibraries.size === 0) return;
   const errEl = document.getElementById('sources-sp-error');
   const addBtn = document.getElementById('add-selected-btn');
 
   addBtn.disabled = true;
   errEl.style.display = 'none';
 
-  const entries = Array.from(selectedLibraries.entries());
+  const entries = Array.from(state.selectedLibraries.entries());
   const total = entries.length;
   const errors = [];
   const succeeded = [];
@@ -409,7 +507,7 @@ async function confirmSelectedLibraries() {
 
     const safeSite = sanitizePath(site.display_name);
     const safeLib = sanitizePath(library.name);
-    const mountPoint = defaultMountRoot + '/' + safeSite + ' - ' + safeLib + '/';
+    const mountPoint = state.defaultMountRoot + '/' + safeSite + ' - ' + safeLib + '/';
     try {
       const mountId = await invoke('add_mount', {
         mountType: 'sharepoint',
@@ -427,18 +525,15 @@ async function confirmSelectedLibraries() {
       if (row) {
         row.classList.remove('selected');
         row.classList.add('mounted');
-        row.replaceWith(row.cloneNode(true)); // remove click listener
-        const badge = document.createElement('div');
-        badge.className = 'lib-badge';
-        badge.textContent = 'Already added';
-        const mountedRow = document.querySelector('.lib-row[data-drive-id="' + CSS.escape(driveId) + '"]');
-        if (mountedRow) {
-          mountedRow.removeAttribute('role');
-          mountedRow.removeAttribute('tabindex');
-          const infoEl = mountedRow.querySelector('.lib-info');
-          if (infoEl && !infoEl.querySelector('.lib-badge')) {
-            infoEl.appendChild(badge);
-          }
+        row.removeAttribute('role');
+        row.removeAttribute('tabindex');
+        delete row.dataset.action;
+        const infoEl = row.querySelector('.lib-info');
+        if (infoEl && !infoEl.querySelector('.lib-badge')) {
+          const badge = document.createElement('div');
+          badge.className = 'lib-badge';
+          badge.textContent = 'Already added';
+          infoEl.appendChild(badge);
         }
       }
     } catch (e) {
@@ -446,9 +541,8 @@ async function confirmSelectedLibraries() {
     }
   }
 
-  // Clear only succeeded items from selection; keep failed for retry
   for (const driveId of succeeded) {
-    selectedLibraries.delete(driveId);
+    state.selectedLibraries.delete(driveId);
   }
 
   updateAddSelectedBtn();
@@ -467,57 +561,48 @@ async function confirmSelectedLibraries() {
   }
 }
 
-function addSourceEntry(label, mountId) {
-  const section = document.getElementById('sources-added-section');
-  const list = document.getElementById('sources-added-list');
-
-  const row = document.createElement('div');
-  row.className = 'added-source-row';
-
-  const nameEl = document.createElement('div');
-  nameEl.className = 'added-source-name';
-  nameEl.textContent = label;
-
-  const removeBtn = document.createElement('button');
-  removeBtn.className = 'btn-icon btn-icon-danger';
-  removeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
-  removeBtn.addEventListener('click', async () => {
-    removeBtn.disabled = true;
-    if (mountId) {
-      try {
-        await invoke('remove_mount', { id: mountId });
-      } catch (e) {
-        removeBtn.disabled = false;
-        showStatus(formatError(e), 'error');
-        return;
-      }
+async function removeSource(mountId) {
+  const btn = document.querySelector('[data-action="remove-source"][data-mount-id="' + CSS.escape(mountId) + '"]');
+  if (btn) btn.disabled = true;
+  if (mountId) {
+    try {
+      await invoke('remove_mount', { id: mountId });
+    } catch (e) {
+      if (btn) btn.disabled = false;
+      showStatus(formatError(e), 'error');
+      return;
     }
-    list.removeChild(row);
-    if (list.children.length === 0) section.style.display = 'none';
-    updateGetStartedBtn();
-  });
-
-  row.appendChild(nameEl);
-  row.appendChild(removeBtn);
-  list.appendChild(row);
-  section.style.display = 'block';
+  }
+  state.addedSources = state.addedSources.filter(s => s.mountId !== mountId);
+  renderAddedSources();
+  updateGetStartedBtn();
 }
 
-// -- step-sources: Get started --
+// ---------------------------------------------------------------------------
+// Get Started / Complete
+// ---------------------------------------------------------------------------
 
 function updateGetStartedBtn() {
-  if (addMountMode) return;
+  if (state.addMountMode) return;
   const onedriveChecked = document.getElementById('onedrive-check') &&
     document.getElementById('onedrive-check').checked &&
     document.getElementById('sources-onedrive-section').style.display !== 'none';
-  const hasAdded = document.getElementById('sources-added-list').children.length > 0;
+  const hasAdded = state.addedSources.length > 0;
   document.getElementById('get-started-btn').disabled = !(onedriveChecked || hasAdded);
   // Update stepper footer
   const footer = document.getElementById('wizard-footer');
   if (footer) {
-    const count = document.getElementById('sources-added-list').children.length;
+    const count = state.addedSources.length;
     footer.textContent = count > 0 ? count + ' sources added' : '';
     footer.style.display = count > 0 ? '' : 'none';
+  }
+}
+
+function handleGetStarted() {
+  if (state.addMountMode) {
+    window.__TAURI__.window.getCurrentWindow().close();
+  } else {
+    getStarted();
   }
 }
 
@@ -535,12 +620,12 @@ async function getStarted() {
     document.getElementById('onedrive-check').checked &&
     onedriveSection.style.display !== 'none';
 
-  if (onedriveChecked && onedriveDriveId) {
+  if (onedriveChecked && state.onedriveDriveId) {
     try {
       await invoke('add_mount', {
         mountType: 'drive',
-        driveId: onedriveDriveId,
-        mountPoint: defaultMountRoot + '/OneDrive',
+        driveId: state.onedriveDriveId,
+        mountPoint: state.defaultMountRoot + '/OneDrive',
       });
     } catch (e) {
       errEl.textContent = formatError(e);
@@ -562,6 +647,7 @@ async function getStarted() {
 
   try {
     const mounts = await invoke('list_mounts');
+    state.finalMounts = mounts;
     const list = document.getElementById('done-mount-list');
     list.innerHTML = '';
     mounts.forEach(m => {
@@ -573,10 +659,12 @@ async function getStarted() {
   } catch (e) {
     console.error('list_mounts failed:', e);
   }
-  showStep('step-success');
+  goToStep('step-success');
 }
 
-// -- switch account --
+// ---------------------------------------------------------------------------
+// Switch Account
+// ---------------------------------------------------------------------------
 
 async function switchAccount() {
   const btn = document.getElementById('switch-account-btn');
@@ -589,102 +677,60 @@ async function switchAccount() {
   }
   btn.disabled = false;
   btn.textContent = 'Sign in with a different account';
-  addMountMode = false;
-  onedriveDriveId = null;
-  cachedFollowedSites = null;
-  selectedLibraries.clear();
-  showStep('step-welcome');
+  state.addMountMode = false;
+  state.onedriveDriveId = null;
+  state.followedSites = [];
+  state.selectedSite = null;
+  state.libraries = [];
+  state.selectedLibraries.clear();
+  state.addedSources = [];
+  goToStep('step-welcome');
 }
 
-// -- utilities --
-
-const _stepTitles = {
-  'step-welcome': 'Carmine Desktop Setup',
-  'step-signing-in': 'Sign In \u2014 Carmine Desktop Setup',
-  'step-sources': 'Add Sources \u2014 Carmine Desktop Setup',
-  'step-success': 'All Set \u2014 Carmine Desktop Setup',
-};
-
-const STEP_MAP = {
-  'step-welcome': 1,
-  'step-signing-in': 2,
-  'step-sources': 3,
-  'step-success': 4,
-};
-
-function updateStepper(stepId) {
-  const currentStep = STEP_MAP[stepId] || 1;
-  for (let i = 1; i <= 4; i++) {
-    const el = document.getElementById('stepper-' + i);
-    if (!el) continue;
-    el.classList.remove('active', 'done');
-    if (i < currentStep) el.classList.add('done');
-    else if (i === currentStep) el.classList.add('active');
-  }
-  // Update footer
-  const footer = document.getElementById('wizard-footer');
-  if (footer) {
-    if (currentStep === 3) {
-      const count = document.getElementById('sources-added-list').children.length;
-      footer.textContent = count > 0 ? count + ' sources added' : '';
-      footer.style.display = count > 0 ? '' : 'none';
-    } else {
-      footer.textContent = '';
-      footer.style.display = 'none';
-    }
-  }
-}
-
-function showStep(id) {
-  document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
-  document.getElementById(id).classList.add('active');
-  if (_stepTitles[id]) document.title = _stepTitles[id];
-  updateStepper(id);
-}
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
 
 async function init() {
-  // Fetch platform-native mount root early
   try {
-    defaultMountRoot = await invoke('get_default_mount_root');
-    // Remove trailing slash for clean path construction
-    defaultMountRoot = defaultMountRoot.replace(/[/\\]+$/, '');
+    state.defaultMountRoot = await invoke('get_default_mount_root');
+    state.defaultMountRoot = state.defaultMountRoot.replace(/[/\\]+$/, '');
   } catch (e) {
     console.warn('get_default_mount_root failed, using fallback:', e);
   }
 
+  // Static button listeners
   document.getElementById('sign-in-btn').addEventListener('click', startSignIn);
   document.getElementById('copy-btn').addEventListener('click', copyAuthUrl);
   document.getElementById('cancel-btn').addEventListener('click', cancelSignIn);
-  document.getElementById('sources-sp-back-sites').addEventListener('click', () => {
-    document.getElementById('sources-sp-libraries').style.display = 'none';
-    selectedLibraries.clear();
-    updateAddSelectedBtn();
-  });
+  document.getElementById('sources-sp-back-sites').addEventListener('click', backToSites);
   document.getElementById('add-selected-btn').addEventListener('click', confirmSelectedLibraries);
   document.getElementById('sources-sp-search').addEventListener('input', onSourcesSpSearchInput);
   document.getElementById('onedrive-check').addEventListener('change', updateGetStartedBtn);
-  document.getElementById('get-started-btn').addEventListener('click', () => {
-    if (addMountMode) {
-      window.__TAURI__.window.getCurrentWindow().close();
-    } else {
-      getStarted();
-    }
-  });
+  document.getElementById('get-started-btn').addEventListener('click', handleGetStarted);
   document.getElementById('wizard-close-btn').addEventListener('click', () => {
     window.__TAURI__.window.getCurrentWindow().close();
   });
   document.getElementById('switch-account-btn').addEventListener('click', switchAccount);
 
+  // Delegation for dynamic rows (sites, libraries, added sources)
+  document.querySelector('.main-content').addEventListener('click', (e) => {
+    const target = e.target.closest('[data-action]');
+    if (!target) return;
+    if (target.dataset.action === 'select-site') selectSiteById(target.dataset.siteId);
+    else if (target.dataset.action === 'toggle-lib') toggleLibrary(target.dataset.driveId);
+    else if (target.dataset.action === 'remove-source') removeSource(target.dataset.mountId);
+  });
+  // Keyboard support for delegated rows
+  document.querySelector('.main-content').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const target = e.target.closest('[data-action]');
+    if (target) { e.preventDefault(); target.click(); }
+  });
+
   listen('navigate-add-mount', () => goToAddMount());
 
-  try {
-    const authenticated = await invoke('is_authenticated');
-    if (authenticated) {
-      await goToAddMount();
-    }
-  } catch (e) {
-    console.error('init failed:', e);
-    showStatus('Failed to initialize. Please restart.', 'error');
-  }
+  const authenticated = await invoke('is_authenticated').catch(() => false);
+  if (authenticated) await goToAddMount();
 }
 init();
