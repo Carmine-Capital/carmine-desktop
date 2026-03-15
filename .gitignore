@@ -3,6 +3,6 @@
 .envrc
 /node_modules
 /docs/plans
-/docs/superpowers
+.superpowers
 .worktrees
 crates/carminedesktop-app/resources/
