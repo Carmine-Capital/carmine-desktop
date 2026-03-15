@@ -18,8 +18,18 @@ use winreg::RegValue;
 use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, RegType};
 
 /// Office file extensions we register as handlers for.
-#[cfg(target_os = "windows")]
-const OFFICE_EXTENSIONS: &[&str] = &[".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt"];
+pub const OFFICE_EXTENSIONS: &[&str] = &[".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt"];
+
+/// Check if an extension is one we handle (Office file types).
+///
+/// Used to determine whether a fallback to `open::that()` is safe or would
+/// cause an infinite loop (since we're registered as the handler).
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub fn is_handled_extension(ext: &str) -> bool {
+    OFFICE_EXTENSIONS
+        .iter()
+        .any(|&e| e.eq_ignore_ascii_case(ext))
+}
 
 /// Registry value name where we store the previous default handler ProgID.
 #[cfg(target_os = "windows")]
@@ -297,17 +307,6 @@ fn notify_shell_change() {
     unsafe {
         SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
     }
-}
-
-/// Check if an extension is one we handle (Office file types).
-///
-/// Used to determine whether a fallback to `open::that()` is safe or would
-/// cause an infinite loop (since we're registered as the handler).
-#[cfg(target_os = "windows")]
-pub fn is_handled_extension(ext: &str) -> bool {
-    OFFICE_EXTENSIONS
-        .iter()
-        .any(|&e| e.eq_ignore_ascii_case(ext))
 }
 
 /// Well-known Office ProgIDs to try when no saved previous handler exists.
@@ -691,10 +690,6 @@ mod macos {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    /// Office file extensions we register as handlers for.
-    pub(super) const OFFICE_EXTENSIONS: &[&str] =
-        &[".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt"];
-
     /// Mapping from file extensions (without dot) to UTI types.
     /// macOS uses UTIs (Uniform Type Identifiers) for Launch Services.
     const UTI_MAP: &[(&str, &str)] = &[
@@ -858,7 +853,7 @@ mod macos {
 
         let mut previous = load_previous_handlers();
 
-        for ext in OFFICE_EXTENSIONS {
+        for ext in super::OFFICE_EXTENSIONS {
             let ext_no_dot = &ext[1..]; // strip leading dot
             let Some(uti) = uti_for_ext(ext_no_dot) else {
                 tracing::warn!("no UTI mapping for extension {ext}");
@@ -903,7 +898,7 @@ mod macos {
 
         let previous = load_previous_handlers();
 
-        for ext in OFFICE_EXTENSIONS {
+        for ext in super::OFFICE_EXTENSIONS {
             let ext_no_dot = &ext[1..];
             let Some(uti) = uti_for_ext(ext_no_dot) else {
                 continue;
@@ -943,7 +938,7 @@ mod macos {
             return false;
         }
 
-        for ext in OFFICE_EXTENSIONS {
+        for ext in super::OFFICE_EXTENSIONS {
             let ext_no_dot = &ext[1..];
             if let Some(current) = duti_query_default(ext_no_dot)
                 && current == BUNDLE_ID
@@ -1054,13 +1049,6 @@ pub fn get_previous_handler(ext: &str) -> Option<String> {
 #[cfg(target_os = "macos")]
 pub fn resolve_app_path(bundle_id: &str) -> Option<String> {
     macos::resolve_app_path(bundle_id)
-}
-
-#[cfg(target_os = "macos")]
-pub fn is_handled_extension(ext: &str) -> bool {
-    macos::OFFICE_EXTENSIONS
-        .iter()
-        .any(|&e| e.eq_ignore_ascii_case(ext))
 }
 
 /// Discover an Office application handler at runtime (macOS).
