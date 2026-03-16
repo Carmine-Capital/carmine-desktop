@@ -50,6 +50,10 @@ function renderSettings() {
     navPaneField.style.display = '';
     document.getElementById('explorer-nav-pane').checked = s.explorer_nav_pane;
   }
+  const offlineTtl = document.getElementById('offline-ttl');
+  if (offlineTtl) offlineTtl.value = String(s.offline_ttl_secs);
+  const offlineMaxSize = document.getElementById('offline-max-size');
+  if (offlineMaxSize) offlineMaxSize.value = s.offline_max_folder_size;
 }
 
 function renderMounts() {
@@ -248,6 +252,8 @@ async function saveSettings() {
       cacheMaxSize: document.getElementById('cache-max-size').value,
       metadataTtlSecs: metadataTtl,
       logLevel: document.getElementById('log-level').value,
+      offlineTtlSecs: parseInt(document.getElementById('offline-ttl').value) || null,
+      offlineMaxFolderSize: document.getElementById('offline-max-size').value || null,
     });
   } catch (e) {
     showStatus(formatError(e), 'error');
