@@ -58,7 +58,8 @@ impl IpcServer {
                             Ok(()) => {
                                 let app = app.clone();
                                 tokio::spawn(async move {
-                                    let mut reader = BufReader::new(&server);
+                                    let (read_half, mut write_half) = tokio::io::split(server);
+                                    let mut reader = BufReader::new(read_half);
                                     let mut line = String::new();
 
                                     // Read with timeout
@@ -86,8 +87,8 @@ impl IpcServer {
                                     };
 
                                     if let Ok(json) = serde_json::to_string(&response) {
-                                        let _ = (&server).write_all(json.as_bytes()).await;
-                                        let _ = (&server).write_all(b"\n").await;
+                                        let _ = write_half.write_all(json.as_bytes()).await;
+                                        let _ = write_half.write_all(b"\n").await;
                                     }
                                 });
                             }
