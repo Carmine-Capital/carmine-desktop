@@ -337,6 +337,17 @@ async function clearCache() {
   }
 }
 
+async function removeOfflinePin(driveId, itemId, name) {
+  try {
+    await invoke('remove_offline_pin', { driveId, itemId });
+    showStatus('Unpinned ' + name, 'success');
+    const offlinePins = await invoke('list_offline_pins');
+    setState({ offlinePins });
+  } catch (e) {
+    showStatus(formatError(e), 'error');
+  }
+}
+
 // ---------------------------------------------------------------------------
 // File Associations
 // ---------------------------------------------------------------------------
@@ -436,12 +447,13 @@ async function clearOverride(target) {
 
 async function init() {
   try {
-    const [settings, mounts, handlers] = await Promise.all([
+    const [settings, mounts, handlers, offlinePins] = await Promise.all([
       invoke('get_settings'),
       invoke('list_mounts'),
       invoke('get_file_handlers'),
+      invoke('list_offline_pins'),
     ]);
-    setState({ settings, mounts, handlers });
+    setState({ settings, mounts, handlers, offlinePins });
     document.title = settings.app_name + ' Settings';
   } catch (e) {
     showStatus(formatError(e), 'error');
@@ -465,9 +477,9 @@ async function init() {
   });
 
   // Auto-save listeners
-  ['auto-start', 'notifications', 'explorer-nav-pane', 'sync-interval', 'log-level'].forEach(id =>
+  ['auto-start', 'notifications', 'explorer-nav-pane', 'sync-interval', 'log-level', 'offline-ttl'].forEach(id =>
     document.getElementById(id).addEventListener('change', saveSettings));
-  ['cache-dir', 'cache-max-size', 'metadata-ttl'].forEach(id =>
+  ['cache-dir', 'cache-max-size', 'metadata-ttl', 'offline-max-size'].forEach(id =>
     document.getElementById(id).addEventListener('input', debouncedSave));
 
   // Static buttons (direct listeners — not delegated)
@@ -485,6 +497,7 @@ async function init() {
     else if (action === 'override-handler') showOverrideInput(target);
     else if (action === 'set-override') await setOverride(target);
     else if (action === 'clear-override') await clearOverride(target);
+    else if (action === 'remove-pin') await removeOfflinePin(target.dataset.driveId, target.dataset.itemId, target.dataset.name);
   });
 
   document.querySelector('.main-content').addEventListener('change', async (e) => {
@@ -495,11 +508,12 @@ async function init() {
 
   // Backend-triggered refresh
   listen('refresh-settings', async () => {
-    const [settings, mounts] = await Promise.all([
+    const [settings, mounts, offlinePins] = await Promise.all([
       invoke('get_settings'),
       invoke('list_mounts'),
+      invoke('list_offline_pins'),
     ]);
-    setState({ settings, mounts });
+    setState({ settings, mounts, offlinePins });
   });
 }
 
