@@ -1,6 +1,6 @@
 {
   "productName": "Carmine Desktop",
-  "version": "0.1.0-rc.7",
+  "version": "0.1.0-rc.8",
   "identifier": "com.carmine-capital.desktop",
   "build": {
     "frontendDist": "./dist"
@@ -37,7 +37,9 @@
     },
     "windows": {
       "nsis": {
-        "languages": ["English"]
+        "languages": [
+          "English"
+        ]
       }
     },
     "resources": {
