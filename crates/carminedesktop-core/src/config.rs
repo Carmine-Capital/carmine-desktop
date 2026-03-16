@@ -6,6 +6,10 @@ const DEFAULT_CACHE_MAX_SIZE: &str = "5GB";
 const DEFAULT_SYNC_INTERVAL_SECS: u64 = 60;
 const DEFAULT_METADATA_TTL_SECS: u64 = 60;
 const DEFAULT_ROOT_DIR: &str = "Cloud";
+const DEFAULT_OFFLINE_TTL_SECS: u64 = 86400; // 1 day
+const DEFAULT_OFFLINE_MAX_FOLDER_SIZE: &str = "5GB";
+const MIN_OFFLINE_TTL_SECS: u64 = 60; // 1 minute
+const MAX_OFFLINE_TTL_SECS: u64 = 604800; // 7 days
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UserConfig {
@@ -71,6 +75,8 @@ impl UserConfig {
                 "register_file_associations" => g.register_file_associations = None,
                 "file_handler_overrides" => g.file_handler_overrides = None,
                 "explorer_nav_pane" => g.explorer_nav_pane = None,
+                "offline_ttl_secs" => g.offline_ttl_secs = None,
+                "offline_max_folder_size" => g.offline_max_folder_size = None,
                 _ => {}
             }
         }
@@ -184,6 +190,14 @@ pub struct UserGeneralSettings {
     /// Default: true on Windows, false on other platforms.
     #[serde(default)]
     pub explorer_nav_pane: Option<bool>,
+    /// How long pinned folders remain available offline (seconds).
+    /// Default: 86400 (1 day). Clamped to [60, 604800].
+    #[serde(default)]
+    pub offline_ttl_secs: Option<u64>,
+    /// Maximum folder size allowed for offline pinning (e.g. "5GB", "500MB").
+    /// Default: "5GB".
+    #[serde(default)]
+    pub offline_max_folder_size: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,6 +260,10 @@ pub struct EffectiveConfig {
     /// Show Carmine Desktop in Windows Explorer navigation pane.
     /// Default: true on Windows, false on other platforms.
     pub explorer_nav_pane: bool,
+    /// How long pinned folders remain available offline (seconds).
+    pub offline_ttl_secs: u64,
+    /// Maximum folder size allowed for offline pinning.
+    pub offline_max_folder_size: String,
 }
 
 impl EffectiveConfig {
@@ -300,6 +318,15 @@ impl EffectiveConfig {
             .and_then(|g| g.explorer_nav_pane)
             .unwrap_or(default_nav_pane);
 
+        let offline_ttl_secs = user_general
+            .and_then(|g| g.offline_ttl_secs)
+            .unwrap_or(DEFAULT_OFFLINE_TTL_SECS)
+            .clamp(MIN_OFFLINE_TTL_SECS, MAX_OFFLINE_TTL_SECS);
+
+        let offline_max_folder_size = user_general
+            .and_then(|g| g.offline_max_folder_size.clone())
+            .unwrap_or_else(|| DEFAULT_OFFLINE_MAX_FOLDER_SIZE.to_string());
+
         Self {
             auto_start,
             cache_max_size,
@@ -314,6 +341,8 @@ impl EffectiveConfig {
             register_file_associations,
             file_handler_overrides,
             explorer_nav_pane,
+            offline_ttl_secs,
+            offline_max_folder_size,
         }
     }
 }
@@ -490,6 +519,8 @@ pub enum ConfigChangeEvent {
     AutoStartChanged(bool),
     LogLevelChanged(String),
     NotificationsChanged(bool),
+    OfflineTtlChanged(u64),
+    OfflineMaxFolderSizeChanged(String),
 }
 
 pub fn diff_configs(old: &EffectiveConfig, new: &EffectiveConfig) -> Vec<ConfigChangeEvent> {
@@ -519,6 +550,14 @@ pub fn diff_configs(old: &EffectiveConfig, new: &EffectiveConfig) -> Vec<ConfigC
     }
     if old.notifications != new.notifications {
         events.push(ConfigChangeEvent::NotificationsChanged(new.notifications));
+    }
+    if old.offline_ttl_secs != new.offline_ttl_secs {
+        events.push(ConfigChangeEvent::OfflineTtlChanged(new.offline_ttl_secs));
+    }
+    if old.offline_max_folder_size != new.offline_max_folder_size {
+        events.push(ConfigChangeEvent::OfflineMaxFolderSizeChanged(
+            new.offline_max_folder_size.clone(),
+        ));
     }
 
     let old_ids: std::collections::HashSet<&str> =

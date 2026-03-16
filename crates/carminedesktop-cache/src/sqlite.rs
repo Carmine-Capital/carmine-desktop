@@ -60,6 +60,14 @@ impl SqliteStore {
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS pinned_folders (
+                drive_id   TEXT NOT NULL,
+                item_id    TEXT NOT NULL,
+                pinned_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                expires_at TEXT NOT NULL,
+                PRIMARY KEY (drive_id, item_id)
+            );
+
 ",
         )
         .map_err(|e| carminedesktop_core::Error::Cache(format!("failed to create tables: {e}")))?;

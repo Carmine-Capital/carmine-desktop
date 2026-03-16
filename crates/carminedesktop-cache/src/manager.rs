@@ -1,9 +1,11 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use dashmap::DashSet;
 
 use crate::disk::DiskCache;
 use crate::memory::MemoryCache;
+use crate::pin_store::PinStore;
 use crate::sqlite::SqliteStore;
 use crate::writeback::WriteBackBuffer;
 
@@ -14,6 +16,7 @@ pub struct CacheManager {
     pub writeback: WriteBackBuffer,
     /// Inodes known to have stale content (set by delta sync, checked by open_file).
     pub dirty_inodes: DashSet<u64>,
+    pub pin_store: Arc<PinStore>,
 }
 
 impl CacheManager {
@@ -31,6 +34,13 @@ impl CacheManager {
         let memory = MemoryCache::new(ttl_secs);
         let disk = DiskCache::new(cache_dir.join("content"), max_cache_bytes, &db_path)?;
         let writeback = WriteBackBuffer::new(cache_dir);
+        let pin_store = Arc::new(PinStore::open(&db_path)?);
+
+        // Wire eviction protection: items in pinned folder trees are never evicted
+        let ps = pin_store.clone();
+        disk.set_eviction_filter(Arc::new(move |drive_id: &str, item_id: &str| {
+            ps.is_protected(drive_id, item_id)
+        }));
 
         Ok(Self {
             memory,
@@ -38,6 +48,7 @@ impl CacheManager {
             disk,
             writeback,
             dirty_inodes: DashSet::new(),
+            pin_store,
         })
     }
 
