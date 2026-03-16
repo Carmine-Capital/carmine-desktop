@@ -612,6 +612,8 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::redetect_file_handlers,
             commands::save_file_handler_override,
             commands::clear_file_handler_override,
+            commands::list_offline_pins,
+            commands::remove_offline_pin,
         ])
         .setup(move |app| {
             // Populate the opener's AppHandle slot now that the app is running.
