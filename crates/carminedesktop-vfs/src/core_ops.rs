@@ -790,7 +790,10 @@ impl CoreOps {
         }
 
         if self.is_offline() {
-            tracing::debug!(parent_ino, "list_children: offline, skipping Graph API fallback");
+            tracing::debug!(
+                parent_ino,
+                "list_children: offline, skipping Graph API fallback"
+            );
             return Vec::new();
         }
 

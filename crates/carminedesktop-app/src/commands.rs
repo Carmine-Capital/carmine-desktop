@@ -493,11 +493,7 @@ pub fn list_offline_pins(app: AppHandle) -> Result<Vec<OfflinePinInfo>, String> 
 }
 
 #[tauri::command]
-pub fn remove_offline_pin(
-    app: AppHandle,
-    drive_id: String,
-    item_id: String,
-) -> Result<(), String> {
+pub fn remove_offline_pin(app: AppHandle, drive_id: String, item_id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
 
     // Clone Arc out of the lock, then drop it.

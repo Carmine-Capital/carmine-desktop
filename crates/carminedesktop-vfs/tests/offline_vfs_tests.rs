@@ -5,8 +5,8 @@ use carminedesktop_core::types::{DriveItem, FileFacet};
 use carminedesktop_graph::GraphClient;
 use carminedesktop_vfs::core_ops::CoreOps;
 use carminedesktop_vfs::inode::InodeTable;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use wiremock::MockServer;
 
@@ -63,8 +63,14 @@ async fn list_children_returns_sqlite_data_when_offline() {
     let offline = Arc::new(AtomicBool::new(true));
 
     let rt = tokio::runtime::Handle::current();
-    let ops = CoreOps::new(graph, cache.clone(), inodes.clone(), DRIVE_ID.to_string(), rt)
-        .with_offline_flag(offline);
+    let ops = CoreOps::new(
+        graph,
+        cache.clone(),
+        inodes.clone(),
+        DRIVE_ID.to_string(),
+        rt,
+    )
+    .with_offline_flag(offline);
 
     let parent_ino = inodes.allocate("parent-folder");
     let child = make_file("child-file", "readme.txt", 100, "etag1");
@@ -80,7 +86,10 @@ async fn list_children_returns_sqlite_data_when_offline() {
     assert_eq!(children[0].1.name, "readme.txt");
 
     let requests = server.received_requests().await.unwrap();
-    assert!(requests.is_empty(), "offline mode should not make Graph API calls");
+    assert!(
+        requests.is_empty(),
+        "offline mode should not make Graph API calls"
+    );
 
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -96,8 +105,14 @@ async fn open_file_serves_disk_cache_when_offline() {
 
     let rt = tokio::runtime::Handle::current();
     let ops = Arc::new(
-        CoreOps::new(graph, cache.clone(), inodes.clone(), DRIVE_ID.to_string(), rt)
-            .with_offline_flag(offline),
+        CoreOps::new(
+            graph,
+            cache.clone(),
+            inodes.clone(),
+            DRIVE_ID.to_string(),
+            rt,
+        )
+        .with_offline_flag(offline),
     );
 
     let file = make_file("file1", "doc.txt", 5, "etag-abc");
@@ -114,10 +129,16 @@ async fn open_file_serves_disk_cache_when_offline() {
     let fh = tokio::task::spawn_blocking(move || ops2.open_file(file_ino))
         .await
         .unwrap();
-    assert!(fh.is_ok(), "open_file should succeed offline with cached content");
+    assert!(
+        fh.is_ok(),
+        "open_file should succeed offline with cached content"
+    );
 
     let requests = server.received_requests().await.unwrap();
-    assert!(requests.is_empty(), "offline mode should not make Graph API calls");
+    assert!(
+        requests.is_empty(),
+        "offline mode should not make Graph API calls"
+    );
 
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -133,8 +154,14 @@ async fn read_content_serves_disk_cache_when_offline() {
 
     let rt = tokio::runtime::Handle::current();
     let ops = Arc::new(
-        CoreOps::new(graph, cache.clone(), inodes.clone(), DRIVE_ID.to_string(), rt)
-            .with_offline_flag(offline),
+        CoreOps::new(
+            graph,
+            cache.clone(),
+            inodes.clone(),
+            DRIVE_ID.to_string(),
+            rt,
+        )
+        .with_offline_flag(offline),
     );
 
     let file = make_file("file2", "data.bin", 11, "etag-xyz");
@@ -155,7 +182,10 @@ async fn read_content_serves_disk_cache_when_offline() {
     assert_eq!(content.unwrap(), b"hello world");
 
     let requests = server.received_requests().await.unwrap();
-    assert!(requests.is_empty(), "offline mode should not make Graph API calls");
+    assert!(
+        requests.is_empty(),
+        "offline mode should not make Graph API calls"
+    );
 
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -172,8 +202,14 @@ async fn network_error_sets_offline_flag() {
 
     let rt = tokio::runtime::Handle::current();
     let ops = Arc::new(
-        CoreOps::new(graph, cache.clone(), inodes.clone(), DRIVE_ID.to_string(), rt)
-            .with_offline_flag(offline.clone()),
+        CoreOps::new(
+            graph,
+            cache.clone(),
+            inodes.clone(),
+            DRIVE_ID.to_string(),
+            rt,
+        )
+        .with_offline_flag(offline.clone()),
     );
 
     // Allocate a parent with no cached children to force a Graph API call
