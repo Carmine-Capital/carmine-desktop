@@ -132,12 +132,14 @@ impl AuthManager {
         match self.refresh().await {
             Ok(_) => Ok(true),
             Err(e) => {
-                tracing::warn!("token restore: refresh failed: {e}");
-                let mut state = self.state.write().await;
-                state.access_token = None;
-                state.refresh_token = None;
-                state.expires_at = None;
-                Ok(false)
+                tracing::warn!(
+                    "token restore: refresh failed (offline?): {e} — \
+                     keeping stored tokens for later retry"
+                );
+                // Do NOT clear tokens — the refresh token is still valid and
+                // can be retried when the network returns. Clearing them would
+                // prevent mounts from starting in offline mode.
+                Ok(true)
             }
         }
     }
