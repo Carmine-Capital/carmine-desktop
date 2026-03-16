@@ -36,6 +36,8 @@ pub struct SettingsInfo {
     pub root_dir: String,
     pub account_display: Option<String>,
     pub explorer_nav_pane: bool,
+    pub offline_ttl_secs: u64,
+    pub offline_max_folder_size: String,
     pub platform: String,
 }
 
@@ -50,6 +52,16 @@ pub struct SiteInfo {
 pub struct DriveInfo {
     pub id: String,
     pub name: String,
+}
+
+#[derive(Serialize)]
+pub struct OfflinePinInfo {
+    pub drive_id: String,
+    pub item_id: String,
+    pub folder_name: String,
+    pub mount_name: String,
+    pub pinned_at: String,
+    pub expires_at: String,
 }
 
 #[tauri::command]
@@ -183,6 +195,11 @@ pub async fn sign_out(app: AppHandle) -> Result<(), String> {
 
     if let Some(cancel) = state.sync_cancel.lock().unwrap().take() {
         cancel.cancel();
+    }
+
+    if let Err(e) = crate::shell_integration::unregister_context_menu() {
+        tracing::warn!("offline context menu unregistration failed: {e}");
+        errors.push(format!("context menu cleanup: {e}"));
     }
 
     if let Err(e) = state.auth.sign_out().await {
@@ -416,8 +433,88 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsInfo, String> {
         root_dir: config.root_dir.clone(),
         account_display,
         explorer_nav_pane: config.explorer_nav_pane,
+        offline_ttl_secs: config.offline_ttl_secs,
+        offline_max_folder_size: config.offline_max_folder_size.clone(),
         platform: std::env::consts::OS.to_string(),
     })
+}
+
+#[tauri::command]
+pub fn list_offline_pins(app: AppHandle) -> Result<Vec<OfflinePinInfo>, String> {
+    let state = app.state::<AppState>();
+
+    // Extract mount name mapping from config (separate lock scope).
+    let mount_names: std::collections::HashMap<String, String> = {
+        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+        config
+            .mounts
+            .iter()
+            .filter_map(|m| m.drive_id.as_ref().map(|d| (d.clone(), m.name.clone())))
+            .collect()
+    };
+
+    // Collect Arc refs under the lock, then drop it.
+    let entries: Vec<(
+        String,
+        String,
+        std::sync::Arc<carminedesktop_cache::CacheManager>,
+    )> = {
+        let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+        caches
+            .iter()
+            .map(|(drive_id, (cache, _, _, _, _))| {
+                let mount_name = mount_names
+                    .get(drive_id)
+                    .cloned()
+                    .unwrap_or_else(|| drive_id.clone());
+                (drive_id.clone(), mount_name, cache.clone())
+            })
+            .collect()
+    };
+
+    let mut pins = Vec::new();
+    for (drive_id, mount_name, cache) in &entries {
+        let all_pins = cache.pin_store.list_all().map_err(|e| e.to_string())?;
+
+        for pin in all_pins {
+            let folder_name = cache
+                .sqlite
+                .get_item_by_id(&pin.item_id)
+                .ok()
+                .flatten()
+                .map(|(_, item)| item.name)
+                .unwrap_or_else(|| pin.item_id.clone());
+
+            pins.push(OfflinePinInfo {
+                drive_id: drive_id.clone(),
+                item_id: pin.item_id,
+                folder_name,
+                mount_name: mount_name.clone(),
+                pinned_at: pin.pinned_at,
+                expires_at: pin.expires_at,
+            });
+        }
+    }
+
+    Ok(pins)
+}
+
+#[tauri::command]
+pub fn remove_offline_pin(app: AppHandle, drive_id: String, item_id: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+
+    // Clone Arc out of the lock, then drop it.
+    let offline_mgr = {
+        let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+        let (_, _, _, mgr, _) = caches
+            .get(&drive_id)
+            .ok_or_else(|| format!("no mount found for drive {drive_id}"))?;
+        mgr.clone()
+    };
+
+    offline_mgr
+        .unpin_folder(&item_id)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -433,6 +530,8 @@ pub fn save_settings(
     notifications: Option<bool>,
     root_dir: Option<String>,
     explorer_nav_pane: Option<bool>,
+    offline_ttl_secs: Option<u64>,
+    offline_max_folder_size: Option<String>,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
     #[cfg(target_os = "windows")]
@@ -477,6 +576,12 @@ pub fn save_settings(
         }
         if let Some(v) = explorer_nav_pane {
             general.explorer_nav_pane = Some(v);
+        }
+        if let Some(v) = offline_ttl_secs {
+            general.offline_ttl_secs = Some(v);
+        }
+        if let Some(v) = offline_max_folder_size {
+            general.offline_max_folder_size = Some(v);
         }
 
         let cfg_path = config_file_path().map_err(|e| e.to_string())?;
@@ -595,7 +700,7 @@ pub async fn refresh_mount(app: AppHandle, id: String) -> Result<(), String> {
         let mount_caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
         mount_caches
             .get(&drive_id)
-            .map(|(c, i, obs)| (c.clone(), i.clone(), obs.clone()))
+            .map(|(c, i, obs, _, _)| (c.clone(), i.clone(), obs.clone()))
             .ok_or_else(|| format!("no active cache for drive '{drive_id}'"))?
     };
 
@@ -625,7 +730,7 @@ pub async fn clear_cache(app: AppHandle) -> Result<(), String> {
         .lock()
         .map_err(|e| e.to_string())?
         .values()
-        .map(|(c, _, _)| c.clone())
+        .map(|(c, _, _, _, _)| c.clone())
         .collect();
 
     crate::stop_all_mounts(&app);
@@ -967,7 +1072,7 @@ async fn build_direct_url(
 }
 
 /// Resolve a local mount path to its `(drive_id, DriveItem)`.
-async fn resolve_item_for_path(
+pub(crate) async fn resolve_item_for_path(
     state: &AppState,
     local_path: &str,
 ) -> Result<(String, DriveItem), String> {
@@ -993,7 +1098,7 @@ async fn resolve_item_for_path(
 
     let (cache, inodes) = {
         let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
-        let (c, i, _) = caches
+        let (c, i, _, _, _) = caches
             .get(&drive_id)
             .ok_or_else(|| format!("no active cache for drive '{drive_id}'"))?;
         (c.clone(), i.clone())

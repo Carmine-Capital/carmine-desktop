@@ -5,6 +5,8 @@
 
 #[cfg(feature = "desktop")]
 mod commands;
+#[cfg(all(feature = "desktop", target_os = "windows"))]
+mod ipc_server;
 #[cfg(feature = "desktop")]
 mod notify;
 #[cfg(feature = "desktop")]
@@ -81,12 +83,14 @@ use std::collections::HashMap;
 #[cfg(feature = "desktop")]
 use std::sync::Mutex;
 
-/// Per-mount cache entry: `(CacheManager, InodeTable, DeltaSyncObserver)` keyed by drive_id.
+/// Per-mount cache entry: `(CacheManager, InodeTable, DeltaSyncObserver, OfflineManager, offline_flag)` keyed by drive_id.
 #[cfg(feature = "desktop")]
 type MountCacheEntry = (
     Arc<CacheManager>,
     Arc<InodeTable>,
     Option<Arc<dyn carminedesktop_core::DeltaSyncObserver>>,
+    Arc<carminedesktop_cache::OfflineManager>,
+    Arc<std::sync::atomic::AtomicBool>,
 );
 
 /// Snapshot row used by the delta-sync loop.
@@ -98,6 +102,8 @@ type SyncSnapshotRow = (
     Arc<CacheManager>,
     Arc<InodeTable>,
     Option<Arc<dyn carminedesktop_core::DeltaSyncObserver>>,
+    Arc<carminedesktop_cache::OfflineManager>,
+    Arc<std::sync::atomic::AtomicBool>,
 );
 
 #[allow(dead_code)] // Used conditionally across platform×feature combos; referenced by tests on all platforms
@@ -204,6 +210,14 @@ struct CliArgs {
     #[arg(long)]
     open: Option<String>,
 
+    /// Pin a folder for offline use (used by Explorer context menu)
+    #[arg(long)]
+    offline_pin: Option<String>,
+
+    /// Unpin a folder from offline use (used by Explorer context menu)
+    #[arg(long)]
+    offline_unpin: Option<String>,
+
     /// Positional passthrough values (e.g. `carminedesktop://...` deep-link URL on Linux/Windows)
     #[arg(hide = true)]
     _passthrough: Vec<String>,
@@ -234,6 +248,8 @@ pub struct AppState {
     /// Drive ID of the currently signed-in account; `None` when no account is active.
     pub account_id: Mutex<Option<String>>,
     pub tokio_handle: std::sync::OnceLock<tokio::runtime::Handle>,
+    #[cfg(target_os = "windows")]
+    pub ipc_server: Mutex<Option<ipc_server::IpcServer>>,
 }
 
 #[allow(dead_code)] // Used conditionally across platform×feature combos; no platform-specific code
@@ -518,6 +534,8 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
         auth_degraded: AtomicBool::new(false),
         account_id: Mutex::new(None),
         tokio_handle: std::sync::OnceLock::new(),
+        #[cfg(target_os = "windows")]
+        ipc_server: Mutex::new(None),
     };
 
     tauri::Builder::default()
@@ -541,6 +559,20 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
                     if let Err(e) = commands::open_file(handle, path).await {
                         tracing::error!("open from file association failed: {e}");
                     }
+                });
+            } else if let Some(pos) = argv.iter().position(|a| a == "--offline-pin")
+                && let Some(path) = argv.get(pos + 1).cloned()
+            {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = handle_offline_pin(&handle, &path).await;
+                });
+            } else if let Some(pos) = argv.iter().position(|a| a == "--offline-unpin")
+                && let Some(path) = argv.get(pos + 1).cloned()
+            {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = handle_offline_unpin(&handle, &path).await;
                 });
             }
         }))
@@ -580,6 +612,8 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::redetect_file_handlers,
             commands::save_file_handler_override,
             commands::clear_file_handler_override,
+            commands::list_offline_pins,
+            commands::remove_offline_pin,
         ])
         .setup(move |app| {
             // Populate the opener's AppHandle slot now that the app is running.
@@ -742,6 +776,28 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
             }
         }
 
+        // Register offline context menu verbs
+        {
+            let mount_paths: Vec<String> = {
+                let config = state.effective_config.lock().unwrap();
+                config
+                    .mounts
+                    .iter()
+                    .filter(|m| m.enabled)
+                    .map(|m| expand_mount_point(&m.mount_point))
+                    .collect()
+            };
+            if let Err(e) = shell_integration::register_context_menu(&mount_paths) {
+                tracing::warn!("offline context menu registration failed: {e}");
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let ipc = ipc_server::IpcServer::start(app.clone());
+            *state.ipc_server.lock().unwrap() = Some(ipc);
+        }
+
         run_crash_recovery(app);
         start_delta_sync(app);
         // Only spawn periodic update checker if the updater endpoint is configured
@@ -857,6 +913,108 @@ async fn handle_deep_link_url(app: &tauri::AppHandle, url: url::Url) {
 }
 
 #[cfg(feature = "desktop")]
+async fn handle_offline_pin(app: &tauri::AppHandle, path: &str) -> Result<String, String> {
+    use tauri::Manager;
+
+    let state = app.state::<AppState>();
+    if !state
+        .authenticated
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        notify::offline_pin_rejected(app, path, "sign in required");
+        return Err("sign in required".to_string());
+    }
+
+    match resolve_and_pin(app, path).await {
+        Ok(folder_name) => {
+            notify::offline_pin_complete(app, &folder_name);
+            Ok(folder_name)
+        }
+        Err(e) => {
+            let folder_name = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path);
+            notify::offline_pin_failed(app, folder_name, &e);
+            Err(e)
+        }
+    }
+}
+
+#[cfg(feature = "desktop")]
+async fn handle_offline_unpin(app: &tauri::AppHandle, path: &str) -> Result<String, String> {
+    use tauri::Manager;
+
+    let state = app.state::<AppState>();
+    if !state
+        .authenticated
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        return Err("sign in required".to_string());
+    }
+
+    match resolve_and_unpin(app, path).await {
+        Ok(folder_name) => {
+            notify::offline_unpin_complete(app, &folder_name);
+            Ok(folder_name)
+        }
+        Err(e) => {
+            tracing::warn!("offline unpin failed for {path}: {e}");
+            Err(e)
+        }
+    }
+}
+
+#[cfg(feature = "desktop")]
+async fn resolve_and_pin(app: &tauri::AppHandle, path: &str) -> Result<String, String> {
+    use tauri::Manager;
+    let state = app.state::<AppState>();
+    let (drive_id, item) = commands::resolve_item_for_path(&state, path).await?;
+
+    let offline_mgr = {
+        let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+        let (_, _, _, mgr, _) = caches
+            .get(&drive_id)
+            .ok_or_else(|| format!("no active cache for drive '{drive_id}'"))?;
+        mgr.clone()
+    };
+
+    let folder_name = item.name.clone();
+    match offline_mgr
+        .pin_folder(&item.id, &folder_name)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        carminedesktop_cache::PinResult::Ok => Ok(folder_name),
+        carminedesktop_cache::PinResult::Rejected { reason } => {
+            notify::offline_pin_rejected(app, &folder_name, &reason);
+            Err(reason)
+        }
+    }
+}
+
+#[cfg(feature = "desktop")]
+async fn resolve_and_unpin(app: &tauri::AppHandle, path: &str) -> Result<String, String> {
+    use tauri::Manager;
+    let state = app.state::<AppState>();
+    let (drive_id, item) = commands::resolve_item_for_path(&state, path).await?;
+
+    let offline_mgr = {
+        let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+        let (_, _, _, mgr, _) = caches
+            .get(&drive_id)
+            .ok_or_else(|| format!("no active cache for drive '{drive_id}'"))?;
+        mgr.clone()
+    };
+
+    let folder_name = item.name.clone();
+    offline_mgr
+        .unpin_folder(&item.id)
+        .map_err(|e| e.to_string())?;
+    Ok(folder_name)
+}
+
+#[cfg(feature = "desktop")]
 fn remove_mount_from_config(app: &tauri::AppHandle, mount_id: &str) {
     use tauri::Manager;
     let state = app.state::<AppState>();
@@ -926,6 +1084,8 @@ struct MountContext {
     mountpoint: String,
     cache: Arc<CacheManager>,
     inodes: Arc<InodeTable>,
+    offline_manager: Arc<carminedesktop_cache::OfflineManager>,
+    offline_flag: Arc<std::sync::atomic::AtomicBool>,
     event_tx: tokio::sync::mpsc::UnboundedSender<carminedesktop_vfs::core_ops::VfsEvent>,
     event_rx: tokio::sync::mpsc::UnboundedReceiver<carminedesktop_vfs::core_ops::VfsEvent>,
     rt: tokio::runtime::Handle,
@@ -971,6 +1131,14 @@ fn start_mount_common(
                 );
                 notify::mount_access_denied(app, &mount_config.name);
                 return Ok(None);
+            }
+            Err(carminedesktop_core::Error::Network(ref msg)) => {
+                tracing::warn!(
+                    "mount '{}' offline — network unavailable ({msg}), \
+                     proceeding with cached data",
+                    mount_config.name
+                );
+                // Continue to mount creation — VFS will serve from cache.
             }
             Err(e) => {
                 tracing::warn!(
@@ -1035,6 +1203,35 @@ fn start_mount_common(
     let max_inode = cache.sqlite.max_inode().unwrap_or(0);
     let inodes = Arc::new(InodeTable::new_starting_after(max_inode));
 
+    let (offline_ttl, offline_max_bytes) = {
+        let cfg = state.effective_config.lock().map_err(|e| e.to_string())?;
+        (
+            cfg.offline_ttl_secs,
+            parse_cache_size(&cfg.offline_max_folder_size),
+        )
+    };
+
+    let offline_manager = Arc::new(carminedesktop_cache::OfflineManager::new(
+        cache.pin_store.clone(),
+        state.graph.clone(),
+        cache.clone(),
+        drive_id.to_string(),
+        offline_ttl,
+        offline_max_bytes,
+    ));
+
+    // Wire download error handler for desktop notifications
+    {
+        let app_for_notify = app.clone();
+        offline_manager.set_download_error_handler(Arc::new(
+            move |folder_name: &str, error: &str| {
+                notify::offline_pin_failed(&app_for_notify, folder_name, error);
+            },
+        ));
+    }
+
+    let offline_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     let rt = state
         .tokio_handle
         .get()
@@ -1049,6 +1246,8 @@ fn start_mount_common(
         mountpoint,
         cache,
         inodes,
+        offline_manager,
+        offline_flag,
         event_tx,
         event_rx,
         rt,
@@ -1125,6 +1324,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         ctx.rt.clone(),
         Some(ctx.event_tx),
         Some(sync_handle),
+        ctx.offline_flag.clone(),
     )
     .map_err(|e| e.to_string())?;
 
@@ -1133,11 +1333,16 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
     spawn_event_forwarder(&ctx.rt, app, ctx.event_rx);
 
     let observer = Some(handle.delta_observer());
-    state
-        .mount_caches
-        .lock()
-        .unwrap()
-        .insert(ctx.drive_id.clone(), (ctx.cache, ctx.inodes, observer));
+    state.mount_caches.lock().unwrap().insert(
+        ctx.drive_id.clone(),
+        (
+            ctx.cache,
+            ctx.inodes,
+            observer,
+            ctx.offline_manager,
+            ctx.offline_flag,
+        ),
+    );
 
     state
         .mounts
@@ -1187,6 +1392,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         ctx.rt.clone(),
         Some(ctx.event_tx),
         Some(sync_handle),
+        ctx.offline_flag.clone(),
     )
     .map_err(|e| e.to_string())?;
 
@@ -1195,11 +1401,16 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
     spawn_event_forwarder(&ctx.rt, app, ctx.event_rx);
 
     let observer = Some(handle.delta_observer());
-    state
-        .mount_caches
-        .lock()
-        .unwrap()
-        .insert(ctx.drive_id.clone(), (ctx.cache, ctx.inodes, observer));
+    state.mount_caches.lock().unwrap().insert(
+        ctx.drive_id.clone(),
+        (
+            ctx.cache,
+            ctx.inodes,
+            observer,
+            ctx.offline_manager,
+            ctx.offline_flag,
+        ),
+    );
 
     state
         .mounts
@@ -1290,7 +1501,7 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                 let config = state.effective_config.lock().unwrap();
                 caches
                     .iter()
-                    .map(|(drive_id, (c, i, obs))| {
+                    .map(|(drive_id, (c, i, obs, offline_mgr, offline_flag))| {
                         let (mount_id, mount_name) = config
                             .mounts
                             .iter()
@@ -1304,12 +1515,24 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                             c.clone(),
                             i.clone(),
                             obs.clone(),
+                            offline_mgr.clone(),
+                            offline_flag.clone(),
                         )
                     })
                     .collect()
             };
 
-            for (drive_id, mount_id, mount_name, cache, inodes, observer) in &snapshot {
+            for (
+                drive_id,
+                mount_id,
+                mount_name,
+                cache,
+                inodes,
+                observer,
+                offline_mgr,
+                offline_flag,
+            ) in &snapshot
+            {
                 let inodes = inodes.clone();
                 let inode_allocator: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
                     Arc::new(move |item_id: &str| inodes.allocate(item_id));
@@ -1322,9 +1545,23 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                 )
                 .await
                 {
-                    Ok(_result) => {
-                        // Clear 403 state so the user is notified if access is lost again.
+                    Ok(result) => {
                         notified_403.remove(drive_id.as_str());
+                        // Network is working — exit offline mode
+                        offline_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+
+                        // Re-download changed items in pinned folders
+                        if !result.changed_items.is_empty() {
+                            let offline_mgr_clone = offline_mgr.clone();
+                            let changed = result.changed_items.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) =
+                                    offline_mgr_clone.redownload_changed_items(&changed).await
+                                {
+                                    tracing::warn!("offline re-download failed: {e}");
+                                }
+                            });
+                        }
                     }
                     Err(carminedesktop_core::Error::GraphApi { status: 404, .. }) => {
                         tracing::warn!(
@@ -1359,9 +1596,20 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                             tray::update_tray_menu(&app_handle);
                         }
                     }
+                    Err(carminedesktop_core::Error::Network(_)) => {
+                        tracing::warn!("delta sync for {drive_id}: network unavailable");
+                        offline_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
                     Err(e) => {
                         tracing::error!("delta sync failed for drive {drive_id}: {e}");
                     }
+                }
+            }
+
+            // Process expired offline pins (once per cycle)
+            for (_, _, _, _, _, _, offline_mgr, _) in &snapshot {
+                if let Err(e) = offline_mgr.process_expired() {
+                    tracing::warn!("offline expiry processing failed: {e}");
                 }
             }
 
@@ -1389,7 +1637,7 @@ fn run_crash_recovery(app: &tauri::AppHandle) {
         .unwrap()
         .values()
         .next()
-        .map(|(c, _, _)| c.clone())
+        .map(|(c, _, _, _, _)| c.clone())
     {
         Some(c) => c,
         None => return, // No mounts active; nothing to recover.
@@ -1420,6 +1668,17 @@ pub fn graceful_shutdown_without_exit(app: &tauri::AppHandle) {
 
     if let Some(cancel) = state.sync_cancel.lock().unwrap().take() {
         cancel.cancel();
+    }
+
+    if let Err(e) = shell_integration::unregister_context_menu() {
+        tracing::warn!("offline context menu unregistration failed: {e}");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(ipc) = state.ipc_server.lock().unwrap().take() {
+            ipc.stop();
+        }
     }
 
     stop_all_mounts(app);
@@ -1614,6 +1873,7 @@ fn run_headless(
                 let max_inode = mount_cache.sqlite.max_inode().unwrap_or(0);
                 let mount_inodes = Arc::new(InodeTable::new_starting_after(max_inode));
 
+                let offline_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
                 match MountHandle::mount(
                     graph.clone(),
                     mount_cache.clone(),
@@ -1623,6 +1883,7 @@ fn run_headless(
                     rt_handle.clone(),
                     None,
                     None, // no sync processor in headless mode
+                    offline_flag,
                 ) {
                     Ok(handle) => {
                         tracing::info!("mount '{}' started at {mountpoint}", mount_config.name);

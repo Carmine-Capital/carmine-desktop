@@ -1162,3 +1162,185 @@ async fn test_delta_sync_no_observer_still_works() {
 
     let _ = std::fs::remove_dir_all(&base);
 }
+
+// ============================================================================
+// PIN STORE TESTS
+// ============================================================================
+
+#[test]
+fn test_pin_store_pin_and_is_pinned() -> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_pin_store_pin.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let _sqlite = SqliteStore::open(&db_path)?;
+    let pin_store = carminedesktop_cache::PinStore::open(&db_path)?;
+
+    assert!(!pin_store.is_pinned("drive1", "folder1"));
+    pin_store.pin("drive1", "folder1", 86400)?;
+    assert!(pin_store.is_pinned("drive1", "folder1"));
+
+    Ok(())
+}
+
+#[test]
+fn test_pin_store_unpin() -> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_pin_store_unpin.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let _sqlite = SqliteStore::open(&db_path)?;
+    let pin_store = carminedesktop_cache::PinStore::open(&db_path)?;
+
+    pin_store.pin("drive1", "folder1", 86400)?;
+    assert!(pin_store.is_pinned("drive1", "folder1"));
+
+    pin_store.unpin("drive1", "folder1")?;
+    assert!(!pin_store.is_pinned("drive1", "folder1"));
+
+    Ok(())
+}
+
+#[test]
+fn test_pin_store_unpin_nonexistent() -> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_pin_store_unpin_nonexistent.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let _sqlite = SqliteStore::open(&db_path)?;
+    let pin_store = carminedesktop_cache::PinStore::open(&db_path)?;
+
+    // Should not error
+    pin_store.unpin("drive1", "nonexistent")?;
+
+    Ok(())
+}
+
+#[test]
+fn test_pin_store_upsert_refreshes_timestamps() -> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_pin_store_upsert.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let _sqlite = SqliteStore::open(&db_path)?;
+    let pin_store = carminedesktop_cache::PinStore::open(&db_path)?;
+
+    pin_store.pin("drive1", "folder1", 86400)?;
+    let before = pin_store.list_all()?;
+    assert_eq!(before.len(), 1);
+
+    // Pin again — should update, not duplicate
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    pin_store.pin("drive1", "folder1", 172800)?;
+    let after = pin_store.list_all()?;
+    assert_eq!(after.len(), 1);
+
+    Ok(())
+}
+
+#[test]
+fn test_pin_store_list_expired() -> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_pin_store_expired.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let _sqlite = SqliteStore::open(&db_path)?;
+    let pin_store = carminedesktop_cache::PinStore::open(&db_path)?;
+
+    // Pin with TTL=0 so it expires immediately
+    // Note: SQLite datetime('now', '+0 seconds') = now, which is <= now
+    // We need to insert with a very short TTL and check immediately
+    pin_store.pin("drive1", "folder1", 0)?;
+
+    // Wait a moment so expires_at is definitely in the past
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    let expired = pin_store.list_expired()?;
+    // TTL=0 means expires_at = datetime('now', '+0 seconds') = now
+    // list_expired checks expires_at <= datetime('now'), so it should match
+    assert!(!expired.is_empty(), "pin with TTL=0 should be expired");
+
+    Ok(())
+}
+
+#[test]
+fn test_pin_store_list_all() -> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_pin_store_list_all.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let _sqlite = SqliteStore::open(&db_path)?;
+    let pin_store = carminedesktop_cache::PinStore::open(&db_path)?;
+
+    pin_store.pin("drive1", "folder1", 86400)?;
+    pin_store.pin("drive1", "folder2", 86400)?;
+    pin_store.pin("drive2", "folder3", 86400)?;
+
+    let all = pin_store.list_all()?;
+    assert_eq!(all.len(), 3);
+
+    Ok(())
+}
+
+// ============================================================================
+// DISK CACHE EVICTION FILTER TESTS
+// ============================================================================
+
+#[tokio::test]
+async fn test_disk_eviction_skips_protected_entries() -> carminedesktop_core::Result<()> {
+    use std::sync::Arc;
+
+    let cache_dir = std::env::temp_dir().join("test_disk_eviction_protected");
+    let db_path = cache_dir.join("tracker.db");
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    std::fs::create_dir_all(&cache_dir)?;
+
+    // Small max size to trigger eviction
+    let cache = DiskCache::new(cache_dir.join("content"), 30, &db_path)?;
+
+    // Protect item1
+    cache.set_eviction_filter(Arc::new(|_drive_id: &str, item_id: &str| {
+        item_id == "item1"
+    }));
+
+    // Add entries: item1 (protected), item2, item3
+    cache.put("drive1", "item1", b"1234567890", None).await?;
+    sleep(Duration::from_millis(10)).await;
+    cache.put("drive1", "item2", b"1234567890", None).await?;
+    sleep(Duration::from_millis(10)).await;
+    // This put should trigger eviction — item2 should be evicted, item1 protected
+    cache.put("drive1", "item3", b"1234567890", None).await?;
+
+    // item1 should survive (protected)
+    assert!(
+        cache.get("drive1", "item1").await.is_some(),
+        "protected item1 should survive eviction"
+    );
+    // item3 should survive (just added)
+    assert!(
+        cache.get("drive1", "item3").await.is_some(),
+        "item3 should survive (just added)"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_disk_eviction_no_filter_behavior_unchanged() -> carminedesktop_core::Result<()> {
+    let cache_dir = std::env::temp_dir().join("test_disk_eviction_no_filter");
+    let db_path = cache_dir.join("tracker.db");
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    std::fs::create_dir_all(&cache_dir)?;
+
+    let cache = DiskCache::new(cache_dir.join("content"), 25, &db_path)?;
+
+    // No filter set — standard LRU eviction
+    cache.put("drive1", "item1", b"1234567890", None).await?;
+    sleep(Duration::from_millis(10)).await;
+    cache.put("drive1", "item2", b"1234567890", None).await?;
+    sleep(Duration::from_millis(10)).await;
+    // This should trigger eviction of item1 (oldest)
+    cache.put("drive1", "item3", b"1234567890", None).await?;
+
+    // item1 should be evicted (oldest, no filter to protect it)
+    assert!(
+        cache.get("drive1", "item1").await.is_none(),
+        "item1 should be evicted (oldest)"
+    );
+
+    Ok(())
+}

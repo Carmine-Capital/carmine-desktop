@@ -9,6 +9,7 @@ const state = {
   settings: {},
   mounts: [],
   handlers: [],
+  offlinePins: [],
   activePanel: 'general',
 };
 
@@ -49,6 +50,10 @@ function renderSettings() {
     navPaneField.style.display = '';
     document.getElementById('explorer-nav-pane').checked = s.explorer_nav_pane;
   }
+  const offlineTtl = document.getElementById('offline-ttl');
+  if (offlineTtl) offlineTtl.value = String(s.offline_ttl_secs);
+  const offlineMaxSize = document.getElementById('offline-max-size');
+  if (offlineMaxSize) offlineMaxSize.value = s.offline_max_folder_size;
 }
 
 function renderMounts() {
@@ -151,11 +156,75 @@ function renderHandlers() {
   }
 }
 
+function formatTimeRemaining(expiresAt) {
+  const now = new Date();
+  const expires = new Date(expiresAt + 'Z');
+  const diffMs = expires - now;
+  if (diffMs <= 0) return { text: 'Expired', expired: true };
+  const hours = Math.floor(diffMs / 3600000);
+  const days = Math.floor(hours / 24);
+  if (days > 0) return { text: days + 'd ' + (hours % 24) + 'h remaining', expired: false };
+  const mins = Math.floor((diffMs % 3600000) / 60000);
+  if (hours > 0) return { text: hours + 'h ' + mins + 'm remaining', expired: false };
+  return { text: mins + 'm remaining', expired: false };
+}
+
+function renderOfflinePins() {
+  const list = document.getElementById('pin-list');
+  if (!list) return;
+  list.innerHTML = '';
+
+  state.offlinePins.forEach(pin => {
+    const li = document.createElement('li');
+    li.className = 'pin-row';
+
+    const info = document.createElement('div');
+    info.className = 'pin-info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'pin-name';
+    nameEl.textContent = pin.folder_name;
+    const metaEl = document.createElement('div');
+    metaEl.className = 'pin-meta';
+    const remaining = formatTimeRemaining(pin.expires_at);
+    const expirySpan = document.createElement('span');
+    expirySpan.className = 'pin-expiry' + (remaining.expired ? ' expired' : '');
+    expirySpan.textContent = remaining.text;
+    metaEl.appendChild(document.createTextNode(pin.mount_name + ' \u00B7 '));
+    metaEl.appendChild(expirySpan);
+    info.appendChild(nameEl);
+    info.appendChild(metaEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'pin-actions';
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'btn-icon btn-icon-danger';
+    removeBtn.dataset.action = 'remove-pin';
+    removeBtn.dataset.driveId = pin.drive_id;
+    removeBtn.dataset.itemId = pin.item_id;
+    removeBtn.dataset.name = pin.folder_name;
+    removeBtn.title = 'Remove offline pin';
+    removeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
+
+    actions.appendChild(removeBtn);
+    li.appendChild(info);
+    li.appendChild(actions);
+    list.appendChild(li);
+  });
+
+  if (state.offlinePins.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'pin-empty';
+    empty.textContent = 'No folders pinned for offline use';
+    list.appendChild(empty);
+  }
+}
+
 function render() {
   renderNav();
   renderSettings();
   renderMounts();
   renderHandlers();
+  renderOfflinePins();
 }
 
 // ---------------------------------------------------------------------------
@@ -183,6 +252,8 @@ async function saveSettings() {
       cacheMaxSize: document.getElementById('cache-max-size').value,
       metadataTtlSecs: metadataTtl,
       logLevel: document.getElementById('log-level').value,
+      offlineTtlSecs: parseInt(document.getElementById('offline-ttl').value) || null,
+      offlineMaxFolderSize: document.getElementById('offline-max-size').value || null,
     });
   } catch (e) {
     showStatus(formatError(e), 'error');
@@ -263,6 +334,17 @@ async function clearCache() {
     btn.disabled = false;
     btn.textContent = origText;
     showStatus('Failed to clear cache: ' + formatError(e), 'error');
+  }
+}
+
+async function removeOfflinePin(driveId, itemId, name) {
+  try {
+    await invoke('remove_offline_pin', { driveId, itemId });
+    showStatus('Unpinned ' + name, 'success');
+    const offlinePins = await invoke('list_offline_pins');
+    setState({ offlinePins });
+  } catch (e) {
+    showStatus(formatError(e), 'error');
   }
 }
 
@@ -365,12 +447,13 @@ async function clearOverride(target) {
 
 async function init() {
   try {
-    const [settings, mounts, handlers] = await Promise.all([
+    const [settings, mounts, handlers, offlinePins] = await Promise.all([
       invoke('get_settings'),
       invoke('list_mounts'),
       invoke('get_file_handlers'),
+      invoke('list_offline_pins'),
     ]);
-    setState({ settings, mounts, handlers });
+    setState({ settings, mounts, handlers, offlinePins });
     document.title = settings.app_name + ' Settings';
   } catch (e) {
     showStatus(formatError(e), 'error');
@@ -394,9 +477,9 @@ async function init() {
   });
 
   // Auto-save listeners
-  ['auto-start', 'notifications', 'explorer-nav-pane', 'sync-interval', 'log-level'].forEach(id =>
+  ['auto-start', 'notifications', 'explorer-nav-pane', 'sync-interval', 'log-level', 'offline-ttl'].forEach(id =>
     document.getElementById(id).addEventListener('change', saveSettings));
-  ['cache-dir', 'cache-max-size', 'metadata-ttl'].forEach(id =>
+  ['cache-dir', 'cache-max-size', 'metadata-ttl', 'offline-max-size'].forEach(id =>
     document.getElementById(id).addEventListener('input', debouncedSave));
 
   // Static buttons (direct listeners — not delegated)
@@ -414,6 +497,7 @@ async function init() {
     else if (action === 'override-handler') showOverrideInput(target);
     else if (action === 'set-override') await setOverride(target);
     else if (action === 'clear-override') await clearOverride(target);
+    else if (action === 'remove-pin') await removeOfflinePin(target.dataset.driveId, target.dataset.itemId, target.dataset.name);
   });
 
   document.querySelector('.main-content').addEventListener('change', async (e) => {
@@ -424,11 +508,12 @@ async function init() {
 
   // Backend-triggered refresh
   listen('refresh-settings', async () => {
-    const [settings, mounts] = await Promise.all([
+    const [settings, mounts, offlinePins] = await Promise.all([
       invoke('get_settings'),
       invoke('list_mounts'),
+      invoke('list_offline_pins'),
     ]);
-    setState({ settings, mounts });
+    setState({ settings, mounts, offlinePins });
   });
 }
 

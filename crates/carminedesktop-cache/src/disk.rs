@@ -1,15 +1,18 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use rusqlite::{Connection, params};
 use tokio::fs;
+
+type EvictionFilter = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
 
 pub struct DiskCache {
     base_dir: PathBuf,
     max_size_bytes: AtomicU64,
     tracker: Mutex<Connection>,
+    eviction_filter: std::sync::RwLock<Option<EvictionFilter>>,
 }
 
 impl DiskCache {
@@ -63,6 +66,7 @@ impl DiskCache {
             base_dir,
             max_size_bytes: AtomicU64::new(max_size_bytes),
             tracker: Mutex::new(conn),
+            eviction_filter: std::sync::RwLock::new(None),
         })
     }
 
@@ -238,6 +242,13 @@ impl DiskCache {
         self.max_size_bytes.store(max_size_bytes, Ordering::Relaxed);
     }
 
+    /// Set a filter predicate for eviction.  If the filter returns `true`
+    /// for a (drive_id, item_id) pair, that entry is skipped during LRU
+    /// eviction (it is "protected").
+    pub fn set_eviction_filter(&self, filter: EvictionFilter) {
+        *self.eviction_filter.write().unwrap() = Some(filter);
+    }
+
     pub fn total_size(&self) -> u64 {
         let conn = match self.tracker.lock() {
             Ok(c) => c,
@@ -291,10 +302,17 @@ impl DiskCache {
             entries
         };
 
+        let filter = self.eviction_filter.read().unwrap().clone();
         let mut freed: u64 = 0;
         for (drive_id, item_id, size) in entries {
             if freed >= to_free {
                 break;
+            }
+            // Skip protected (pinned) entries
+            if let Some(ref f) = filter
+                && f(&drive_id, &item_id)
+            {
+                continue;
             }
             let path = self.content_path(&drive_id, &item_id);
             let _ = fs::remove_file(&path).await;
@@ -306,6 +324,13 @@ impl DiskCache {
             }
             freed += size as u64;
             tracing::debug!("evicted cache entry {drive_id}/{item_id} ({size} bytes)");
+        }
+
+        if freed < to_free {
+            tracing::warn!(
+                "cache eviction could not free enough space: freed {freed} bytes, \
+                 target was {to_free} (some entries may be protected by offline pins)"
+            );
         }
 
         tracing::info!("cache eviction freed {freed} bytes (target was {to_free})");

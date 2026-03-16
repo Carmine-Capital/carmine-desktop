@@ -476,6 +476,7 @@ pub struct CoreOps {
     sync_handle: Option<crate::sync_processor::SyncHandle>,
     quota_cache: std::sync::Mutex<Option<(Instant, DriveQuota)>>,
     inode_invalidator: Option<InodeInvalidator>,
+    offline: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl CoreOps {
@@ -497,6 +498,7 @@ impl CoreOps {
             sync_handle: None,
             quota_cache: std::sync::Mutex::new(None),
             inode_invalidator: None,
+            offline: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -513,6 +515,26 @@ impl CoreOps {
     pub fn with_inode_invalidator(mut self, f: InodeInvalidator) -> Self {
         self.inode_invalidator = Some(f);
         self
+    }
+
+    pub fn with_offline_flag(mut self, flag: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        self.offline = flag;
+        self
+    }
+
+    /// Returns `true` when the VFS is operating in offline/cache-only mode.
+    pub(crate) fn is_offline(&self) -> bool {
+        self.offline.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Mark the VFS as offline after a network failure.
+    pub(crate) fn set_offline(&self) {
+        if !self
+            .offline
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            tracing::warn!(drive_id = %self.drive_id, "VFS entering offline mode — serving from cache only");
+        }
     }
 
     pub fn send_event(&self, event: VfsEvent) {
@@ -697,6 +719,10 @@ impl CoreOps {
             }
         }
 
+        if self.is_offline() {
+            return None;
+        }
+
         let parent_item_id = self.inodes.get_item_id(parent_ino)?;
         match self
             .rt
@@ -724,6 +750,9 @@ impl CoreOps {
                 return found;
             }
             Err(e) => {
+                if matches!(&e, carminedesktop_core::Error::Network(_)) {
+                    self.set_offline();
+                }
                 tracing::warn!(parent_ino, name, "find_child graph fallback failed: {e}");
             }
         }
@@ -760,6 +789,14 @@ impl CoreOps {
             }
         }
 
+        if self.is_offline() {
+            tracing::debug!(
+                parent_ino,
+                "list_children: offline, skipping Graph API fallback"
+            );
+            return Vec::new();
+        }
+
         let Some(item_id) = self.inodes.get_item_id(parent_ino) else {
             tracing::warn!(parent_ino, "list_children: no item_id for inode");
             return Vec::new();
@@ -789,6 +826,9 @@ impl CoreOps {
                 result
             }
             Err(e) => {
+                if matches!(&e, carminedesktop_core::Error::Network(_)) {
+                    self.set_offline();
+                }
                 tracing::error!(parent_ino, %item_id, "list_children graph fallback failed: {e}");
                 Vec::new()
             }
@@ -806,6 +846,17 @@ impl CoreOps {
             .block_on(self.cache.writeback.read(&self.drive_id, &item_id))
         {
             return Ok(content);
+        }
+
+        // Offline mode: serve from disk cache without freshness validation
+        if self.is_offline() {
+            if let Some((content, _)) = self
+                .rt
+                .block_on(self.cache.disk.get_with_etag(&self.drive_id, &item_id))
+            {
+                return Ok(content);
+            }
+            return Err(VfsError::IoError("file not available offline".to_string()));
         }
 
         // Check disk cache with freshness validation
@@ -846,6 +897,9 @@ impl CoreOps {
                 Ok(content.to_vec())
             }
             Err(e) => {
+                if matches!(&e, carminedesktop_core::Error::Network(_)) {
+                    self.set_offline();
+                }
                 tracing::error!("download failed for {item_id}: {e}");
                 Err(VfsError::IoError(format!("download failed: {e}")))
             }
@@ -1007,6 +1061,19 @@ impl CoreOps {
                 .insert(ino, DownloadState::Complete(content)));
         }
 
+        // Offline fast-path: skip metadata refresh, serve from disk cache as-is
+        if self.is_offline() {
+            if let Some((content, _)) = self
+                .rt
+                .block_on(self.cache.disk.get_with_etag(&self.drive_id, &item_id))
+            {
+                return Ok(self
+                    .open_files
+                    .insert(ino, DownloadState::Complete(content)));
+            }
+            return Err(VfsError::IoError("file not available offline".to_string()));
+        }
+
         // Refresh metadata from the server BEFORE checking the disk cache.
         // With FUSE_WRITEBACK_CACHE the kernel ignores size/mtime updates from
         // getattr, so a stale cached size causes reads to be truncated.
@@ -1049,6 +1116,9 @@ impl CoreOps {
                 Some(fresh)
             }
             Err(e) => {
+                if matches!(&e, carminedesktop_core::Error::Network(_)) {
+                    self.set_offline();
+                }
                 tracing::warn!(
                     ino,
                     "open_file: get_item refresh failed: {e}, using cached metadata"

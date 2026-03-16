@@ -166,6 +166,8 @@ fn test_user_config_save_and_load_roundtrip() -> carminedesktop_core::Result<()>
             register_file_associations: None,
             file_handler_overrides: None,
             explorer_nav_pane: None,
+            offline_ttl_secs: None,
+            offline_max_folder_size: None,
         }),
         mounts: vec![MountConfig {
             id: "user-mount1".to_string(),

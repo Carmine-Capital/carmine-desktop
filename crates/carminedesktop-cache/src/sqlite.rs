@@ -60,6 +60,14 @@ impl SqliteStore {
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS pinned_folders (
+                drive_id   TEXT NOT NULL,
+                item_id    TEXT NOT NULL,
+                pinned_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                expires_at TEXT NOT NULL,
+                PRIMARY KEY (drive_id, item_id)
+            );
+
 ",
         )
         .map_err(|e| carminedesktop_core::Error::Cache(format!("failed to create tables: {e}")))?;
@@ -133,6 +141,31 @@ impl SqliteStore {
                     carminedesktop_core::Error::Cache(format!("deserialize failed: {e}"))
                 })?;
                 Ok(Some((inode, item)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_item_by_inode(&self, inode: u64) -> carminedesktop_core::Result<Option<DriveItem>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare_cached("SELECT json_data FROM items WHERE inode = ?1")
+            .map_err(|e| carminedesktop_core::Error::Cache(format!("prepare failed: {e}")))?;
+
+        let result = stmt
+            .query_row(params![inode as i64], |row| {
+                let json: String = row.get(0)?;
+                Ok(json)
+            })
+            .optional()
+            .map_err(|e| carminedesktop_core::Error::Cache(format!("query failed: {e}")))?;
+
+        match result {
+            Some(json) => {
+                let item: DriveItem = serde_json::from_str(&json).map_err(|e| {
+                    carminedesktop_core::Error::Cache(format!("deserialize failed: {e}"))
+                })?;
+                Ok(Some(item))
             }
             None => Ok(None),
         }

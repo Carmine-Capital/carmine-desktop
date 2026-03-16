@@ -55,6 +55,13 @@ const PREVIOUS_HANDLER_VALUE: &str = "CarmineDesktop.PreviousHandler";
 #[cfg(target_os = "windows")]
 const PROGID_PREFIX: &str = "CarmineDesktop.OfficeFile";
 
+/// Registry verb ID for the "Make available offline" context menu entry.
+#[cfg(target_os = "windows")]
+const CONTEXT_MENU_OFFLINE: &str = "CarmineDesktop.MakeOffline";
+/// Registry verb ID for the "Free up space" context menu entry.
+#[cfg(target_os = "windows")]
+const CONTEXT_MENU_FREE_SPACE: &str = "CarmineDesktop.FreeSpace";
+
 /// Register Carmine Desktop as the handler for Office file types.
 ///
 /// For each extension:
@@ -680,6 +687,121 @@ pub fn ensure_nav_pane(cloud_root: &std::path::Path) -> carminedesktop_core::Res
     register_nav_pane(cloud_root)
 }
 
+/// Register "Make available offline" and "Free up space" context menu
+/// verbs under `HKCU\Software\Classes\Directory\shell\`.
+///
+/// The verbs are scoped to VFS mount paths via the `AppliesTo` AQS filter
+/// so they only appear on folders within Carmine Desktop mounts.
+///
+/// Calls `SHChangeNotify` afterwards so Explorer picks up the change.
+#[cfg(target_os = "windows")]
+pub fn register_context_menu(mount_paths: &[String]) -> carminedesktop_core::Result<()> {
+    if mount_paths.is_empty() {
+        return Ok(());
+    }
+
+    let exe_path = std::env::current_exe().map_err(|e| {
+        carminedesktop_core::Error::Config(format!("failed to get current exe path: {e}"))
+    })?;
+    let exe_str = exe_path.to_string_lossy();
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let dir_shell = hkcu.create_subkey(r"Software\Classes\Directory\shell")?.0;
+
+    // Build AppliesTo AQS filter: OR-join mount paths
+    let applies_to = mount_paths
+        .iter()
+        .map(|p| format!("System.ItemPathDisplay:~<\"{}\"", p))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+
+    // Register "Make available offline"
+    {
+        let (verb_key, _) = dir_shell.create_subkey(CONTEXT_MENU_OFFLINE)?;
+        verb_key.set_value("MUIVerb", &"Make available offline")?;
+        verb_key.set_value("AppliesTo", &applies_to)?;
+        verb_key.set_value("Icon", &format!("{exe_str},0"))?;
+        let (cmd_key, _) = verb_key.create_subkey("command")?;
+        cmd_key.set_value("", &format!("\"{}\" --offline-pin \"%V\"", exe_str))?;
+    }
+
+    // Register "Free up space"
+    {
+        let (verb_key, _) = dir_shell.create_subkey(CONTEXT_MENU_FREE_SPACE)?;
+        verb_key.set_value("MUIVerb", &"Free up space")?;
+        verb_key.set_value("AppliesTo", &applies_to)?;
+        verb_key.set_value("Icon", &format!("{exe_str},0"))?;
+        let (cmd_key, _) = verb_key.create_subkey("command")?;
+        cmd_key.set_value("", &format!("\"{}\" --offline-unpin \"%V\"", exe_str))?;
+    }
+
+    notify_shell_change();
+    tracing::info!("registered offline context menu verbs");
+    Ok(())
+}
+
+/// Remove the offline context menu verbs from the registry.
+///
+/// Missing keys are silently ignored (idempotent).
+#[cfg(target_os = "windows")]
+pub fn unregister_context_menu() -> carminedesktop_core::Result<()> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let dir_shell = match hkcu
+        .open_subkey_with_flags(r"Software\Classes\Directory\shell", KEY_READ | KEY_WRITE)
+    {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::debug!("could not open Directory\\shell: {e}, skipping");
+            return Ok(());
+        }
+    };
+
+    for verb in [CONTEXT_MENU_OFFLINE, CONTEXT_MENU_FREE_SPACE] {
+        match dir_shell.delete_subkey_all(verb) {
+            Ok(()) => tracing::debug!("removed context menu verb {verb}"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::debug!("context menu verb {verb} not found, skipping");
+            }
+            Err(e) => {
+                tracing::warn!("failed to remove context menu verb {verb}: {e}");
+            }
+        }
+    }
+
+    notify_shell_change();
+    tracing::info!("unregistered offline context menu verbs");
+    Ok(())
+}
+
+/// Update the `AppliesTo` filter on existing context menu verbs
+/// without a full unregister/register cycle.
+#[cfg(target_os = "windows")]
+#[allow(dead_code)] // Reserved for future use when mount paths change dynamically
+pub fn update_context_menu_paths(mount_paths: &[String]) -> carminedesktop_core::Result<()> {
+    if mount_paths.is_empty() {
+        return unregister_context_menu();
+    }
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let dir_shell =
+        hkcu.open_subkey_with_flags(r"Software\Classes\Directory\shell", KEY_READ | KEY_WRITE)?;
+
+    let applies_to = mount_paths
+        .iter()
+        .map(|p| format!("System.ItemPathDisplay:~<\"{}\"", p))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+
+    for verb in [CONTEXT_MENU_OFFLINE, CONTEXT_MENU_FREE_SPACE] {
+        if let Ok(verb_key) = dir_shell.open_subkey_with_flags(verb, KEY_READ | KEY_WRITE) {
+            verb_key.set_value("AppliesTo", &applies_to)?;
+        }
+    }
+
+    notify_shell_change();
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Linux shell integration — no-op stubs
 // ---------------------------------------------------------------------------
@@ -710,6 +832,22 @@ pub fn get_previous_handler(_ext: &str) -> Option<String> {
 #[cfg(target_os = "linux")]
 pub fn discover_office_handler(_ext: &str) -> Option<String> {
     None
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn register_context_menu(_mount_paths: &[String]) -> carminedesktop_core::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn unregister_context_menu() -> carminedesktop_core::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+#[allow(dead_code)] // Reserved for future use when mount paths change dynamically
+pub fn update_context_menu_paths(_mount_paths: &[String]) -> carminedesktop_core::Result<()> {
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

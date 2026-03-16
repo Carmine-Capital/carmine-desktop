@@ -78,6 +78,7 @@ impl TestFixture {
             rt,
             None,
             None,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .expect("FUSE mount failed — is FUSE available?");
 
@@ -214,6 +215,7 @@ async fn mount_fails_when_root_fetch_returns_error() {
         rt,
         None,
         None,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
     );
 
     assert!(result.is_err(), "mount should fail when root fetch fails");

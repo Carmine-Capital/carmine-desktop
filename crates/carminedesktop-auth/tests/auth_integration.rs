@@ -295,6 +295,41 @@ async fn try_restore_succeeds_directly_when_tokens_under_account_id() {
     storage::delete_tokens(account_id).unwrap();
 }
 
+/// Verify that try_restore succeeds with expired tokens when network is unavailable.
+/// The refresh will fail but stored tokens should be preserved for later retry.
+#[tokio::test]
+async fn test_try_restore_keeps_tokens_when_refresh_fails() -> carminedesktop_core::Result<()> {
+    let account_id = "offline-restore-test";
+    let _ = carminedesktop_auth::storage::delete_tokens(account_id);
+
+    // Store tokens with an already-expired access token
+    let expired_tokens = TokenResponse {
+        access_token: "expired-access".to_string(),
+        refresh_token: "valid-refresh".to_string(),
+        expires_at: chrono::Utc::now() - chrono::Duration::hours(1),
+    };
+    carminedesktop_auth::storage::store_tokens(account_id, &expired_tokens)?;
+
+    // AuthManager with no real tenant — refresh() will fail with network error
+    let manager = carminedesktop_auth::AuthManager::new(
+        "test-client-id".to_string(),
+        Some("nonexistent-tenant".to_string()),
+        std::sync::Arc::new(|_: &str| Err("no browser".to_string())),
+    );
+
+    // try_restore should return Ok(true) even though refresh fails,
+    // because stored tokens exist and can be retried later
+    let result = manager.try_restore(account_id).await?;
+    assert!(
+        result,
+        "try_restore should return true when stored tokens exist"
+    );
+
+    // Cleanup
+    let _ = carminedesktop_auth::storage::delete_tokens(account_id);
+    Ok(())
+}
+
 #[test]
 fn test_display_detection() {
     use carminedesktop_auth::oauth::has_display;
