@@ -58,17 +58,19 @@ impl IpcServer {
                             Ok(()) => {
                                 let app = app.clone();
                                 tokio::spawn(async move {
-                                    let mut reader = BufReader::new(&server);
+                                    let mut server = server;
                                     let mut line = String::new();
 
-                                    // Read with timeout
-                                    let read_result = tokio::time::timeout(
-                                        std::time::Duration::from_secs(5),
-                                        reader.read_line(&mut line),
-                                    ).await;
-
-                                    // Drop reader to release the shared borrow's buffer
-                                    drop(reader);
+                                    // Read phase (scoped to release &mut server)
+                                    let read_result = {
+                                        let mut reader =
+                                            BufReader::new(&mut server);
+                                        tokio::time::timeout(
+                                            std::time::Duration::from_secs(5),
+                                            reader.read_line(&mut line),
+                                        )
+                                        .await
+                                    };
 
                                     let response = match read_result {
                                         Ok(Ok(n)) if n > 0 && n <= MAX_MESSAGE_SIZE => {
@@ -89,9 +91,8 @@ impl IpcServer {
                                     };
 
                                     if let Ok(json) = serde_json::to_string(&response) {
-                                        let mut w = &server;
-                                        let _ = w.write_all(json.as_bytes()).await;
-                                        let _ = w.write_all(b"\n").await;
+                                        let _ = server.write_all(json.as_bytes()).await;
+                                        let _ = server.write_all(b"\n").await;
                                     }
                                 });
                             }
