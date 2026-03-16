@@ -58,8 +58,7 @@ impl IpcServer {
                             Ok(()) => {
                                 let app = app.clone();
                                 tokio::spawn(async move {
-                                    let (read_half, mut write_half) = tokio::io::split(server);
-                                    let mut reader = BufReader::new(read_half);
+                                    let mut reader = BufReader::new(&server);
                                     let mut line = String::new();
 
                                     // Read with timeout
@@ -67,6 +66,9 @@ impl IpcServer {
                                         std::time::Duration::from_secs(5),
                                         reader.read_line(&mut line),
                                     ).await;
+
+                                    // Drop reader to release the shared borrow's buffer
+                                    drop(reader);
 
                                     let response = match read_result {
                                         Ok(Ok(n)) if n > 0 && n <= MAX_MESSAGE_SIZE => {
@@ -87,8 +89,9 @@ impl IpcServer {
                                     };
 
                                     if let Ok(json) = serde_json::to_string(&response) {
-                                        let _ = write_half.write_all(json.as_bytes()).await;
-                                        let _ = write_half.write_all(b"\n").await;
+                                        let mut w = &server;
+                                        let _ = w.write_all(json.as_bytes()).await;
+                                        let _ = w.write_all(b"\n").await;
                                     }
                                 });
                             }
