@@ -162,6 +162,39 @@
         </button>
       </div>
 
+      <!-- Offline panel -->
+      <div class="panel" id="panel-offline" role="tabpanel" aria-labelledby="tab-offline">
+        <p class="section-heading">Pinned Folders</p>
+        <ul class="pin-list" id="pin-list"></ul>
+
+        <p class="section-heading">Settings</p>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <div class="label-text">Auto-removal</div>
+            <div class="label-sub">How long pinned folders stay available offline</div>
+          </div>
+          <div class="setting-control">
+            <select id="offline-ttl">
+              <option value="3600">1 hour</option>
+              <option value="86400">1 day</option>
+              <option value="259200">3 days</option>
+              <option value="604800">7 days</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <div class="label-text">Max folder size</div>
+            <div class="label-sub">Largest folder allowed for offline pinning</div>
+          </div>
+          <div class="setting-control">
+            <input type="text" id="offline-max-size" placeholder="5GB">
+          </div>
+        </div>
+      </div>
+
       <!-- About panel -->
       <div class="panel" id="panel-about" role="tabpanel" aria-labelledby="tab-about">
         <p class="section-heading">About</p>
