@@ -276,6 +276,24 @@ select {
 .handler-override-input { width: 10rem; font-size: 11px; padding: var(--space-1) var(--space-2); }
 .handler-empty { color: var(--text-muted); font-style: italic; padding: 9px 0; }
 
+/* ── Pin list (Offline panel) ─────────────────────────────── */
+.pin-list { list-style: none; padding: 0; }
+.pin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-row);
+}
+.pin-row:last-child { border-bottom: none; }
+.pin-info { flex: 1; min-width: 0; }
+.pin-name { font-size: 13px; color: var(--text-primary); }
+.pin-meta { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.pin-expiry { color: var(--text-secondary); }
+.pin-expiry.expired { color: var(--danger); }
+.pin-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.pin-empty { color: var(--text-muted); font-style: italic; padding: 9px 0; }
+
 #status-bar {
   position: fixed; bottom: 0; left: 0; right: 0;
   padding: var(--space-2) var(--space-4);
