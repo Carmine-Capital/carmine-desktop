@@ -443,22 +443,29 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsInfo, String> {
 pub fn list_offline_pins(app: AppHandle) -> Result<Vec<OfflinePinInfo>, String> {
     let state = app.state::<AppState>();
 
-    // Collect Arc refs and mount names under the lock, then drop it.
+    // Extract mount name mapping from config (separate lock scope).
+    let mount_names: std::collections::HashMap<String, String> = {
+        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+        config
+            .mounts
+            .iter()
+            .filter_map(|m| m.drive_id.as_ref().map(|d| (d.clone(), m.name.clone())))
+            .collect()
+    };
+
+    // Collect Arc refs under the lock, then drop it.
     let entries: Vec<(
         String,
         String,
         std::sync::Arc<carminedesktop_cache::CacheManager>,
     )> = {
         let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
-        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
         caches
             .iter()
             .map(|(drive_id, (cache, _, _, _, _))| {
-                let mount_name = config
-                    .mounts
-                    .iter()
-                    .find(|m| m.drive_id.as_deref() == Some(drive_id))
-                    .map(|m| m.name.clone())
+                let mount_name = mount_names
+                    .get(drive_id)
+                    .cloned()
                     .unwrap_or_else(|| drive_id.clone());
                 (drive_id.clone(), mount_name, cache.clone())
             })
