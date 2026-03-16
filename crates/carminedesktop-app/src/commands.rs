@@ -54,6 +54,16 @@ pub struct DriveInfo {
     pub name: String,
 }
 
+#[derive(Serialize)]
+pub struct OfflinePinInfo {
+    pub drive_id: String,
+    pub item_id: String,
+    pub folder_name: String,
+    pub mount_name: String,
+    pub pinned_at: String,
+    pub expires_at: String,
+}
+
 #[tauri::command]
 pub fn is_authenticated(app: AppHandle) -> bool {
     app.state::<AppState>()
@@ -427,6 +437,59 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsInfo, String> {
         offline_max_folder_size: config.offline_max_folder_size.clone(),
         platform: std::env::consts::OS.to_string(),
     })
+}
+
+#[tauri::command]
+pub fn list_offline_pins(app: AppHandle) -> Result<Vec<OfflinePinInfo>, String> {
+    let state = app.state::<AppState>();
+
+    // Collect Arc refs and mount names under the lock, then drop it.
+    let entries: Vec<(
+        String,
+        String,
+        std::sync::Arc<carminedesktop_cache::CacheManager>,
+    )> = {
+        let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+        caches
+            .iter()
+            .map(|(drive_id, (cache, _, _, _, _))| {
+                let mount_name = config
+                    .mounts
+                    .iter()
+                    .find(|m| m.drive_id.as_deref() == Some(drive_id))
+                    .map(|m| m.name.clone())
+                    .unwrap_or_else(|| drive_id.clone());
+                (drive_id.clone(), mount_name, cache.clone())
+            })
+            .collect()
+    };
+
+    let mut pins = Vec::new();
+    for (drive_id, mount_name, cache) in &entries {
+        let all_pins = cache.pin_store.list_all().map_err(|e| e.to_string())?;
+
+        for pin in all_pins {
+            let folder_name = cache
+                .sqlite
+                .get_item_by_id(&pin.item_id)
+                .ok()
+                .flatten()
+                .map(|(_, item)| item.name)
+                .unwrap_or_else(|| pin.item_id.clone());
+
+            pins.push(OfflinePinInfo {
+                drive_id: drive_id.clone(),
+                item_id: pin.item_id,
+                folder_name,
+                mount_name: mount_name.clone(),
+                pinned_at: pin.pinned_at,
+                expires_at: pin.expires_at,
+            });
+        }
+    }
+
+    Ok(pins)
 }
 
 #[tauri::command]
