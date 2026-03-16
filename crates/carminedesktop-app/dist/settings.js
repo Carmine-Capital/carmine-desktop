@@ -9,6 +9,7 @@ const state = {
   settings: {},
   mounts: [],
   handlers: [],
+  offlinePins: [],
   activePanel: 'general',
 };
 
@@ -151,11 +152,75 @@ function renderHandlers() {
   }
 }
 
+function formatTimeRemaining(expiresAt) {
+  const now = new Date();
+  const expires = new Date(expiresAt + 'Z');
+  const diffMs = expires - now;
+  if (diffMs <= 0) return { text: 'Expired', expired: true };
+  const hours = Math.floor(diffMs / 3600000);
+  const days = Math.floor(hours / 24);
+  if (days > 0) return { text: days + 'd ' + (hours % 24) + 'h remaining', expired: false };
+  const mins = Math.floor((diffMs % 3600000) / 60000);
+  if (hours > 0) return { text: hours + 'h ' + mins + 'm remaining', expired: false };
+  return { text: mins + 'm remaining', expired: false };
+}
+
+function renderOfflinePins() {
+  const list = document.getElementById('pin-list');
+  if (!list) return;
+  list.innerHTML = '';
+
+  state.offlinePins.forEach(pin => {
+    const li = document.createElement('li');
+    li.className = 'pin-row';
+
+    const info = document.createElement('div');
+    info.className = 'pin-info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'pin-name';
+    nameEl.textContent = pin.folder_name;
+    const metaEl = document.createElement('div');
+    metaEl.className = 'pin-meta';
+    const remaining = formatTimeRemaining(pin.expires_at);
+    const expirySpan = document.createElement('span');
+    expirySpan.className = 'pin-expiry' + (remaining.expired ? ' expired' : '');
+    expirySpan.textContent = remaining.text;
+    metaEl.appendChild(document.createTextNode(pin.mount_name + ' \u00B7 '));
+    metaEl.appendChild(expirySpan);
+    info.appendChild(nameEl);
+    info.appendChild(metaEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'pin-actions';
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'btn-icon btn-icon-danger';
+    removeBtn.dataset.action = 'remove-pin';
+    removeBtn.dataset.driveId = pin.drive_id;
+    removeBtn.dataset.itemId = pin.item_id;
+    removeBtn.dataset.name = pin.folder_name;
+    removeBtn.title = 'Remove offline pin';
+    removeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
+
+    actions.appendChild(removeBtn);
+    li.appendChild(info);
+    li.appendChild(actions);
+    list.appendChild(li);
+  });
+
+  if (state.offlinePins.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'pin-empty';
+    empty.textContent = 'No folders pinned for offline use';
+    list.appendChild(empty);
+  }
+}
+
 function render() {
   renderNav();
   renderSettings();
   renderMounts();
   renderHandlers();
+  renderOfflinePins();
 }
 
 // ---------------------------------------------------------------------------
