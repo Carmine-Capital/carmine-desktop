@@ -493,6 +493,28 @@ pub fn list_offline_pins(app: AppHandle) -> Result<Vec<OfflinePinInfo>, String> 
 }
 
 #[tauri::command]
+pub fn remove_offline_pin(
+    app: AppHandle,
+    drive_id: String,
+    item_id: String,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+
+    // Clone Arc out of the lock, then drop it.
+    let offline_mgr = {
+        let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+        let (_, _, _, mgr, _) = caches
+            .get(&drive_id)
+            .ok_or_else(|| format!("no mount found for drive {drive_id}"))?;
+        mgr.clone()
+    };
+
+    offline_mgr
+        .unpin_folder(&item_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn save_settings(
     app: AppHandle,
