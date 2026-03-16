@@ -167,6 +167,38 @@ pub fn files_recovered(app: &AppHandle, count: usize, path: &str) {
     );
 }
 
+pub fn offline_pin_complete(app: &AppHandle, folder_name: &str) {
+    send(
+        app,
+        "Available Offline",
+        &format!("'{folder_name}' is now available offline"),
+    );
+}
+
+pub fn offline_pin_rejected(app: &AppHandle, folder_name: &str, reason: &str) {
+    send(
+        app,
+        "Offline Unavailable",
+        &format!("Cannot make '{folder_name}' available offline: {reason}"),
+    );
+}
+
+pub fn offline_pin_failed(app: &AppHandle, folder_name: &str, reason: &str) {
+    send(
+        app,
+        "Offline Error",
+        &format!("Failed to download '{folder_name}' for offline use: {reason}"),
+    );
+}
+
+pub fn offline_unpin_complete(app: &AppHandle, folder_name: &str) {
+    send(
+        app,
+        "Space Freed",
+        &format!("'{folder_name}' is no longer pinned for offline use"),
+    );
+}
+
 fn app_display_name(_app: &AppHandle) -> String {
     "Carmine Desktop".to_string()
 }
