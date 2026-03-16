@@ -242,8 +242,10 @@ impl CarmineDesktopWinFsp {
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
         sync_handle: Option<crate::sync_processor::SyncHandle>,
+        offline_flag: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
-        let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt.clone());
+        let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt.clone())
+            .with_offline_flag(offline_flag);
         if let Some(tx) = event_tx.clone() {
             ops = ops.with_event_sender(tx);
         }
@@ -983,6 +985,7 @@ impl WinFspMountHandle {
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
         sync_handle: Option<crate::sync_processor::SyncHandle>,
+        offline_flag: Arc<std::sync::atomic::AtomicBool>,
     ) -> carminedesktop_core::Result<Self> {
         // 0. Initialize WinFsp DLL (resolves the delay-loaded DLL from PATH or registry).
         winfsp::winfsp_init().map_err(|e| {
@@ -991,14 +994,35 @@ impl WinFspMountHandle {
             ))
         })?;
 
-        // 1. Fetch drive root from Graph API.
-        let root_item =
-            tokio::task::block_in_place(|| rt.block_on(graph.get_item(&drive_id, "root")))
+        // 1. Fetch drive root — cache-first with network fallback for offline support.
+        let root_item = match cache.sqlite.get_item_by_inode(ROOT_INODE) {
+            Ok(Some(cached_root)) => {
+                tracing::debug!("restored root item from SQLite cache for drive {drive_id}");
+                match tokio::task::block_in_place(|| {
+                    rt.block_on(graph.get_item(&drive_id, "root"))
+                }) {
+                    Ok(fresh) => fresh,
+                    Err(e) => {
+                        tracing::warn!(
+                            "root item refresh failed: {e} — using cached version"
+                        );
+                        offline_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        cached_root
+                    }
+                }
+            }
+            _ => {
+                // No cache — must fetch from network (first-time mount)
+                tokio::task::block_in_place(|| {
+                    rt.block_on(graph.get_item(&drive_id, "root"))
+                })
                 .map_err(|e| {
                     carminedesktop_core::Error::Filesystem(format!(
                         "failed to fetch root item for drive {drive_id}: {e}"
                     ))
-                })?;
+                })?
+            }
+        };
 
         // 2. Seed root into caches.
         inodes.set_root(&root_item.id);
@@ -1048,6 +1072,7 @@ impl WinFspMountHandle {
             rt.clone(),
             event_tx,
             sync_handle,
+            offline_flag,
         );
 
         // 4. Create delta observer before host takes ownership.

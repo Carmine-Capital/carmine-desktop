@@ -92,6 +92,7 @@ impl CarmineDesktopFs {
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
         sync_handle: Option<crate::sync_processor::SyncHandle>,
+        offline_flag: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
@@ -109,7 +110,8 @@ impl CarmineDesktopFs {
             }
         });
 
-        let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt);
+        let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt)
+            .with_offline_flag(offline_flag);
         ops = ops.with_inode_invalidator(invalidator);
         if let Some(tx) = event_tx {
             ops = ops.with_event_sender(tx);

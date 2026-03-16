@@ -476,6 +476,7 @@ pub struct CoreOps {
     sync_handle: Option<crate::sync_processor::SyncHandle>,
     quota_cache: std::sync::Mutex<Option<(Instant, DriveQuota)>>,
     inode_invalidator: Option<InodeInvalidator>,
+    offline: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl CoreOps {
@@ -497,6 +498,7 @@ impl CoreOps {
             sync_handle: None,
             quota_cache: std::sync::Mutex::new(None),
             inode_invalidator: None,
+            offline: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -513,6 +515,29 @@ impl CoreOps {
     pub fn with_inode_invalidator(mut self, f: InodeInvalidator) -> Self {
         self.inode_invalidator = Some(f);
         self
+    }
+
+    pub fn with_offline_flag(mut self, flag: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        self.offline = flag;
+        self
+    }
+
+    /// Returns `true` when the VFS is operating in offline/cache-only mode.
+    ///
+    /// Used by VFS operations to serve from cache when network is unavailable (Task 5).
+    #[allow(dead_code)] // will be called by cache-only VFS operations
+    pub(crate) fn is_offline(&self) -> bool {
+        self.offline.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Mark the VFS as offline after a network failure.
+    ///
+    /// Used by VFS operations to switch to cache-only mode (Task 5).
+    #[allow(dead_code)] // will be called by cache-only VFS operations
+    pub(crate) fn set_offline(&self) {
+        if !self.offline.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!(drive_id = %self.drive_id, "VFS entering offline mode — serving from cache only");
+        }
     }
 
     pub fn send_event(&self, event: VfsEvent) {

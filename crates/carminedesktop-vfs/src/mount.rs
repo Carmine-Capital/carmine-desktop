@@ -100,14 +100,36 @@ impl MountHandle {
         rt: Handle,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<VfsEvent>>,
         sync_handle: Option<crate::sync_processor::SyncHandle>,
+        offline_flag: Arc<std::sync::atomic::AtomicBool>,
     ) -> carminedesktop_core::Result<Self> {
-        let root_item =
-            tokio::task::block_in_place(|| rt.block_on(graph.get_item(&drive_id, "root")))
+        let root_item = match cache.sqlite.get_item_by_inode(ROOT_INODE) {
+            Ok(Some(cached_root)) => {
+                tracing::debug!("restored root item from SQLite cache for drive {drive_id}");
+                match tokio::task::block_in_place(|| {
+                    rt.block_on(graph.get_item(&drive_id, "root"))
+                }) {
+                    Ok(fresh) => fresh,
+                    Err(e) => {
+                        tracing::warn!(
+                            "root item refresh failed: {e} — using cached version"
+                        );
+                        offline_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        cached_root
+                    }
+                }
+            }
+            _ => {
+                // No cache — must fetch from network (first-time mount)
+                tokio::task::block_in_place(|| {
+                    rt.block_on(graph.get_item(&drive_id, "root"))
+                })
                 .map_err(|e| {
                     carminedesktop_core::Error::Filesystem(format!(
                         "failed to fetch root item for drive {drive_id}: {e}"
                     ))
-                })?;
+                })?
+            }
+        };
 
         inodes.set_root(&root_item.id);
         cache.memory.insert(ROOT_INODE, root_item.clone());
@@ -160,6 +182,7 @@ impl MountHandle {
                     rt.clone(),
                     event_tx,
                     sync_handle,
+                    offline_flag.clone(),
                 );
                 let observer = fs.create_delta_observer();
                 let session = fs.mount(mountpoint, auto_unmount)?;
