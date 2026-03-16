@@ -535,7 +535,10 @@ impl CoreOps {
     /// Used by VFS operations to switch to cache-only mode (Task 5).
     #[allow(dead_code)] // will be called by cache-only VFS operations
     pub(crate) fn set_offline(&self) {
-        if !self.offline.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        if !self
+            .offline
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
             tracing::warn!(drive_id = %self.drive_id, "VFS entering offline mode — serving from cache only");
         }
     }

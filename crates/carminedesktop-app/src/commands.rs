@@ -612,7 +612,7 @@ pub async fn refresh_mount(app: AppHandle, id: String) -> Result<(), String> {
         let mount_caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
         mount_caches
             .get(&drive_id)
-            .map(|(c, i, obs, _)| (c.clone(), i.clone(), obs.clone()))
+            .map(|(c, i, obs, _, _)| (c.clone(), i.clone(), obs.clone()))
             .ok_or_else(|| format!("no active cache for drive '{drive_id}'"))?
     };
 
@@ -642,7 +642,7 @@ pub async fn clear_cache(app: AppHandle) -> Result<(), String> {
         .lock()
         .map_err(|e| e.to_string())?
         .values()
-        .map(|(c, _, _, _)| c.clone())
+        .map(|(c, _, _, _, _)| c.clone())
         .collect();
 
     crate::stop_all_mounts(&app);
@@ -1010,7 +1010,7 @@ pub(crate) async fn resolve_item_for_path(
 
     let (cache, inodes) = {
         let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
-        let (c, i, _, _) = caches
+        let (c, i, _, _, _) = caches
             .get(&drive_id)
             .ok_or_else(|| format!("no active cache for drive '{drive_id}'"))?;
         (c.clone(), i.clone())

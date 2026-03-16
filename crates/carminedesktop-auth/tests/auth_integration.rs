@@ -320,7 +320,10 @@ async fn test_try_restore_keeps_tokens_when_refresh_fails() -> carminedesktop_co
     // try_restore should return Ok(true) even though refresh fails,
     // because stored tokens exist and can be retried later
     let result = manager.try_restore(account_id).await?;
-    assert!(result, "try_restore should return true when stored tokens exist");
+    assert!(
+        result,
+        "try_restore should return true when stored tokens exist"
+    );
 
     // Cleanup
     let _ = carminedesktop_auth::storage::delete_tokens(account_id);

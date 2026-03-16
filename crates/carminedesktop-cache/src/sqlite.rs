@@ -146,10 +146,7 @@ impl SqliteStore {
         }
     }
 
-    pub fn get_item_by_inode(
-        &self,
-        inode: u64,
-    ) -> carminedesktop_core::Result<Option<DriveItem>> {
+    pub fn get_item_by_inode(&self, inode: u64) -> carminedesktop_core::Result<Option<DriveItem>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare_cached("SELECT json_data FROM items WHERE inode = ?1")

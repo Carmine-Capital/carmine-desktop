@@ -110,8 +110,8 @@ impl CarmineDesktopFs {
             }
         });
 
-        let mut ops = CoreOps::new(graph, cache, inodes, drive_id, rt)
-            .with_offline_flag(offline_flag);
+        let mut ops =
+            CoreOps::new(graph, cache, inodes, drive_id, rt).with_offline_flag(offline_flag);
         ops = ops.with_inode_invalidator(invalidator);
         if let Some(tx) = event_tx {
             ops = ops.with_event_sender(tx);
