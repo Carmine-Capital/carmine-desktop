@@ -48,7 +48,6 @@ if [ "$upload_only" = true ]; then
     find "$ARTIFACTS_DIR" -type f \( \
         -name '*.AppImage' -o -name '*.AppImage.tar.gz' -o -name '*.AppImage.tar.gz.sig' \
         -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' -o -name '*.dmg' \
-        -o -name '*.msi' -o -name '*.msi.zip' -o -name '*.msi.zip.sig' \
         -o -name '*.exe' -o -name '*.nsis.zip' -o -name '*.nsis.zip.sig' \
         -o -name '*.deb' \
     \) -exec cp {} "$STAGING_DIR/" \;

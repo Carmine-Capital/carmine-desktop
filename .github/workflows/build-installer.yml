@@ -125,5 +125,4 @@ jobs:
         with:
           name: installer-windows
           path: |
-            target/release/bundle/msi/*.msi
             target/release/bundle/nsis/*.exe
