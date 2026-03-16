@@ -479,6 +479,7 @@ async fn test_smoke_macos_fuse_mount_list_read_write_unmount() -> carminedesktop
         rt,
         None,
         None,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
     )?;
 
     sleep(Duration::from_millis(300)).await;
@@ -1231,6 +1232,7 @@ async fn test_smoke_windows_winfsp_mount_list_read_write_unmount() -> carminedes
         rt,
         None,
         None,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
     )?;
 
     sleep(Duration::from_millis(500)).await;
