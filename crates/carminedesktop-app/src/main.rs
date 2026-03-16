@@ -1127,6 +1127,14 @@ fn start_mount_common(
                 notify::mount_access_denied(app, &mount_config.name);
                 return Ok(None);
             }
+            Err(carminedesktop_core::Error::Network(ref msg)) => {
+                tracing::warn!(
+                    "mount '{}' offline — network unavailable ({msg}), \
+                     proceeding with cached data",
+                    mount_config.name
+                );
+                // Continue to mount creation — VFS will serve from cache.
+            }
             Err(e) => {
                 tracing::warn!(
                     "transient error validating mount '{}': {e}, skipping",
