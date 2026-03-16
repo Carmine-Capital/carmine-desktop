@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use rusqlite::{Connection, params};
 
 /// A single pinned folder record.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PinnedFolder {
     pub drive_id: String,
     pub item_id: String,
