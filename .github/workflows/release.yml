@@ -103,51 +103,61 @@ jobs:
       - name: Collect artifacts
         shell: bash
         run: |
+          set +e  # don't exit on cp failures — we validate explicitly below
           mkdir -p artifacts
-          VERSION="${{ needs.check-version.outputs.version }}"
+          BUNDLE="target/${{ matrix.target }}/release/bundle"
+
+          echo "=== Bundle directory contents ==="
+          find "$BUNDLE" -type f -name '*.tar.gz' -o -name '*.sig' -o -name '*.zip' \
+            -o -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' \
+            -o -name '*.exe' -o -name '*.msi' 2>/dev/null | sort || echo "(nothing found)"
 
           if [ "$RUNNER_OS" = "Linux" ]; then
-            # Tauri produces .AppImage and .AppImage.tar.gz (updater bundle) + .sig
-            cp target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.tar.gz artifacts/ 2>/dev/null || true
-            cp target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.tar.gz.sig artifacts/ 2>/dev/null || true
-            cp target/${{ matrix.target }}/release/bundle/appimage/*.AppImage artifacts/ 2>/dev/null || true
-            cp target/${{ matrix.target }}/release/bundle/deb/*.deb artifacts/ 2>/dev/null || true
+            # Tauri v2 produces .AppImage + .AppImage.tar.gz (updater) + .sig
+            find "$BUNDLE/appimage" -maxdepth 1 -name '*.AppImage.tar.gz'     -exec cp {} artifacts/ \;
+            find "$BUNDLE/appimage" -maxdepth 1 -name '*.AppImage.tar.gz.sig' -exec cp {} artifacts/ \;
+            find "$BUNDLE/appimage" -maxdepth 1 -name '*.AppImage' ! -name '*.sig' ! -name '*.tar.gz' -exec cp {} artifacts/ \;
+            find "$BUNDLE/deb"      -maxdepth 1 -name '*.deb'                 -exec cp {} artifacts/ \;
 
             # Validate updater bundles exist
             if ! ls artifacts/*.AppImage.tar.gz 1>/dev/null 2>&1; then
-              echo "::error::Missing Linux updater bundle: *.AppImage.tar.gz not found"
+              echo "::error::Missing Linux updater bundle (.AppImage.tar.gz)"
               exit 1
             fi
             if ! ls artifacts/*.AppImage.tar.gz.sig 1>/dev/null 2>&1; then
-              echo "::error::Missing Linux updater signature: *.AppImage.tar.gz.sig not found"
+              echo "::error::Missing Linux updater signature (.AppImage.tar.gz.sig)"
               exit 1
             fi
+
           elif [ "$RUNNER_OS" = "macOS" ]; then
-            cp target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz artifacts/ 2>/dev/null || true
-            cp target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz.sig artifacts/ 2>/dev/null || true
-            cp target/${{ matrix.target }}/release/bundle/dmg/*.dmg artifacts/ 2>/dev/null || true
+            # Tauri v2 produces .app.tar.gz (updater) + .sig, then .dmg
+            find "$BUNDLE/macos" -maxdepth 1 -name '*.app.tar.gz'     -exec cp {} artifacts/ \;
+            find "$BUNDLE/macos" -maxdepth 1 -name '*.app.tar.gz.sig' -exec cp {} artifacts/ \;
+            find "$BUNDLE/dmg"   -maxdepth 1 -name '*.dmg'            -exec cp {} artifacts/ \;
 
             # Validate updater bundles exist
             if ! ls artifacts/*.app.tar.gz 1>/dev/null 2>&1; then
-              echo "::error::Missing macOS updater bundle: *.app.tar.gz not found"
+              echo "::error::Missing macOS updater bundle (.app.tar.gz)"
               exit 1
             fi
             if ! ls artifacts/*.app.tar.gz.sig 1>/dev/null 2>&1; then
-              echo "::error::Missing macOS updater signature: *.app.tar.gz.sig not found"
+              echo "::error::Missing macOS updater signature (.app.tar.gz.sig)"
               exit 1
             fi
+
           elif [ "$RUNNER_OS" = "Windows" ]; then
-            cp target/${{ matrix.target }}/release/bundle/nsis/*.exe artifacts/ 2>/dev/null || true
-            cp target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip artifacts/ 2>/dev/null || true
-            cp target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip.sig artifacts/ 2>/dev/null || true
+            # Tauri v2: NSIS installer (.exe) + updater bundle (.nsis.zip) + .sig
+            find "$BUNDLE/nsis" -maxdepth 1 -name '*-setup.exe'    -exec cp {} artifacts/ \;
+            find "$BUNDLE/nsis" -maxdepth 1 -name '*.nsis.zip'     -exec cp {} artifacts/ \;
+            find "$BUNDLE/nsis" -maxdepth 1 -name '*.nsis.zip.sig' -exec cp {} artifacts/ \;
 
             # Validate updater bundles exist
             if ! ls artifacts/*.nsis.zip 1>/dev/null 2>&1; then
-              echo "::error::Missing Windows updater bundle: *.nsis.zip not found"
+              echo "::error::Missing Windows updater bundle (.nsis.zip)"
               exit 1
             fi
             if ! ls artifacts/*.nsis.zip.sig 1>/dev/null 2>&1; then
-              echo "::error::Missing Windows updater signature: *.nsis.zip.sig not found"
+              echo "::error::Missing Windows updater signature (.nsis.zip.sig)"
               exit 1
             fi
           fi
