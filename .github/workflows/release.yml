@@ -112,14 +112,44 @@ jobs:
             cp target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.tar.gz.sig artifacts/ 2>/dev/null || true
             cp target/${{ matrix.target }}/release/bundle/appimage/*.AppImage artifacts/ 2>/dev/null || true
             cp target/${{ matrix.target }}/release/bundle/deb/*.deb artifacts/ 2>/dev/null || true
+
+            # Validate updater bundles exist
+            if ! ls artifacts/*.AppImage.tar.gz 1>/dev/null 2>&1; then
+              echo "::error::Missing Linux updater bundle: *.AppImage.tar.gz not found"
+              exit 1
+            fi
+            if ! ls artifacts/*.AppImage.tar.gz.sig 1>/dev/null 2>&1; then
+              echo "::error::Missing Linux updater signature: *.AppImage.tar.gz.sig not found"
+              exit 1
+            fi
           elif [ "$RUNNER_OS" = "macOS" ]; then
             cp target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz artifacts/ 2>/dev/null || true
             cp target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz.sig artifacts/ 2>/dev/null || true
             cp target/${{ matrix.target }}/release/bundle/dmg/*.dmg artifacts/ 2>/dev/null || true
+
+            # Validate updater bundles exist
+            if ! ls artifacts/*.app.tar.gz 1>/dev/null 2>&1; then
+              echo "::error::Missing macOS updater bundle: *.app.tar.gz not found"
+              exit 1
+            fi
+            if ! ls artifacts/*.app.tar.gz.sig 1>/dev/null 2>&1; then
+              echo "::error::Missing macOS updater signature: *.app.tar.gz.sig not found"
+              exit 1
+            fi
           elif [ "$RUNNER_OS" = "Windows" ]; then
             cp target/${{ matrix.target }}/release/bundle/nsis/*.exe artifacts/ 2>/dev/null || true
             cp target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip artifacts/ 2>/dev/null || true
             cp target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip.sig artifacts/ 2>/dev/null || true
+
+            # Validate updater bundles exist
+            if ! ls artifacts/*.nsis.zip 1>/dev/null 2>&1; then
+              echo "::error::Missing Windows updater bundle: *.nsis.zip not found"
+              exit 1
+            fi
+            if ! ls artifacts/*.nsis.zip.sig 1>/dev/null 2>&1; then
+              echo "::error::Missing Windows updater signature: *.nsis.zip.sig not found"
+              exit 1
+            fi
           fi
 
           echo "=== Collected artifacts ==="
@@ -168,18 +198,44 @@ jobs:
           LINUX_SIG=$(read_sig "${LINUX_BUNDLE}.sig" 2>/dev/null || echo "")
           LINUX_FILENAME=$(basename "$LINUX_BUNDLE" 2>/dev/null || echo "")
 
-          # macOS: .app.tar.gz + .sig
-          MACOS_BUNDLE=$(find artifacts -name '*.app.tar.gz' ! -name '*.sig' | head -1)
-          MACOS_SIG=$(read_sig "${MACOS_BUNDLE}.sig" 2>/dev/null || echo "")
-          MACOS_FILENAME=$(basename "$MACOS_BUNDLE" 2>/dev/null || echo "")
+           # macOS: .app.tar.gz + .sig
+           MACOS_BUNDLE=$(find artifacts -name '*.app.tar.gz' ! -name '*.sig' | head -1)
+           MACOS_SIG=$(read_sig "${MACOS_BUNDLE}.sig" 2>/dev/null || echo "")
+           MACOS_FILENAME=$(basename "$MACOS_BUNDLE" 2>/dev/null || echo "")
 
-          # Windows: .nsis.zip + .sig
-          WIN_BUNDLE=$(find artifacts -name '*.nsis.zip' ! -name '*.sig' | head -1)
-          WIN_SIG=$(read_sig "${WIN_BUNDLE}.sig" 2>/dev/null || echo "")
-          WIN_FILENAME=$(basename "$WIN_BUNDLE" 2>/dev/null || echo "")
+           # Windows: .nsis.zip + .sig
+           WIN_BUNDLE=$(find artifacts -name '*.nsis.zip' ! -name '*.sig' | head -1)
+           WIN_SIG=$(read_sig "${WIN_BUNDLE}.sig" 2>/dev/null || echo "")
+           WIN_FILENAME=$(basename "$WIN_BUNDLE" 2>/dev/null || echo "")
 
-          # Build latest.json for Tauri updater
-          jq -n \
+           # Validate all required updater artifacts are present
+           if [ -z "$LINUX_SIG" ]; then
+             echo "::error::Missing Linux updater signature in latest.json generation"
+             exit 1
+           fi
+           if [ -z "$LINUX_FILENAME" ]; then
+             echo "::error::Missing Linux updater filename in latest.json generation"
+             exit 1
+           fi
+           if [ -z "$MACOS_SIG" ]; then
+             echo "::error::Missing macOS updater signature in latest.json generation"
+             exit 1
+           fi
+           if [ -z "$MACOS_FILENAME" ]; then
+             echo "::error::Missing macOS updater filename in latest.json generation"
+             exit 1
+           fi
+           if [ -z "$WIN_SIG" ]; then
+             echo "::error::Missing Windows updater signature in latest.json generation"
+             exit 1
+           fi
+           if [ -z "$WIN_FILENAME" ]; then
+             echo "::error::Missing Windows updater filename in latest.json generation"
+             exit 1
+           fi
+
+           # Build latest.json for Tauri updater
+           jq -n \
             --arg version "$VERSION" \
             --arg notes "Release v${VERSION}" \
             --arg pub_date "$PUB_DATE" \

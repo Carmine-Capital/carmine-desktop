@@ -18,6 +18,8 @@ mod update;
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 #[cfg(not(target_os = "windows"))]
 use carminedesktop_core::config::{AccountMetadata, derive_mount_point};
@@ -432,7 +434,24 @@ fn main() {
     } else {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
     };
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+
+    // Log to a file alongside stderr so that GUI builds (windows_subsystem = "windows")
+    // have persistent, inspectable logs even though stderr is void.
+    let log_dir = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("carminedesktop")
+        .join("logs");
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "carminedesktop.log");
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(file_appender)
+                .with_ansi(false),
+        )
+        .init();
 
     tracing::info!("Carmine Desktop starting");
 
