@@ -270,7 +270,7 @@ impl EffectiveConfig {
     pub fn build(user: &UserConfig) -> Self {
         let user_general = user.general.as_ref();
 
-        let auto_start = user_general.and_then(|g| g.auto_start).unwrap_or(false);
+        let auto_start = user_general.and_then(|g| g.auto_start).unwrap_or(true);
 
         let cache_max_size = user_general
             .and_then(|g| g.cache_max_size.clone())
@@ -690,34 +690,36 @@ pub mod autostart {
 
     #[cfg(target_os = "windows")]
     fn enable(app_path: &str) -> crate::Result<()> {
-        std::process::Command::new("reg")
-            .args([
-                "add",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-                "/v",
-                "Carmine Desktop",
-                "/t",
-                "REG_SZ",
-                "/d",
-                app_path,
-                "/f",
-            ])
-            .output()
-            .map_err(|e| crate::Error::Config(format!("reg add failed: {e}")))?;
+        use winreg::RegKey;
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let run_key = hkcu
+            .open_subkey_with_flags(
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                KEY_SET_VALUE,
+            )
+            .map_err(|e| crate::Error::Config(format!("failed to open Run registry key: {e}")))?;
+        run_key
+            .set_value("Carmine Desktop", &app_path)
+            .map_err(|e| {
+                crate::Error::Config(format!("failed to set autostart registry value: {e}"))
+            })?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     fn disable() -> crate::Result<()> {
-        let _ = std::process::Command::new("reg")
-            .args([
-                "delete",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-                "/v",
-                "Carmine Desktop",
-                "/f",
-            ])
-            .output();
+        use winreg::RegKey;
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok(run_key) = hkcu.open_subkey_with_flags(
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            KEY_SET_VALUE,
+        ) {
+            let _ = run_key.delete_value("Carmine Desktop");
+        }
         Ok(())
     }
 

@@ -19,18 +19,18 @@ body, h1, h2, h3, h4, p, ul, li { margin: 0; padding: 0; }
 /* ── Block 2: Design Tokens ──────────────────────────────── */
 :root {
   color-scheme: dark;
-  --bg-base:        #121318;
-  --bg-surface:     #151620;
-  --bg-elevated:    #1a1b24;
-  --border:         rgba(255,255,255,0.04);
-  --border-row:     rgba(255,255,255,0.03);
+  --bg-base:        #1c1d27;
+  --bg-surface:     #20222e;
+  --bg-elevated:    #252733;
+  --border:         rgba(255,255,255,0.09);
+  --border-row:     rgba(255,255,255,0.07);
   --accent:         #99222E;
   --accent-hover:   #b52a38;
   --accent-bg:      rgba(153,34,46,0.85);
   --accent-glow:    0 0 20px rgba(153, 34, 46, 0.2);
-  --text-primary:   #d4d5de;
-  --text-secondary: #6b6f85;
-  --text-muted:     #3d3f54;
+  --text-primary:   #e8e9f0;
+  --text-secondary: #8c90aa;
+  --text-muted:     #5c6080;
   --success:        #22c55e;
   --danger:         #ef4444;
   --space-1: 0.25rem;
@@ -82,7 +82,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .btn-ghost {
   background: transparent;
   color: var(--text-secondary);
-  border: 1px solid rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
 }
 .btn-ghost:hover:not(:disabled) {
   background: var(--bg-elevated);
@@ -130,7 +130,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 input[type="text"], input[type="number"], select, .input {
   background: var(--bg-elevated);
   color: var(--text-primary);
-  border: 1px solid rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
   border-radius: 5px;
   padding: 4px 10px;
   font-size: 11.5px;
@@ -336,12 +336,12 @@ select {
 .stepper-item.done { color: var(--text-secondary); }
 .step-number {
   width: 18px; height: 18px;
-  border: 1px solid rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-size: 10px; flex-shrink: 0;
 }
-.stepper-item.active .step-number { background: rgba(255,255,255,0.15); border-color: transparent; font-weight: 600; }
+.stepper-item.active .step-number { background: rgba(255,255,255,0.18); border-color: transparent; font-weight: 600; }
 .stepper-item.done .step-number { background: var(--success); border-color: transparent; color: #fff; }
 
 .step { display: none; }
@@ -360,7 +360,7 @@ select {
   background: var(--bg-elevated);
   padding: 6px 10px;
   border-radius: 5px;
-  border: 1px solid rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
   font-family: monospace;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -400,7 +400,7 @@ button.sp-back-link:hover { color: var(--accent-hover); background: none; }
 .lib-row:hover:not(.mounted) { background: transparent; }
 .lib-check {
   width: 16px; height: 16px;
-  border: 1.5px solid rgba(255,255,255,0.08);
+  border: 1.5px solid rgba(255,255,255,0.12);
   border-radius: 4px;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;

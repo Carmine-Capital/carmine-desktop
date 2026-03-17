@@ -54,7 +54,7 @@ fn test_effective_config_defaults() -> carminedesktop_core::Result<()> {
     let user = UserConfig::load("")?;
     let effective = EffectiveConfig::build(&user);
 
-    assert!(!effective.auto_start);
+    assert!(effective.auto_start);
     assert_eq!(effective.cache_max_size, "5GB");
     assert_eq!(effective.sync_interval_secs, 60);
     assert_eq!(effective.metadata_ttl_secs, 60);
