@@ -9,7 +9,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Bug Fix
 
-- [ ] **BUG-01**: WinFsp offline pin crash is resolved — File Explorer no longer hangs when navigating a mounted drive with pinned folders after losing network connectivity
+- [x] **BUG-01**: WinFsp offline pin crash is resolved — File Explorer no longer hangs when navigating a mounted drive with pinned folders after losing network connectivity
 
 ### Dashboard
 
@@ -76,7 +76,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BUG-01 | Phase 1: WinFsp Offline Pin Fix | Pending |
+| BUG-01 | Phase 1: WinFsp Offline Pin Fix | Complete |
 | DASH-01 | Phase 3: Dashboard UI | Pending |
 | DASH-02 | Phase 3: Dashboard UI | Pending |
 | DASH-03 | Phase 3: Dashboard UI | Pending |

@@ -1,3 +1,18 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: Not started
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-03-18T09:55:15.000Z"
+progress:
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 2
+  completed_plans: 2
+  percent: 100
+---
+
 # State: CarmineDesktop — Stabilization & Observability
 
 ## Project Reference
@@ -8,16 +23,16 @@
 ## Current Position
 
 **Phase:** 1 of 4 — WinFsp Offline Pin Fix
-**Plan:** Not yet planned
-**Status:** Not started
-**Progress:** ░░░░░░░░░░ 0%
+**Plan:** 2 of 2 complete
+**Status:** Phase 1 complete
+**Progress:** [██████████] 100%
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
 | Phases completed | 0/4 |
-| Plans completed | 0/? |
+| Plans completed | 2/2 (Phase 1) |
 | Requirements delivered | 0/15 |
 
 ## Accumulated Context
@@ -30,6 +45,11 @@
 | Build observability infra before UI | Data layer must be queryable/testable before building views | Phase 2 |
 | Dashboard as panel in settings page | Single UI surface, follows existing vanilla JS pattern | Phase 3 |
 | Zero new dependencies | All capabilities exist in workspace (Tauri IPC, tokio broadcast, tracing Layer) | All |
+| Eviction filter takes &DriveItem not inode | Enables CacheManager to bridge inode-keyed memory cache to item_id-keyed PinStore | Phase 1 |
+| CacheManager::new gains drive_id param | Each mount has its own CacheManager, drive_id already available at call sites | Phase 1 |
+| Temp inodes start at 1,000,000 | Avoids collisions with VFS inodes; ON CONFLICT(item_id) preserves existing rows | Phase 1 |
+| graph_with_timeout centralizes VFS-path timeouts | Consistent 5s timeout + offline-flag logic, avoids duplication across 6 call sites | Phase 1 |
+| Non-VFS callers keep existing behavior | Delta sync, uploads, renames don't need same constraints as sync VFS callbacks | Phase 1 |
 
 ### Todos
 
@@ -50,13 +70,13 @@
 
 ### Last Session
 
-- **Stopped at:** Phase 1 context gathered
-- **Resume file:** `.planning/phases/01-winfsp-offline-pin-fix/01-CONTEXT.md`
+- **Stopped at:** Completed 01-02-PLAN.md (Phase 1 complete — all 2 plans done)
+- **Resume file:** None
 
 ### Resume Prompt
 
-Plan Phase 1: WinFsp Offline Pin Fix. Context decisions captured — review `01-CONTEXT.md` for locked decisions (immediate clean errors, VFS-path timeouts, memory cache eviction protection for pinned items, SQLite metadata population during pin). Run `/gsd-plan-phase 1`.
+Phase 1 complete. All VFS-path Graph API calls have 5s timeout, memory cache eviction protection for pinned items, SQLite metadata population during pin, and 31-day log rotation. Ready for Phase 2 (Observability Infra). Run `/gsd-plan-phase 2`.
 
 ---
 *State initialized: 2026-03-18*
-*Last updated: 2026-03-18*
+*Last updated: 2026-03-18T09:55:15Z*
