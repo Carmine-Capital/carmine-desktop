@@ -10,7 +10,6 @@ mod ipc_server;
 #[cfg(feature = "desktop")]
 mod notify;
 #[cfg(feature = "desktop")]
-#[allow(dead_code)] // Used in Task 2 when wired into AppState; suppress until then
 mod observability;
 #[cfg(feature = "desktop")]
 mod shell_integration;
@@ -88,7 +87,9 @@ use std::collections::HashMap;
 #[cfg(feature = "desktop")]
 use std::sync::Mutex;
 
-/// Per-mount cache entry: `(CacheManager, InodeTable, DeltaSyncObserver, OfflineManager, offline_flag)` keyed by drive_id.
+/// Per-mount cache entry keyed by drive_id.
+///
+/// `(CacheManager, InodeTable, DeltaSyncObserver, OfflineManager, offline_flag, SyncHandle)`
 #[cfg(feature = "desktop")]
 type MountCacheEntry = (
     Arc<CacheManager>,
@@ -96,6 +97,7 @@ type MountCacheEntry = (
     Option<Arc<dyn carminedesktop_core::DeltaSyncObserver>>,
     Arc<carminedesktop_cache::OfflineManager>,
     Arc<std::sync::atomic::AtomicBool>,
+    Option<carminedesktop_vfs::SyncHandle>,
 );
 
 /// Snapshot row used by the delta-sync loop.
@@ -109,6 +111,7 @@ type SyncSnapshotRow = (
     Option<Arc<dyn carminedesktop_core::DeltaSyncObserver>>,
     Arc<carminedesktop_cache::OfflineManager>,
     Arc<std::sync::atomic::AtomicBool>,
+    Option<carminedesktop_vfs::SyncHandle>,
 );
 
 #[allow(dead_code)] // Used conditionally across platform×feature combos; referenced by tests on all platforms
@@ -234,6 +237,9 @@ struct RuntimeOverrides {
     tenant_id: Option<String>,
 }
 
+// Lock ordering (always acquire in this order to prevent deadlocks):
+// user_config > effective_config > mount_caches > mounts > sync_cancel >
+// active_sign_in > account_id > error_ring > activity_ring > last_synced > stale_pins
 #[cfg(feature = "desktop")]
 pub struct AppState {
     pub user_config: Mutex<UserConfig>,
@@ -255,6 +261,17 @@ pub struct AppState {
     pub tokio_handle: std::sync::OnceLock<tokio::runtime::Handle>,
     #[cfg(target_os = "windows")]
     pub ipc_server: Mutex<Option<ipc_server::IpcServer>>,
+    /// Broadcast sender for observability events.
+    pub obs_tx: tokio::sync::broadcast::Sender<carminedesktop_core::ObsEvent>,
+    /// Ring buffer of recent errors for the dashboard.
+    pub error_ring: Arc<Mutex<observability::ErrorAccumulator>>,
+    /// Ring buffer of recent activity entries for the dashboard.
+    pub activity_ring: Arc<Mutex<observability::ActivityBuffer>>,
+    /// Per-drive last successful sync timestamp (ISO 8601).
+    pub last_synced: Mutex<HashMap<String, String>>,
+    /// Pins known to be stale (drive_id, item_id) -- set by delta sync when changed
+    /// items overlap pinned subtrees.
+    pub stale_pins: Mutex<std::collections::HashSet<(String, String)>>,
 }
 
 #[allow(dead_code)] // Used conditionally across platform×feature combos; no platform-specific code
@@ -549,6 +566,10 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
 
     let Components { auth, graph } = init_components(&overrides, opener);
 
+    let (obs_tx, _) = tokio::sync::broadcast::channel::<carminedesktop_core::ObsEvent>(256);
+    let error_ring = Arc::new(Mutex::new(observability::ErrorAccumulator::new(100)));
+    let activity_ring = Arc::new(Mutex::new(observability::ActivityBuffer::new(500)));
+
     let state = AppState {
         user_config: Mutex::new(user_config),
         effective_config: Mutex::new(effective),
@@ -564,6 +585,11 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
         tokio_handle: std::sync::OnceLock::new(),
         #[cfg(target_os = "windows")]
         ipc_server: Mutex::new(None),
+        obs_tx,
+        error_ring,
+        activity_ring,
+        last_synced: Mutex::new(HashMap::new()),
+        stale_pins: Mutex::new(std::collections::HashSet::new()),
     };
 
     tauri::Builder::default()
@@ -669,6 +695,19 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
                         handle_deep_link_urls(&handle, urls).await;
                     });
                 });
+            }
+
+            // Spawn observability event bridge
+            {
+                use tauri::Manager;
+                let state = app.state::<AppState>();
+                let obs_rx = state.obs_tx.subscribe();
+                observability::spawn_event_bridge(
+                    app.handle().clone(),
+                    obs_rx,
+                    state.error_ring.clone(),
+                    state.activity_ring.clone(),
+                );
             }
 
             let handle = app.handle().clone();
@@ -1001,7 +1040,7 @@ async fn resolve_and_pin(app: &tauri::AppHandle, path: &str) -> Result<String, S
 
     let offline_mgr = {
         let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
-        let (_, _, _, mgr, _) = caches
+        let (_, _, _, mgr, _, _) = caches
             .get(&drive_id)
             .ok_or_else(|| format!("no active cache for drive '{drive_id}'"))?;
         mgr.clone()
@@ -1029,7 +1068,7 @@ async fn resolve_and_unpin(app: &tauri::AppHandle, path: &str) -> Result<String,
 
     let offline_mgr = {
         let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
-        let (_, _, _, mgr, _) = caches
+        let (_, _, _, mgr, _, _) = caches
             .get(&drive_id)
             .ok_or_else(|| format!("no active cache for drive '{drive_id}'"))?;
         mgr.clone()
@@ -1349,6 +1388,8 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         &ctx.rt,
     );
 
+    let sync_handle_clone = sync_handle.clone();
+
     let mut handle = MountHandle::mount(
         state.graph.clone(),
         ctx.cache.clone(),
@@ -1375,6 +1416,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
             observer,
             ctx.offline_manager,
             ctx.offline_flag,
+            Some(sync_handle_clone),
         ),
     );
 
@@ -1417,6 +1459,8 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         &ctx.rt,
     );
 
+    let sync_handle_clone = sync_handle.clone();
+
     let mut handle = carminedesktop_vfs::WinFspMountHandle::mount(
         state.graph.clone(),
         ctx.cache.clone(),
@@ -1443,6 +1487,7 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
             observer,
             ctx.offline_manager,
             ctx.offline_flag,
+            Some(sync_handle_clone),
         ),
     );
 
@@ -1535,7 +1580,7 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                 let config = state.effective_config.lock().unwrap();
                 caches
                     .iter()
-                    .map(|(drive_id, (c, i, obs, offline_mgr, offline_flag))| {
+                    .map(|(drive_id, (c, i, obs, offline_mgr, offline_flag, _sh))| {
                         let (mount_id, mount_name) = config
                             .mounts
                             .iter()
@@ -1551,6 +1596,7 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                             obs.clone(),
                             offline_mgr.clone(),
                             offline_flag.clone(),
+                            _sh.clone(),
                         )
                     })
                     .collect()
@@ -1565,6 +1611,7 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                 observer,
                 offline_mgr,
                 offline_flag,
+                _sync_handle,
             ) in &snapshot
             {
                 let inodes = inodes.clone();
@@ -1641,7 +1688,7 @@ fn start_delta_sync(app: &tauri::AppHandle) {
             }
 
             // Process expired offline pins (once per cycle)
-            for (_, _, _, _, _, _, offline_mgr, _) in &snapshot {
+            for (_, _, _, _, _, _, offline_mgr, _, _) in &snapshot {
                 if let Err(e) = offline_mgr.process_expired() {
                     tracing::warn!("offline expiry processing failed: {e}");
                 }
@@ -1671,7 +1718,7 @@ fn run_crash_recovery(app: &tauri::AppHandle) {
         .unwrap()
         .values()
         .next()
-        .map(|(c, _, _, _, _)| c.clone())
+        .map(|(c, _, _, _, _, _)| c.clone())
     {
         Some(c) => c,
         None => return, // No mounts active; nothing to recover.

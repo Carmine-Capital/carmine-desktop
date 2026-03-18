@@ -462,7 +462,7 @@ pub fn list_offline_pins(app: AppHandle) -> Result<Vec<OfflinePinInfo>, String> 
         let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
         caches
             .iter()
-            .map(|(drive_id, (cache, _, _, _, _))| {
+            .map(|(drive_id, (cache, _, _, _, _, _))| {
                 let mount_name = mount_names
                     .get(drive_id)
                     .cloned()
@@ -506,7 +506,7 @@ pub fn remove_offline_pin(app: AppHandle, drive_id: String, item_id: String) -> 
     // Clone Arc out of the lock, then drop it.
     let offline_mgr = {
         let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
-        let (_, _, _, mgr, _) = caches
+        let (_, _, _, mgr, _, _) = caches
             .get(&drive_id)
             .ok_or_else(|| format!("no mount found for drive {drive_id}"))?;
         mgr.clone()
@@ -700,7 +700,7 @@ pub async fn refresh_mount(app: AppHandle, id: String) -> Result<(), String> {
         let mount_caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
         mount_caches
             .get(&drive_id)
-            .map(|(c, i, obs, _, _)| (c.clone(), i.clone(), obs.clone()))
+            .map(|(c, i, obs, _, _, _)| (c.clone(), i.clone(), obs.clone()))
             .ok_or_else(|| format!("no active cache for drive '{drive_id}'"))?
     };
 
@@ -730,7 +730,7 @@ pub async fn clear_cache(app: AppHandle) -> Result<(), String> {
         .lock()
         .map_err(|e| e.to_string())?
         .values()
-        .map(|(c, _, _, _, _)| c.clone())
+        .map(|(c, _, _, _, _, _)| c.clone())
         .collect();
 
     crate::stop_all_mounts(&app);
@@ -1098,7 +1098,7 @@ pub(crate) async fn resolve_item_for_path(
 
     let (cache, inodes) = {
         let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
-        let (c, i, _, _, _) = caches
+        let (c, i, _, _, _, _) = caches
             .get(&drive_id)
             .ok_or_else(|| format!("no active cache for drive '{drive_id}'"))?;
         (c.clone(), i.clone())
