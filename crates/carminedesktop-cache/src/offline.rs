@@ -90,6 +90,23 @@ impl OfflineManager {
         let ttl = self.ttl_secs.load(Ordering::Relaxed);
         self.pin_store.pin(&self.drive_id, item_id, ttl)?;
 
+        // Temporary inode counter for SQLite metadata population.
+        // Starts at 1_000_000 to avoid collisions with real VFS inodes (which
+        // start from 2). If the item already exists in SQLite from a previous
+        // browse, upsert_item's ON CONFLICT(item_id) DO UPDATE preserves the
+        // existing row with the real inode.
+        let next_inode = AtomicU64::new(1_000_000);
+        let root_temp_inode = next_inode.fetch_add(1, Ordering::Relaxed);
+
+        // Persist root folder metadata to SQLite before spawning download
+        if let Err(e) = self
+            .cache
+            .sqlite
+            .upsert_item(root_temp_inode, &self.drive_id, &item, None)
+        {
+            tracing::warn!("offline: failed to persist root folder metadata: {e}");
+        }
+
         // Spawn background download task
         let graph = self.graph.clone();
         let cache = self.cache.clone();
@@ -99,7 +116,16 @@ impl OfflineManager {
         let error_handler = self.on_download_error.read().unwrap().clone();
 
         tokio::spawn(async move {
-            if let Err(e) = recursive_download(&graph, &cache, &drive_id, &item_id).await {
+            if let Err(e) = recursive_download(
+                &graph,
+                &cache,
+                &drive_id,
+                &item_id,
+                root_temp_inode,
+                &next_inode,
+            )
+            .await
+            {
                 tracing::error!(
                     "offline: recursive download failed for {}/{}: {}",
                     drive_id,
@@ -195,12 +221,39 @@ async fn recursive_download(
     cache: &CacheManager,
     drive_id: &str,
     folder_id: &str,
+    parent_temp_inode: u64,
+    next_inode: &AtomicU64,
 ) -> carminedesktop_core::Result<()> {
     let children = graph.list_children(drive_id, folder_id).await?;
 
     for child in &children {
+        let child_inode = next_inode.fetch_add(1, Ordering::Relaxed);
+
+        // Persist metadata to SQLite for offline directory listings
+        if let Err(e) =
+            cache
+                .sqlite
+                .upsert_item(child_inode, drive_id, child, Some(parent_temp_inode))
+        {
+            tracing::warn!(
+                "offline: failed to persist metadata for {}/{}: {}",
+                drive_id,
+                child.id,
+                e
+            );
+            // Continue — content download is still useful even if metadata persistence fails
+        }
+
         if child.is_folder() {
-            Box::pin(recursive_download(graph, cache, drive_id, &child.id)).await?;
+            Box::pin(recursive_download(
+                graph,
+                cache,
+                drive_id,
+                &child.id,
+                child_inode,
+                next_inode,
+            ))
+            .await?;
         } else {
             // Download file content if not already cached
             if cache.disk.get(drive_id, &child.id).await.is_none() {
