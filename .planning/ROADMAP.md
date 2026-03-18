@@ -7,7 +7,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: WinFsp Offline Pin Fix** — Resolve deployment-blocking File Explorer hang on Windows when navigating offline-pinned mounts
+- [x] **Phase 1: WinFsp Offline Pin Fix** — Resolve deployment-blocking File Explorer hang on Windows when navigating offline-pinned mounts
 - [ ] **Phase 2: Observability Infrastructure** — Build the event bus, error accumulator, stat methods, and Tauri commands that power the dashboard
 - [ ] **Phase 3: Dashboard UI** — Deliver the full observability surface: drive status, activity feed, error log, cache usage, offline pin health
 - [ ] **Phase 4: Visual Polish & Hardening** — Modernize the UI, ensure consistent feedback, and validate cross-platform parity
@@ -24,8 +24,8 @@
   3. User who reconnects after offline period sees the mount resume normal sync without requiring remount or app restart
 **Plans:** 2 plans
 Plans:
-- [ ] 01-01-PLAN.md — VFS-path Graph API timeout + log rotation
-- [ ] 01-02-PLAN.md — Memory cache eviction protection + SQLite metadata population during pin
+- [x] 01-01-PLAN.md — VFS-path Graph API timeout + log rotation
+- [x] 01-02-PLAN.md — Memory cache eviction protection + SQLite metadata population during pin
 
 ### Phase 2: Observability Infrastructure
 **Goal**: All sync state, activity, errors, and cache metrics are queryable from the backend — the data layer is complete and testable before any UI work
@@ -64,7 +64,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. WinFsp Offline Pin Fix | 0/2 | Planned | — |
+| 1. WinFsp Offline Pin Fix | 2/2 | Complete | 2026-03-18 |
 | 2. Observability Infrastructure | 0/? | Not started | — |
 | 3. Dashboard UI | 0/? | Not started | — |
 | 4. Visual Polish & Hardening | 0/? | Not started | — |
