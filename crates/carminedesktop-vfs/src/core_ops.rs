@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
 use dashmap::DashMap;
@@ -453,6 +453,11 @@ fn ensure_complete(entry: &mut OpenFile, rt: &Handle) -> VfsResult<()> {
 
 const QUOTA_CACHE_TTL_SECS: u64 = 60;
 
+/// Maximum time a VFS callback will wait for a Graph API response before
+/// timing out and switching to offline mode. Prevents Explorer/Finder hangs
+/// when the network is slow or unreachable.
+const VFS_GRAPH_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Core VFS operations shared between platform backends.
 ///
 /// Encapsulates cache lookups, Graph API calls, inode management, and write-back logic.
@@ -537,6 +542,36 @@ impl CoreOps {
         }
     }
 
+    /// Execute a Graph API future with a VFS-path timeout.
+    ///
+    /// If the future doesn't complete within [`VFS_GRAPH_TIMEOUT`], sets the
+    /// offline flag and returns [`VfsError::TimedOut`]. Network errors also
+    /// trigger offline mode.
+    ///
+    /// Only used for calls made from sync VFS callbacks (via `rt.block_on`).
+    /// Async callers like delta sync keep their existing behavior.
+    fn graph_with_timeout<T>(
+        &self,
+        fut: impl std::future::Future<Output = carminedesktop_core::Result<T>>,
+    ) -> VfsResult<T> {
+        match self
+            .rt
+            .block_on(tokio::time::timeout(VFS_GRAPH_TIMEOUT, fut))
+        {
+            Ok(Ok(val)) => Ok(val),
+            Ok(Err(e)) => {
+                if matches!(&e, carminedesktop_core::Error::Network(_)) {
+                    self.set_offline();
+                }
+                Err(VfsError::from_core_error(e))
+            }
+            Err(_elapsed) => {
+                self.set_offline();
+                Err(VfsError::TimedOut)
+            }
+        }
+    }
+
     pub fn send_event(&self, event: VfsEvent) {
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(event);
@@ -553,8 +588,11 @@ impl CoreOps {
                 return Some(quota.clone());
             }
         }
-        match self.rt.block_on(self.graph.get_drive(&self.drive_id)) {
-            Ok(drive) => {
+        match self
+            .rt
+            .block_on(tokio::time::timeout(VFS_GRAPH_TIMEOUT, self.graph.get_drive(&self.drive_id)))
+        {
+            Ok(Ok(drive)) => {
                 if let Some(quota) = drive.quota {
                     let mut cache = self.quota_cache.lock().unwrap();
                     *cache = Some((Instant::now(), quota.clone()));
@@ -563,8 +601,16 @@ impl CoreOps {
                     None
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
+                if matches!(&e, carminedesktop_core::Error::Network(_)) {
+                    self.set_offline();
+                }
                 tracing::warn!("quota fetch failed: {e}");
+                None
+            }
+            Err(_elapsed) => {
+                self.set_offline();
+                tracing::warn!("quota fetch timed out");
                 None
             }
         }
@@ -575,10 +621,7 @@ impl CoreOps {
         let Some(cached_etag) = item.etag.as_deref() else {
             return false;
         };
-        match self
-            .rt
-            .block_on(self.graph.get_item(&self.drive_id, &item.id))
-        {
+        match self.graph_with_timeout(self.graph.get_item(&self.drive_id, &item.id)) {
             Ok(server_item) => server_item.etag.as_deref() != Some(cached_etag),
             Err(_) => false,
         }
@@ -724,10 +767,7 @@ impl CoreOps {
         }
 
         let parent_item_id = self.inodes.get_item_id(parent_ino)?;
-        match self
-            .rt
-            .block_on(self.graph.list_children(&self.drive_id, &parent_item_id))
-        {
+        match self.graph_with_timeout(self.graph.list_children(&self.drive_id, &parent_item_id)) {
             Ok(children) => {
                 let mut children_map = std::collections::HashMap::new();
                 let mut found = None;
@@ -750,10 +790,7 @@ impl CoreOps {
                 return found;
             }
             Err(e) => {
-                if matches!(&e, carminedesktop_core::Error::Network(_)) {
-                    self.set_offline();
-                }
-                tracing::warn!(parent_ino, name, "find_child graph fallback failed: {e}");
+                tracing::warn!(parent_ino, name, "find_child graph fallback failed: {e:?}");
             }
         }
         None
@@ -801,10 +838,7 @@ impl CoreOps {
             tracing::warn!(parent_ino, "list_children: no item_id for inode");
             return Vec::new();
         };
-        match self
-            .rt
-            .block_on(self.graph.list_children(&self.drive_id, &item_id))
-        {
+        match self.graph_with_timeout(self.graph.list_children(&self.drive_id, &item_id)) {
             Ok(items) => {
                 let mut children_map = std::collections::HashMap::new();
                 let result: Vec<_> = items
@@ -826,10 +860,7 @@ impl CoreOps {
                 result
             }
             Err(e) => {
-                if matches!(&e, carminedesktop_core::Error::Network(_)) {
-                    self.set_offline();
-                }
-                tracing::error!(parent_ino, %item_id, "list_children graph fallback failed: {e}");
+                tracing::error!(parent_ino, %item_id, "list_children graph fallback failed: {e:?}");
                 Vec::new()
             }
         }
@@ -882,10 +913,7 @@ impl CoreOps {
         }
 
         let item_etag = item.as_ref().and_then(|i| i.etag.clone());
-        match self
-            .rt
-            .block_on(self.graph.download_content(&self.drive_id, &item_id))
-        {
+        match self.graph_with_timeout(self.graph.download_content(&self.drive_id, &item_id)) {
             Ok(content) => {
                 self.cache.dirty_inodes.remove(&ino);
                 let _ = self.rt.block_on(self.cache.disk.put(
@@ -897,11 +925,8 @@ impl CoreOps {
                 Ok(content.to_vec())
             }
             Err(e) => {
-                if matches!(&e, carminedesktop_core::Error::Network(_)) {
-                    self.set_offline();
-                }
-                tracing::error!("download failed for {item_id}: {e}");
-                Err(VfsError::IoError(format!("download failed: {e}")))
+                tracing::error!("download failed for {item_id}: {e:?}");
+                Err(e)
             }
         }
     }
@@ -1081,8 +1106,7 @@ impl CoreOps {
         // metadata which may also be stale — both have the old eTag, so the
         // stale content passes validation and is served as-is (corruption).
         let item = match self
-            .rt
-            .block_on(self.graph.get_item(&self.drive_id, &item_id))
+            .graph_with_timeout(self.graph.get_item(&self.drive_id, &item_id))
         {
             Ok(fresh) => {
                 // Check if file is locked (co-authoring, checkout)
@@ -1116,12 +1140,9 @@ impl CoreOps {
                 Some(fresh)
             }
             Err(e) => {
-                if matches!(&e, carminedesktop_core::Error::Network(_)) {
-                    self.set_offline();
-                }
                 tracing::warn!(
                     ino,
-                    "open_file: get_item refresh failed: {e}, using cached metadata"
+                    "open_file: get_item refresh failed: {e:?}, using cached metadata"
                 );
                 item
             }
