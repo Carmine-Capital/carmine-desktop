@@ -8,7 +8,7 @@
 ## Phases
 
 - [x] **Phase 1: WinFsp Offline Pin Fix** — Resolve deployment-blocking File Explorer hang on Windows when navigating offline-pinned mounts
-- [ ] **Phase 2: Observability Infrastructure** — Build the event bus, error accumulator, stat methods, and Tauri commands that power the dashboard
+- [x] **Phase 2: Observability Infrastructure** — Build the event bus, error accumulator, stat methods, and Tauri commands that power the dashboard (completed 2026-03-18)
 - [ ] **Phase 3: Dashboard UI** — Deliver the full observability surface: drive status, activity feed, error log, cache usage, offline pin health
 - [ ] **Phase 4: Visual Polish & Hardening** — Modernize the UI, ensure consistent feedback, and validate cross-platform parity
 
@@ -36,7 +36,7 @@ Plans:
   2. A Tauri `invoke("get_recent_errors")` call returns the most recent errors with file name, error type, and timestamp — verifiable from the browser console
   3. A Tauri `invoke("get_cache_stats")` call returns disk cache usage (bytes used vs. configured max), pinned item count, and writeback queue contents — verifiable from the browser console
   4. Real-time events (sync progress, state transitions, new errors) are pushed to the frontend via Tauri `emit()` — verifiable by subscribing with `listen()` in the browser console
-**Plans:** 4 plans
+**Plans:** 4/4 plans complete
 Plans:
 - [x] 02-01-PLAN.md — Core observability types (ObsEvent enum, response structs) + cache stat methods
 - [x] 02-02-PLAN.md — Observability module (ring buffers, event bridge) + AppState extensions
@@ -70,7 +70,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. WinFsp Offline Pin Fix | 2/2 | Complete | 2026-03-18 |
-| 2. Observability Infrastructure | 3/4 | In progress | — |
+| 2. Observability Infrastructure | 4/4 | Complete   | 2026-03-18 |
 | 3. Dashboard UI | 0/? | Not started | — |
 | 4. Visual Polish & Hardening | 0/? | Not started | — |
 
