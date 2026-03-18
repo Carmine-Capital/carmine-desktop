@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use carminedesktop_core::types::DriveItem;
+use carminedesktop_core::types::{CacheManagerStats, DriveItem};
 use dashmap::DashSet;
 
 use crate::disk::DiskCache;
@@ -59,6 +59,16 @@ impl CacheManager {
             dirty_inodes: DashSet::new(),
             pin_store,
         })
+    }
+
+    /// Return a snapshot of cache statistics.
+    pub fn stats(&self) -> CacheManagerStats {
+        CacheManagerStats {
+            memory_entry_count: self.memory.len(),
+            disk_used_bytes: self.disk.total_size(),
+            disk_max_bytes: self.disk.max_size_bytes(),
+            dirty_inode_count: self.dirty_inodes.len(),
+        }
     }
 
     pub async fn clear(&self) -> carminedesktop_core::Result<()> {

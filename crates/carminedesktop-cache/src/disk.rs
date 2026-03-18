@@ -262,6 +262,18 @@ impl DiskCache {
         .unwrap_or(0) as u64
     }
 
+    /// Return the number of entries tracked in the cache.
+    pub fn entry_count(&self) -> u64 {
+        let conn = match self.tracker.lock() {
+            Ok(c) => c,
+            Err(_) => return 0,
+        };
+        conn.query_row("SELECT COUNT(*) FROM cache_entries", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap_or(0) as u64
+    }
+
     async fn evict_if_needed(&self) -> carminedesktop_core::Result<()> {
         let max = self.max_size_bytes.load(Ordering::Relaxed);
         if max == 0 {

@@ -41,6 +41,16 @@ impl MemoryCache {
         *self.eviction_filter.write().unwrap() = Some(filter);
     }
 
+    /// Return the number of entries in the memory cache.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Return true if the memory cache is empty.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn get(&self, inode: u64) -> Option<DriveItem> {
         let mut entry = self.entries.get_mut(&inode)?;
         let elapsed = entry.inserted_at.elapsed().as_secs();

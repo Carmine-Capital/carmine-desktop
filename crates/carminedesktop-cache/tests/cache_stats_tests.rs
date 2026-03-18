@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use carminedesktop_cache::disk::DiskCache;
 use carminedesktop_cache::memory::MemoryCache;

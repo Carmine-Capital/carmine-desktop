@@ -162,6 +162,103 @@ impl PinStore {
         Ok(result)
     }
 
+    /// Compute on-demand health status for all non-expired pins.
+    ///
+    /// For each pinned folder:
+    /// - Count total files in the pinned subtree (files have `is_folder = 0`)
+    /// - Count how many of those files have an entry in `cache_entries`
+    ///
+    /// The `stale_pins` set contains `(drive_id, item_id)` pairs that the
+    /// caller has determined are stale (server content changed since last pin
+    /// sync). This method does NOT compute staleness itself.
+    ///
+    /// Returns `Vec` of `(PinnedFolder, total_files, cached_files)`.
+    pub fn health(
+        &self,
+        stale_pins: &std::collections::HashSet<(String, String)>,
+    ) -> carminedesktop_core::Result<Vec<(PinnedFolder, usize, usize)>> {
+        let _ = stale_pins; // reserved for future use — staleness set by caller
+
+        let conn = self.conn.lock().map_err(|e| {
+            carminedesktop_core::Error::Cache(format!("pin store lock failed: {e}"))
+        })?;
+
+        // Get all non-expired pins
+        let mut pin_stmt = conn
+            .prepare(
+                "SELECT drive_id, item_id, pinned_at, expires_at
+                 FROM pinned_folders
+                 WHERE expires_at > datetime('now')",
+            )
+            .map_err(|e| {
+                carminedesktop_core::Error::Cache(format!("pin store prepare failed: {e}"))
+            })?;
+
+        let pins: Vec<PinnedFolder> = pin_stmt
+            .query_map([], |row| {
+                Ok(PinnedFolder {
+                    drive_id: row.get(0)?,
+                    item_id: row.get(1)?,
+                    pinned_at: row.get(2)?,
+                    expires_at: row.get(3)?,
+                })
+            })
+            .map_err(|e| {
+                carminedesktop_core::Error::Cache(format!("pin query failed: {e}"))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut results = Vec::with_capacity(pins.len());
+
+        for pin in pins {
+            // Count total files in pinned subtree using a recursive CTE.
+            // Files are items where is_folder = 0.
+            let total_files: usize = conn
+                .query_row(
+                    "WITH RECURSIVE subtree(inode) AS (
+                        SELECT inode FROM items WHERE item_id = ?1
+                        UNION ALL
+                        SELECT i.inode FROM items i
+                        JOIN subtree s ON i.parent_inode = s.inode
+                    )
+                    SELECT COUNT(*) FROM items
+                    WHERE inode IN (SELECT inode FROM subtree)
+                    AND is_folder = 0
+                    AND item_id != ?1",
+                    params![pin.item_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0) as usize;
+
+            // Count cached files: intersect subtree files with cache_entries.
+            let cached_files: usize = conn
+                .query_row(
+                    "WITH RECURSIVE subtree(inode) AS (
+                        SELECT inode FROM items WHERE item_id = ?1
+                        UNION ALL
+                        SELECT i.inode FROM items i
+                        JOIN subtree s ON i.parent_inode = s.inode
+                    )
+                    SELECT COUNT(*) FROM items
+                    WHERE inode IN (SELECT inode FROM subtree)
+                    AND is_folder = 0
+                    AND item_id != ?1
+                    AND EXISTS (
+                        SELECT 1 FROM cache_entries ce
+                        WHERE ce.item_id = items.item_id AND ce.drive_id = ?2
+                    )",
+                    params![pin.item_id, pin.drive_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0) as usize;
+
+            results.push((pin, total_files, cached_files));
+        }
+
+        Ok(results)
+    }
+
     /// Check if an item is protected by any pin — either the item itself is
     /// pinned, or one of its ancestors (via the `items` table parent chain) is
     /// pinned.  Used by the disk-cache eviction filter.
