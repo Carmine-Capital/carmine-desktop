@@ -668,6 +668,10 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::clear_file_handler_override,
             commands::list_offline_pins,
             commands::remove_offline_pin,
+            commands::get_dashboard_status,
+            commands::get_recent_errors,
+            commands::get_activity_feed,
+            commands::get_cache_stats,
         ])
         .setup(move |app| {
             // Populate the opener's AppHandle slot now that the app is running.

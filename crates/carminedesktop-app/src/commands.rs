@@ -1,4 +1,5 @@
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -7,7 +8,10 @@ use carminedesktop_cache::sync::run_delta_sync;
 use carminedesktop_core::config::{
     AccountMetadata, EffectiveConfig, autostart, config_file_path, expand_mount_point,
 };
-use carminedesktop_core::types::DriveItem;
+use carminedesktop_core::types::{
+    ActivityEntry, CacheStatsResponse, DashboardError, DashboardStatus, DriveItem, DriveStatus,
+    PinHealthInfo, UploadQueueInfo, WritebackEntry,
+};
 
 use std::collections::HashMap;
 
@@ -515,6 +519,219 @@ pub fn remove_offline_pin(app: AppHandle, drive_id: String, item_id: String) -> 
     offline_mgr
         .unpin_folder(&item_id)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_dashboard_status(app: AppHandle) -> Result<DashboardStatus, String> {
+    let state = app.state::<AppState>();
+    let authenticated = state.authenticated.load(Ordering::Relaxed);
+    let auth_degraded = state.auth_degraded.load(Ordering::Relaxed);
+
+    // Snapshot mount data -- lock, clone Arcs, release (snapshot-then-release to avoid contention)
+    let mount_snapshot: Vec<(
+        String,
+        Arc<std::sync::atomic::AtomicBool>,
+        Option<carminedesktop_vfs::SyncHandle>,
+    )> = {
+        let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+        caches
+            .iter()
+            .map(|(drive_id, (_, _, _, _, offline_flag, sync_handle))| {
+                (drive_id.clone(), offline_flag.clone(), sync_handle.clone())
+            })
+            .collect()
+    };
+
+    // Get mount configs for name/mount_point mapping
+    let mount_configs: Vec<(String, String, Option<String>)> = {
+        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+        config
+            .mounts
+            .iter()
+            .map(|m| {
+                (
+                    expand_mount_point(&m.mount_point),
+                    m.name.clone(),
+                    m.drive_id.clone(),
+                )
+            })
+            .collect()
+    };
+
+    // Get last_synced timestamps
+    let last_synced_map = state.last_synced.lock().map_err(|e| e.to_string())?.clone();
+
+    let mut drives = Vec::new();
+    for (drive_id, offline_flag, sync_handle) in &mount_snapshot {
+        let online = !offline_flag.load(Ordering::Relaxed);
+
+        // Find mount config for this drive
+        let (mount_name, mount_point) = mount_configs
+            .iter()
+            .find(|(_, _, did)| did.as_deref() == Some(drive_id.as_str()))
+            .map(|(mp, name, _)| (name.clone(), mp.clone()))
+            .unwrap_or_else(|| (drive_id.clone(), String::new()));
+
+        // Get upload queue metrics from SyncHandle if available
+        let upload_queue = if let Some(sh) = sync_handle {
+            let m = sh.metrics();
+            UploadQueueInfo {
+                queue_depth: m.queue_depth,
+                in_flight: m.in_flight,
+                failed_count: m.failed_count,
+                total_uploaded: m.total_uploaded,
+                total_failed: m.total_failed,
+            }
+        } else {
+            UploadQueueInfo {
+                queue_depth: 0,
+                in_flight: 0,
+                failed_count: 0,
+                total_uploaded: 0,
+                total_failed: 0,
+            }
+        };
+
+        // Determine sync state from metrics and online status
+        let sync_state = if !online {
+            "offline".to_string()
+        } else if upload_queue.queue_depth > 0 || upload_queue.in_flight > 0 {
+            "syncing".to_string()
+        } else {
+            "up_to_date".to_string()
+        };
+
+        let last_synced = last_synced_map.get(drive_id).cloned();
+
+        drives.push(DriveStatus {
+            drive_id: drive_id.clone(),
+            name: mount_name,
+            mount_point,
+            online,
+            last_synced,
+            sync_state,
+            upload_queue,
+        });
+    }
+
+    Ok(DashboardStatus {
+        drives,
+        authenticated,
+        auth_degraded,
+    })
+}
+
+#[tauri::command]
+pub async fn get_recent_errors(app: AppHandle) -> Result<Vec<DashboardError>, String> {
+    let state = app.state::<AppState>();
+    let errors = state.error_ring.lock().map_err(|e| e.to_string())?.drain();
+    Ok(errors)
+}
+
+#[tauri::command]
+pub async fn get_activity_feed(app: AppHandle) -> Result<Vec<ActivityEntry>, String> {
+    let state = app.state::<AppState>();
+    let entries = state
+        .activity_ring
+        .lock()
+        .map_err(|e| e.to_string())?
+        .drain();
+    Ok(entries)
+}
+
+#[tauri::command]
+pub async fn get_cache_stats(app: AppHandle) -> Result<CacheStatsResponse, String> {
+    let state = app.state::<AppState>();
+
+    // Snapshot caches -- lock, clone Arcs, release
+    let cache_snapshot: Vec<(String, Arc<carminedesktop_cache::CacheManager>)> = {
+        let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+        caches
+            .iter()
+            .map(|(did, (c, _, _, _, _, _))| (did.clone(), c.clone()))
+            .collect()
+    };
+
+    // Get stale pins set
+    let stale_pins = state
+        .stale_pins
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+
+    // Aggregate stats across all mounted drives
+    let mut total_disk_used: u64 = 0;
+    let mut total_disk_max: u64 = 0;
+    let mut total_memory_entries: usize = 0;
+    let mut all_pinned_items: Vec<PinHealthInfo> = Vec::new();
+    let mut all_writeback: Vec<WritebackEntry> = Vec::new();
+
+    for (_drive_id, cache) in &cache_snapshot {
+        let stats = cache.stats();
+        total_disk_used += stats.disk_used_bytes;
+        total_disk_max += stats.disk_max_bytes;
+        total_memory_entries += stats.memory_entry_count;
+
+        // Pin health -- computed on-demand from SQLite
+        if let Ok(health) = cache.pin_store.health(&stale_pins) {
+            for (pin, total_files, cached_files) in health {
+                let status =
+                    if stale_pins.contains(&(pin.drive_id.clone(), pin.item_id.clone())) {
+                        "stale".to_string()
+                    } else if cached_files >= total_files && total_files > 0 {
+                        "downloaded".to_string()
+                    } else {
+                        "partial".to_string()
+                    };
+
+                // Resolve folder name from SQLite items table
+                let folder_name = cache
+                    .sqlite
+                    .get_item_by_id(&pin.item_id)
+                    .ok()
+                    .flatten()
+                    .map(|(_, item)| item.name)
+                    .unwrap_or_else(|| pin.item_id.clone());
+
+                all_pinned_items.push(PinHealthInfo {
+                    drive_id: pin.drive_id,
+                    item_id: pin.item_id,
+                    folder_name,
+                    status,
+                    total_files,
+                    cached_files,
+                    pinned_at: pin.pinned_at,
+                    expires_at: pin.expires_at,
+                });
+            }
+        }
+
+        // Writeback queue -- list_pending() is async, called OUTSIDE lock scope
+        if let Ok(pending) = cache.writeback.list_pending().await {
+            for (pending_drive_id, item_id) in pending {
+                let file_name = cache
+                    .sqlite
+                    .get_item_by_id(&item_id)
+                    .ok()
+                    .flatten()
+                    .map(|(_, item)| item.name);
+
+                all_writeback.push(WritebackEntry {
+                    drive_id: pending_drive_id,
+                    item_id,
+                    file_name,
+                });
+            }
+        }
+    }
+
+    Ok(CacheStatsResponse {
+        disk_used_bytes: total_disk_used,
+        disk_max_bytes: total_disk_max,
+        memory_entry_count: total_memory_entries,
+        pinned_items: all_pinned_items,
+        writeback_queue: all_writeback,
+    })
 }
 
 #[tauri::command]
