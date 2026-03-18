@@ -554,6 +554,10 @@ impl CoreOps {
         &self,
         fut: impl std::future::Future<Output = carminedesktop_core::Result<T>>,
     ) -> VfsResult<T> {
+        // Explicitly enter the runtime context so tokio::time features (timeout,
+        // sleep) have access to the timer driver. Handle::block_on alone may not
+        // set this up on non-tokio threads (e.g. WinFsp filesystem threads).
+        let _guard = self.rt.enter();
         match self
             .rt
             .block_on(tokio::time::timeout(VFS_GRAPH_TIMEOUT, fut))
@@ -588,6 +592,7 @@ impl CoreOps {
                 return Some(quota.clone());
             }
         }
+        let _guard = self.rt.enter();
         match self.rt.block_on(tokio::time::timeout(
             VFS_GRAPH_TIMEOUT,
             self.graph.get_drive(&self.drive_id),
@@ -1416,6 +1421,7 @@ impl CoreOps {
                 // Synchronous flush: block until the upload completes or times out.
                 let (tx, rx) = tokio::sync::oneshot::channel();
                 sync_handle.send(crate::sync_processor::SyncRequest::FlushSync { ino, done: tx });
+                let _guard = self.rt.enter();
                 match self.rt.block_on(async {
                     tokio::time::timeout(std::time::Duration::from_secs(60), rx).await
                 }) {
@@ -1837,6 +1843,7 @@ impl CoreOps {
         let start = Instant::now();
         let mut delay_ms = COPY_POLL_INITIAL_MS;
         let max_duration = std::time::Duration::from_secs(COPY_MAX_POLL_DURATION_SECS);
+        let _guard = self.rt.enter();
 
         loop {
             self.rt
