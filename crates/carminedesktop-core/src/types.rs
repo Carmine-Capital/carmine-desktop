@@ -161,3 +161,165 @@ pub struct CopyMonitorResponse {
     pub resource_id: Option<String>,
     pub error: Option<GraphErrorBody>,
 }
+
+// ---------------------------------------------------------------------------
+// Observability types — ObsEvent enum and Tauri command response structs
+// ---------------------------------------------------------------------------
+
+/// Real-time observability event, emitted via `tokio::sync::broadcast` and
+/// forwarded to the frontend via `app.emit("obs-event", &event)`.
+///
+/// The `#[serde(tag = "type")]` attribute produces a JSON discriminator field
+/// named `"type"` with camelCase variant names (e.g. `"syncStateChanged"`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ObsEvent {
+    /// A persistent error that should appear in the dashboard error log.
+    Error {
+        #[serde(rename = "driveId")]
+        drive_id: Option<String>,
+        #[serde(rename = "fileName")]
+        file_name: Option<String>,
+        #[serde(rename = "remotePath")]
+        remote_path: Option<String>,
+        #[serde(rename = "errorType")]
+        error_type: String,
+        message: String,
+        #[serde(rename = "actionHint")]
+        action_hint: Option<String>,
+        timestamp: String,
+    },
+    /// A file-level activity entry for the activity feed.
+    Activity {
+        #[serde(rename = "driveId")]
+        drive_id: String,
+        #[serde(rename = "filePath")]
+        file_path: String,
+        /// One of: "uploaded", "synced", "deleted", "conflict".
+        #[serde(rename = "activityType")]
+        activity_type: String,
+        timestamp: String,
+    },
+    /// Sync state transition for a drive.
+    SyncStateChanged {
+        #[serde(rename = "driveId")]
+        drive_id: String,
+        /// One of: "syncing", "up_to_date", "error".
+        state: String,
+    },
+    /// Online/offline state change for a drive.
+    OnlineStateChanged {
+        #[serde(rename = "driveId")]
+        drive_id: String,
+        online: bool,
+    },
+    /// Auth degradation state change (global, not per-drive).
+    AuthStateChanged {
+        degraded: bool,
+    },
+}
+
+/// Response for `get_dashboard_status` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardStatus {
+    pub drives: Vec<DriveStatus>,
+    pub authenticated: bool,
+    pub auth_degraded: bool,
+}
+
+/// Per-drive status within a `DashboardStatus` response.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriveStatus {
+    pub drive_id: String,
+    pub name: String,
+    pub mount_point: String,
+    pub online: bool,
+    pub last_synced: Option<String>,
+    /// One of: "up_to_date", "syncing", "error".
+    pub sync_state: String,
+    pub upload_queue: UploadQueueInfo,
+}
+
+/// Upload queue snapshot within a `DriveStatus`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadQueueInfo {
+    pub queue_depth: usize,
+    pub in_flight: usize,
+    pub failed_count: usize,
+    pub total_uploaded: u64,
+    pub total_failed: u64,
+}
+
+/// A single error entry for `get_recent_errors` response.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardError {
+    pub drive_id: Option<String>,
+    pub file_name: Option<String>,
+    pub remote_path: Option<String>,
+    pub error_type: String,
+    pub message: String,
+    pub action_hint: Option<String>,
+    pub timestamp: String,
+}
+
+/// A single activity entry for `get_activity_feed` response.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityEntry {
+    pub drive_id: String,
+    pub file_path: String,
+    /// One of: "uploaded", "synced", "deleted", "conflict".
+    pub activity_type: String,
+    pub timestamp: String,
+}
+
+/// Response for `get_cache_stats` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheStatsResponse {
+    pub disk_used_bytes: u64,
+    pub disk_max_bytes: u64,
+    pub memory_entry_count: usize,
+    pub pinned_items: Vec<PinHealthInfo>,
+    pub writeback_queue: Vec<WritebackEntry>,
+}
+
+/// Health information for a single pinned folder.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PinHealthInfo {
+    pub drive_id: String,
+    pub item_id: String,
+    pub folder_name: String,
+    /// One of: "downloaded", "partial", "stale".
+    pub status: String,
+    pub total_files: usize,
+    pub cached_files: usize,
+    pub pinned_at: String,
+    pub expires_at: String,
+}
+
+/// A pending writeback entry in the upload queue.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WritebackEntry {
+    pub drive_id: String,
+    pub item_id: String,
+    pub file_name: Option<String>,
+}
+
+/// Internal stats returned by `CacheManager::stats()`.
+///
+/// Not serialized directly to JSON — the Tauri command maps this into
+/// `CacheStatsResponse` with additional pin health and writeback data.
+#[derive(Debug, Clone)]
+pub struct CacheManagerStats {
+    pub memory_entry_count: usize,
+    pub disk_used_bytes: u64,
+    pub disk_max_bytes: u64,
+    pub dirty_inode_count: usize,
+}

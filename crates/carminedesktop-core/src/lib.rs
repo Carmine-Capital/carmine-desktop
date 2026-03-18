@@ -4,4 +4,7 @@ pub mod open_online;
 pub mod types;
 
 pub use error::{Error, Result};
-pub use types::DeltaSyncObserver;
+pub use types::{
+    ActivityEntry, CacheManagerStats, CacheStatsResponse, DashboardError, DashboardStatus,
+    DeltaSyncObserver, DriveStatus, ObsEvent, PinHealthInfo, UploadQueueInfo, WritebackEntry,
+};
