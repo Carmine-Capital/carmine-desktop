@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-03-18T12:33:52.000Z"
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-03-18T12:48:36.000Z"
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 4
-  completed_plans: 1
-  percent: 25
+  completed_plans: 2
+  percent: 50
 ---
 
 # State: CarmineDesktop — Stabilization & Observability
@@ -23,18 +23,19 @@ progress:
 ## Current Position
 
 **Phase:** 2 of 4 — Observability Infrastructure
-**Plan:** 1 of 4 complete
+**Plan:** 2 of 4 complete
 **Status:** Executing
-**Progress:** [███-------] 25%
+**Progress:** [█████-----] 50%
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
 | Phases completed | 1/4 |
-| Plans completed | 1/4 (Phase 2) |
+| Plans completed | 2/4 (Phase 2) |
 | Requirements delivered | 0/15 |
 | Plan 02-01 duration | 6min |
+| Plan 02-02 duration | 10min |
 
 ## Accumulated Context
 
@@ -53,6 +54,9 @@ progress:
 | Non-VFS callers keep existing behavior | Delta sync, uploads, renames don't need same constraints as sync VFS callbacks | Phase 1 |
 | Per-field serde rename on ObsEvent variants | serde rename_all on tagged enums only renames variant names, not inner fields | Phase 2 |
 | PinStore::health() uses recursive CTE | Joins items and cache_entries tables without Graph API calls; stale_pins passed by caller | Phase 2 |
+| Inline #[cfg(test)] for binary crate ring buffer tests | App crate has no lib.rs; ring buffer structs inaccessible to external test files | Phase 2 |
+| Lock ordering documented on AppState | Prevents deadlocks as observability adds more Mutex-guarded state | Phase 2 |
+| SyncHandle stored as 6th MountCacheEntry element | Cheap clone; enables dashboard SyncMetrics access without platform-gated MountHandle | Phase 2 |
 
 ### Todos
 
@@ -73,13 +77,13 @@ progress:
 
 ### Last Session
 
-- **Stopped at:** Completed 02-01-PLAN.md
-- **Resume file:** .planning/phases/02-observability-infrastructure/02-01-SUMMARY.md
+- **Stopped at:** Completed 02-02-PLAN.md
+- **Resume file:** .planning/phases/02-observability-infrastructure/02-02-SUMMARY.md
 
 ### Resume Prompt
 
-Plan 02-01 complete. ObsEvent enum (5 variants), all Tauri command response structs, and cache stat methods defined and tested. Zero clippy warnings. Ready for Plan 02-02 (ring buffers, event bridge, AppState extensions).
+Plan 02-02 complete. ErrorAccumulator (100-cap) and ActivityBuffer (500-cap) ring buffers, event bridge, AppState extended with obs_tx/error_ring/activity_ring/last_synced/stale_pins, MountCacheEntry gains SyncHandle. Zero clippy warnings. Ready for Plan 02-03 (Tauri commands + delta sync wiring).
 
 ---
 *State initialized: 2026-03-18*
-*Last updated: 2026-03-18T12:33:52Z*
+*Last updated: 2026-03-18T12:48:36Z*
