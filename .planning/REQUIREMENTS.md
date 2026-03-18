@@ -76,27 +76,27 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BUG-01 | — | Pending |
-| DASH-01 | — | Pending |
-| DASH-02 | — | Pending |
-| DASH-03 | — | Pending |
-| DASH-04 | — | Pending |
-| DASH-05 | — | Pending |
-| ACT-01 | — | Pending |
-| ACT-02 | — | Pending |
-| ACT-03 | — | Pending |
-| ACT-04 | — | Pending |
-| ACT-05 | — | Pending |
-| COFF-01 | — | Pending |
-| COFF-02 | — | Pending |
-| UI-01 | — | Pending |
-| UI-02 | — | Pending |
+| BUG-01 | Phase 1: WinFsp Offline Pin Fix | Pending |
+| DASH-01 | Phase 3: Dashboard UI | Pending |
+| DASH-02 | Phase 3: Dashboard UI | Pending |
+| DASH-03 | Phase 3: Dashboard UI | Pending |
+| DASH-04 | Phase 3: Dashboard UI | Pending |
+| DASH-05 | Phase 3: Dashboard UI | Pending |
+| ACT-01 | Phase 3: Dashboard UI | Pending |
+| ACT-02 | Phase 3: Dashboard UI | Pending |
+| ACT-03 | Phase 3: Dashboard UI | Pending |
+| ACT-04 | Phase 3: Dashboard UI | Pending |
+| ACT-05 | Phase 3: Dashboard UI | Pending |
+| COFF-01 | Phase 3: Dashboard UI | Pending |
+| COFF-02 | Phase 3: Dashboard UI | Pending |
+| UI-01 | Phase 4: Visual Polish & Hardening | Pending |
+| UI-02 | Phase 4: Visual Polish & Hardening | Pending |
 
 **Coverage:**
 - v1 requirements: 15 total
-- Mapped to phases: 0
-- Unmapped: 15
+- Mapped to phases: 15
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-18*
-*Last updated: 2026-03-18 after initial definition*
+*Last updated: 2026-03-18 after roadmap creation*
