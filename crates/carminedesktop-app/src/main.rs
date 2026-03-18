@@ -1377,9 +1377,7 @@ fn spawn_event_forwarder(
                         remote_path: None,
                         error_type: "writeback_failed".to_string(),
                         message: "Writeback to buffer failed".to_string(),
-                        action_hint: Some(
-                            "Upload failed -- file queued for retry".to_string(),
-                        ),
+                        action_hint: Some("Upload failed -- file queued for retry".to_string()),
                         timestamp: now,
                     });
                 }
@@ -1769,11 +1767,9 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                                 let state = app_handle.state::<AppState>();
                                 let caches = state.mount_caches.lock().unwrap();
                                 caches.get(drive_id).and_then(|(cache, _, _, _, _, _)| {
-                                    cache
-                                        .pin_store
-                                        .list_all()
-                                        .ok()
-                                        .map(|pins| pins.iter().map(|p| p.item_id.clone()).collect())
+                                    cache.pin_store.list_all().ok().map(|pins| {
+                                        pins.iter().map(|p| p.item_id.clone()).collect()
+                                    })
                                 })
                             };
                             // Update stale_pins outside mount_caches lock
@@ -1820,10 +1816,7 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                                 file_name: None,
                                 remote_path: None,
                                 error_type: "drive_deleted".to_string(),
-                                message: format!(
-                                    "Drive '{}' was deleted or not found",
-                                    mount_name
-                                ),
+                                message: format!("Drive '{}' was deleted or not found", mount_name),
                                 action_hint: Some(
                                     "This drive was deleted or access was revoked".to_string(),
                                 ),
@@ -1846,10 +1839,7 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                                     file_name: None,
                                     remote_path: None,
                                     error_type: "permission_denied".to_string(),
-                                    message: format!(
-                                        "Access denied for drive '{}'",
-                                        mount_name
-                                    ),
+                                    message: format!("Access denied for drive '{}'", mount_name),
                                     action_hint: Some(
                                         "Check your permissions for this drive".to_string(),
                                     ),

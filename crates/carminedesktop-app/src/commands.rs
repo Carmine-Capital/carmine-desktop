@@ -1,5 +1,5 @@
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -653,11 +653,7 @@ pub async fn get_cache_stats(app: AppHandle) -> Result<CacheStatsResponse, Strin
     };
 
     // Get stale pins set
-    let stale_pins = state
-        .stale_pins
-        .lock()
-        .map_err(|e| e.to_string())?
-        .clone();
+    let stale_pins = state.stale_pins.lock().map_err(|e| e.to_string())?.clone();
 
     // Aggregate stats across all mounted drives
     let mut total_disk_used: u64 = 0;
@@ -675,14 +671,13 @@ pub async fn get_cache_stats(app: AppHandle) -> Result<CacheStatsResponse, Strin
         // Pin health -- computed on-demand from SQLite
         if let Ok(health) = cache.pin_store.health(&stale_pins) {
             for (pin, total_files, cached_files) in health {
-                let status =
-                    if stale_pins.contains(&(pin.drive_id.clone(), pin.item_id.clone())) {
-                        "stale".to_string()
-                    } else if cached_files >= total_files && total_files > 0 {
-                        "downloaded".to_string()
-                    } else {
-                        "partial".to_string()
-                    };
+                let status = if stale_pins.contains(&(pin.drive_id.clone(), pin.item_id.clone())) {
+                    "stale".to_string()
+                } else if cached_files >= total_files && total_files > 0 {
+                    "downloaded".to_string()
+                } else {
+                    "partial".to_string()
+                };
 
                 // Resolve folder name from SQLite items table
                 let folder_name = cache
