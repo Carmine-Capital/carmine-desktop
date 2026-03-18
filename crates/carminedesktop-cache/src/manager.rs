@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use carminedesktop_core::types::DriveItem;
 use dashmap::DashSet;
 
 use crate::disk::DiskCache;
@@ -25,6 +26,7 @@ impl CacheManager {
         db_path: PathBuf,
         max_cache_bytes: u64,
         ttl_secs: Option<u64>,
+        drive_id: String,
     ) -> carminedesktop_core::Result<Self> {
         std::fs::create_dir_all(&cache_dir).map_err(|e| {
             carminedesktop_core::Error::Cache(format!("create cache dir failed: {e}"))
@@ -36,10 +38,17 @@ impl CacheManager {
         let writeback = WriteBackBuffer::new(cache_dir);
         let pin_store = Arc::new(PinStore::open(&db_path)?);
 
-        // Wire eviction protection: items in pinned folder trees are never evicted
+        // Wire disk eviction protection: items in pinned folder trees are never evicted
         let ps = pin_store.clone();
-        disk.set_eviction_filter(Arc::new(move |drive_id: &str, item_id: &str| {
-            ps.is_protected(drive_id, item_id)
+        disk.set_eviction_filter(Arc::new(move |did: &str, item_id: &str| {
+            ps.is_protected(did, item_id)
+        }));
+
+        // Wire memory cache eviction protection: pinned items never evicted or TTL-expired
+        let ps2 = pin_store.clone();
+        let drive_id_owned = drive_id;
+        memory.set_eviction_filter(Arc::new(move |item: &DriveItem| {
+            ps2.is_protected(&drive_id_owned, &item.id)
         }));
 
         Ok(Self {

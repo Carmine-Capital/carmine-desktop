@@ -706,7 +706,7 @@ fn test_dirty_inodes_mark_and_check() {
     std::fs::create_dir_all(&cache_dir).unwrap();
 
     let cache =
-        carminedesktop_cache::CacheManager::new(cache_dir, db_path, 1_000_000, Some(60)).unwrap();
+        carminedesktop_cache::CacheManager::new(cache_dir, db_path, 1_000_000, Some(60), "test-drive".to_string()).unwrap();
 
     assert!(!cache.dirty_inodes.contains(&42));
     cache.dirty_inodes.insert(42);
@@ -723,7 +723,7 @@ fn test_dirty_inodes_concurrent_access() {
     std::fs::create_dir_all(&cache_dir).unwrap();
 
     let cache = std::sync::Arc::new(
-        carminedesktop_cache::CacheManager::new(cache_dir, db_path, 1_000_000, Some(60)).unwrap(),
+        carminedesktop_cache::CacheManager::new(cache_dir, db_path, 1_000_000, Some(60), "test-drive".to_string()).unwrap(),
     );
 
     let handles: Vec<_> = (0..10)
@@ -1033,7 +1033,7 @@ async fn test_delta_sync_observer_called_on_etag_change() {
     let db_path = base.join("metadata.db");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
-    let cache = Arc::new(CacheManager::new(cache_dir, db_path, 100_000_000, Some(300)).unwrap());
+    let cache = Arc::new(CacheManager::new(cache_dir, db_path, 100_000_000, Some(300), "test-drive".to_string()).unwrap());
     let graph = Arc::new(carminedesktop_graph::GraphClient::with_base_url(
         server.uri(),
         || async { Ok("test-token".to_string()) },
@@ -1135,7 +1135,7 @@ async fn test_delta_sync_no_observer_still_works() {
     let db_path = base.join("metadata.db");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
-    let cache = Arc::new(CacheManager::new(cache_dir, db_path, 100_000_000, Some(300)).unwrap());
+    let cache = Arc::new(CacheManager::new(cache_dir, db_path, 100_000_000, Some(300), "test-drive".to_string()).unwrap());
     let graph = Arc::new(carminedesktop_graph::GraphClient::with_base_url(
         server.uri(),
         || async { Ok("test-token".to_string()) },

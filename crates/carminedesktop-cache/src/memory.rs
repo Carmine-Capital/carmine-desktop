@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use carminedesktop_core::types::DriveItem;
@@ -8,9 +9,12 @@ const DEFAULT_TTL_SECS: u64 = 60;
 const MAX_ENTRIES: usize = 10_000;
 const EVICT_TO: usize = 8_000;
 
+type MemoryEvictionFilter = Arc<dyn Fn(&DriveItem) -> bool + Send + Sync>;
+
 pub struct MemoryCache {
     entries: DashMap<u64, CachedEntry>,
     ttl_secs: u64,
+    eviction_filter: std::sync::RwLock<Option<MemoryEvictionFilter>>,
 }
 
 struct CachedEntry {
@@ -25,16 +29,36 @@ impl MemoryCache {
         Self {
             entries: DashMap::new(),
             ttl_secs: ttl_secs.unwrap_or(DEFAULT_TTL_SECS),
+            eviction_filter: std::sync::RwLock::new(None),
         }
+    }
+
+    /// Set a filter predicate for eviction and TTL expiry.  If the filter
+    /// returns `true` for a cached `DriveItem`, that entry is protected:
+    /// it will not be evicted by LRU pressure, and its TTL will be
+    /// refreshed instead of removing the entry.
+    pub fn set_eviction_filter(&self, filter: MemoryEvictionFilter) {
+        *self.eviction_filter.write().unwrap() = Some(filter);
     }
 
     pub fn get(&self, inode: u64) -> Option<DriveItem> {
         let mut entry = self.entries.get_mut(&inode)?;
         let elapsed = entry.inserted_at.elapsed().as_secs();
         if elapsed > self.ttl_secs {
-            drop(entry);
-            self.entries.remove(&inode);
-            return None;
+            let protected = self
+                .eviction_filter
+                .read()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|f| f(&entry.item));
+            if !protected {
+                drop(entry);
+                self.entries.remove(&inode);
+                return None;
+            }
+            // Protected: refresh insertion time so subsequent checks don't
+            // re-evaluate the filter on every access.
+            entry.inserted_at = Instant::now();
         }
         entry.last_access = Instant::now();
         Some(entry.item.clone())
@@ -44,7 +68,16 @@ impl MemoryCache {
         let mut entry = self.entries.get_mut(&parent_inode)?;
         let elapsed = entry.inserted_at.elapsed().as_secs();
         if elapsed > self.ttl_secs {
-            return None;
+            let protected = self
+                .eviction_filter
+                .read()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|f| f(&entry.item));
+            if !protected {
+                return None;
+            }
+            entry.inserted_at = Instant::now();
         }
         entry.last_access = Instant::now();
         entry.children.clone()
@@ -139,6 +172,8 @@ impl MemoryCache {
             return;
         }
 
+        let filter = self.eviction_filter.read().unwrap().clone();
+
         let mut entries: Vec<(u64, Instant)> = self
             .entries
             .iter()
@@ -148,8 +183,19 @@ impl MemoryCache {
         entries.sort_by_key(|(_, t)| *t);
 
         let to_remove = entries.len() - EVICT_TO;
-        for (inode, _) in entries.into_iter().take(to_remove) {
+        let mut removed = 0;
+        for (inode, _) in entries {
+            if removed >= to_remove {
+                break;
+            }
+            if let Some(ref f) = filter
+                && let Some(entry) = self.entries.get(&inode)
+                && f(&entry.item)
+            {
+                continue; // protected — skip
+            }
             self.entries.remove(&inode);
+            removed += 1;
         }
     }
 }

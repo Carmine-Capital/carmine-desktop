@@ -102,7 +102,7 @@ async fn test_offline_cached_files_readable() -> carminedesktop_core::Result<()>
     cleanup(&base);
     std::fs::create_dir_all(&cache_dir)?;
 
-    let cache = CacheManager::new(cache_dir, db_path, 100_000_000, Some(300))?;
+    let cache = CacheManager::new(cache_dir, db_path, 100_000_000, Some(300), "test-drive".to_string())?;
 
     let item1 = test_drive_item("item-a", "report.docx", false);
     let item2 = test_drive_item("item-b", "notes.txt", false);
@@ -163,7 +163,7 @@ async fn test_write_conflict_creates_conflict_copy() -> carminedesktop_core::Res
     std::fs::create_dir_all(&cache_dir)?;
 
     let client = Arc::new(make_client(&server.uri()));
-    let cache = CacheManager::new(cache_dir, db_path, 100_000_000, Some(300))?;
+    let cache = CacheManager::new(cache_dir, db_path, 100_000_000, Some(300), "test-drive".to_string())?;
 
     // Populate cache with a file that has eTag "etag-v1"
     let mut item = test_drive_item("file-1", "document.txt", false);
@@ -423,6 +423,7 @@ async fn test_smoke_macos_fuse_mount_list_read_write_unmount() -> carminedesktop
         db_path,
         100_000_000,
         Some(300),
+        "test-drive".to_string(),
     )?);
     let inodes = Arc::new(InodeTable::new());
     inodes.set_root("root-id");
@@ -560,6 +561,7 @@ async fn test_initialization_sequence() -> carminedesktop_core::Result<()> {
         db_path,
         5 * 1024 * 1024 * 1024,
         Some(60),
+        "test-drive".to_string(),
     )?);
 
     // 5. Create InodeTable and drive_ids
@@ -656,6 +658,7 @@ async fn test_token_restoration_flow() -> carminedesktop_core::Result<()> {
         db_path,
         100_000_000,
         Some(60),
+        "test-drive".to_string(),
     )?);
     let inodes = Arc::new(InodeTable::new());
     let drive_ids: Arc<std::sync::RwLock<Vec<String>>> =
@@ -872,6 +875,7 @@ async fn test_crash_recovery_reupload_pending_writes() -> carminedesktop_core::R
         db_path,
         100_000_000,
         Some(60),
+        "test-drive".to_string(),
     )?);
 
     // Simulate crashed writes: write and persist pending items
@@ -968,6 +972,7 @@ async fn test_graceful_shutdown_stops_sync_and_mounts() -> carminedesktop_core::
         db_path,
         100_000_000,
         Some(60),
+        "test-drive".to_string(),
     )?);
     let _inodes = Arc::new(InodeTable::new());
     let drive_ids: Arc<std::sync::RwLock<Vec<String>>> = Arc::new(std::sync::RwLock::new(vec![
@@ -1058,6 +1063,7 @@ async fn test_auth_degradation_detection_in_delta_sync() -> carminedesktop_core:
         db_path,
         100_000_000,
         Some(60),
+        "test-drive".to_string(),
     )?);
     let inodes = Arc::new(InodeTable::new());
     let inode_allocator: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
@@ -1164,6 +1170,7 @@ async fn test_smoke_windows_winfsp_mount_list_read_write_unmount() -> carminedes
         db_path,
         100_000_000,
         Some(300),
+        "test-drive".to_string(),
     )?);
     let inodes = Arc::new(InodeTable::new());
     inodes.set_root("root-id");
@@ -1282,6 +1289,7 @@ async fn test_surgical_invalidation_create_preserves_parent_cache()
         db_path,
         100_000_000,
         Some(300),
+        "test-drive".to_string(),
     )?);
     let inodes = Arc::new(InodeTable::new());
     inodes.set_root("root-id");
@@ -1376,6 +1384,7 @@ async fn test_delta_sync_result_contains_changed_items_on_etag_change()
         db_path,
         100_000_000,
         Some(60),
+        "test-drive".to_string(),
     )?);
 
     let inodes = Arc::new(InodeTable::new());
@@ -1500,6 +1509,7 @@ async fn test_delta_sync_result_contains_deleted_items_with_path() -> carminedes
         db_path,
         100_000_000,
         Some(60),
+        "test-drive".to_string(),
     )?);
 
     let inodes = Arc::new(InodeTable::new());
@@ -1606,6 +1616,7 @@ async fn test_delta_sync_result_empty_when_no_changes() -> carminedesktop_core::
         db_path,
         100_000_000,
         Some(60),
+        "test-drive".to_string(),
     )?);
 
     Mock::given(method("GET"))
