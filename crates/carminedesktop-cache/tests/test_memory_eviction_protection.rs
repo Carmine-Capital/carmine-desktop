@@ -35,7 +35,9 @@ fn test_memory_eviction_filter_protects_entries() {
     let cache = MemoryCache::new(Some(60));
 
     // Protect items whose id starts with "protected"
-    cache.set_eviction_filter(Arc::new(|item: &DriveItem| item.id.starts_with("protected")));
+    cache.set_eviction_filter(Arc::new(|item: &DriveItem| {
+        item.id.starts_with("protected")
+    }));
 
     // Insert more than MAX_ENTRIES (10_000) to trigger eviction
     // First insert some protected entries
@@ -46,7 +48,11 @@ fn test_memory_eviction_filter_protects_entries() {
 
     // Insert unprotected entries to fill the cache past MAX_ENTRIES
     for i in 100..10_200 {
-        let item = test_drive_item(&format!("unprotected-{i}"), &format!("unprotected-{i}"), false);
+        let item = test_drive_item(
+            &format!("unprotected-{i}"),
+            &format!("unprotected-{i}"),
+            false,
+        );
         cache.insert(i, item);
     }
 
@@ -66,7 +72,9 @@ async fn test_memory_ttl_bypassed_for_protected_entries_get() {
     let cache = MemoryCache::new(Some(1)); // 1 second TTL
 
     // Protect items whose id starts with "protected"
-    cache.set_eviction_filter(Arc::new(|item: &DriveItem| item.id.starts_with("protected")));
+    cache.set_eviction_filter(Arc::new(|item: &DriveItem| {
+        item.id.starts_with("protected")
+    }));
 
     let protected_item = test_drive_item("protected-1", "protected-file", false);
     cache.insert(100, protected_item.clone());
@@ -90,7 +98,9 @@ async fn test_memory_ttl_bypassed_for_protected_entries_get_children() {
     let cache = MemoryCache::new(Some(1)); // 1 second TTL
 
     // Protect items whose id starts with "protected"
-    cache.set_eviction_filter(Arc::new(|item: &DriveItem| item.id.starts_with("protected")));
+    cache.set_eviction_filter(Arc::new(|item: &DriveItem| {
+        item.id.starts_with("protected")
+    }));
 
     let protected_item = test_drive_item("protected-folder", "protected-folder", true);
     let mut children = HashMap::new();
@@ -136,7 +146,9 @@ fn test_memory_eviction_removes_unprotected_to_target() {
     let cache = MemoryCache::new(Some(60));
 
     // Protect first 500 items
-    cache.set_eviction_filter(Arc::new(|item: &DriveItem| item.id.starts_with("protected")));
+    cache.set_eviction_filter(Arc::new(|item: &DriveItem| {
+        item.id.starts_with("protected")
+    }));
 
     for i in 0..500 {
         let item = test_drive_item(&format!("protected-{i}"), &format!("protected-{i}"), false);
@@ -145,7 +157,11 @@ fn test_memory_eviction_removes_unprotected_to_target() {
 
     // Fill with unprotected entries past MAX_ENTRIES
     for i in 500..10_500 {
-        let item = test_drive_item(&format!("unprotected-{i}"), &format!("unprotected-{i}"), false);
+        let item = test_drive_item(
+            &format!("unprotected-{i}"),
+            &format!("unprotected-{i}"),
+            false,
+        );
         cache.insert(i, item);
     }
 

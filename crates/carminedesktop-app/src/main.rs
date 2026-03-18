@@ -1222,8 +1222,14 @@ fn start_mount_common(
     let safe_id = drive_id.replace('!', "_");
     let db_path = effective_cache_dir.join(format!("drive-{safe_id}.db"));
     let cache = Arc::new(
-        CacheManager::new(effective_cache_dir, db_path, max_cache_bytes, metadata_ttl, drive_id.to_string())
-            .map_err(|e| e.to_string())?,
+        CacheManager::new(
+            effective_cache_dir,
+            db_path,
+            max_cache_bytes,
+            metadata_ttl,
+            drive_id.to_string(),
+        )
+        .map_err(|e| e.to_string())?,
     );
     let max_inode = cache.sqlite.max_inode().unwrap_or(0);
     let inodes = Arc::new(InodeTable::new_starting_after(max_inode));

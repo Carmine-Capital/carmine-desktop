@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
+use carminedesktop_cache::CacheManager;
 use carminedesktop_cache::disk::DiskCache;
 use carminedesktop_cache::memory::MemoryCache;
 use carminedesktop_cache::pin_store::PinStore;
-use carminedesktop_cache::CacheManager;
 use carminedesktop_core::types::DriveItem;
 
 /// Helper to create a test DriveItem.
@@ -103,15 +103,26 @@ fn test_memory_cache_len_empty_then_populated() {
 async fn test_cache_manager_stats_returns_correct_values() {
     let dir = test_dir("cm_stats");
     let db_path = dir.join("cache.db");
-    let cm = CacheManager::new(dir.clone(), db_path, 10_000_000, Some(60), "drive-x".to_string())
-        .unwrap();
+    let cm = CacheManager::new(
+        dir.clone(),
+        db_path,
+        10_000_000,
+        Some(60),
+        "drive-x".to_string(),
+    )
+    .unwrap();
 
     // Insert items into memory cache
-    cm.memory.insert(1, test_drive_item("item-1", "a.txt", false));
-    cm.memory.insert(2, test_drive_item("item-2", "b.txt", false));
+    cm.memory
+        .insert(1, test_drive_item("item-1", "a.txt", false));
+    cm.memory
+        .insert(2, test_drive_item("item-2", "b.txt", false));
 
     // Insert content into disk cache
-    cm.disk.put("drive-x", "item-1", b"hello", None).await.unwrap();
+    cm.disk
+        .put("drive-x", "item-1", b"hello", None)
+        .await
+        .unwrap();
 
     // Mark an inode dirty
     cm.dirty_inodes.insert(100);
@@ -160,7 +171,11 @@ async fn test_pin_store_health_all_cached_is_downloaded() {
         .unwrap();
 
     // Insert 3 file items as children of the pinned folder
-    for (inode, id, name) in [(101, "file-1", "a.txt"), (102, "file-2", "b.txt"), (103, "file-3", "c.txt")] {
+    for (inode, id, name) in [
+        (101, "file-1", "a.txt"),
+        (102, "file-2", "b.txt"),
+        (103, "file-3", "c.txt"),
+    ] {
         _sqlite
             .upsert_item(
                 inode,
@@ -210,7 +225,11 @@ async fn test_pin_store_health_partial_when_some_files_missing() {
         .unwrap();
 
     // 3 files, but only 1 cached
-    for (inode, id, name) in [(101, "file-1", "a.txt"), (102, "file-2", "b.txt"), (103, "file-3", "c.txt")] {
+    for (inode, id, name) in [
+        (101, "file-1", "a.txt"),
+        (102, "file-2", "b.txt"),
+        (103, "file-3", "c.txt"),
+    ] {
         _sqlite
             .upsert_item(
                 inode,

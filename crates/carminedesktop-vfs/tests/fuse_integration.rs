@@ -63,8 +63,16 @@ impl TestFixture {
             Ok("test-token".to_string())
         }));
 
-        let cache =
-            Arc::new(CacheManager::new(cache_dir, db_path, 100_000_000, Some(300), "test-drive".to_string()).unwrap());
+        let cache = Arc::new(
+            CacheManager::new(
+                cache_dir,
+                db_path,
+                100_000_000,
+                Some(300),
+                "test-drive".to_string(),
+            )
+            .unwrap(),
+        );
 
         let inodes = Arc::new(InodeTable::new());
 
@@ -200,8 +208,14 @@ async fn mount_fails_when_root_fetch_returns_error() {
         || async { Ok("test-token".to_string()) },
     ));
     let cache = Arc::new(
-        carminedesktop_cache::CacheManager::new(cache_dir, db_path, 100_000_000, Some(300), "test-drive".to_string())
-            .unwrap(),
+        carminedesktop_cache::CacheManager::new(
+            cache_dir,
+            db_path,
+            100_000_000,
+            Some(300),
+            "test-drive".to_string(),
+        )
+        .unwrap(),
     );
     let inodes = Arc::new(InodeTable::new());
     let rt = tokio::runtime::Handle::current();

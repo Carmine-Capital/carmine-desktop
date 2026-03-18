@@ -588,10 +588,10 @@ impl CoreOps {
                 return Some(quota.clone());
             }
         }
-        match self
-            .rt
-            .block_on(tokio::time::timeout(VFS_GRAPH_TIMEOUT, self.graph.get_drive(&self.drive_id)))
-        {
+        match self.rt.block_on(tokio::time::timeout(
+            VFS_GRAPH_TIMEOUT,
+            self.graph.get_drive(&self.drive_id),
+        )) {
             Ok(Ok(drive)) => {
                 if let Some(quota) = drive.quota {
                     let mut cache = self.quota_cache.lock().unwrap();
@@ -1105,9 +1105,7 @@ impl CoreOps {
         // Without this, the disk cache validation compares against memory-cached
         // metadata which may also be stale — both have the old eTag, so the
         // stale content passes validation and is served as-is (corruption).
-        let item = match self
-            .graph_with_timeout(self.graph.get_item(&self.drive_id, &item_id))
-        {
+        let item = match self.graph_with_timeout(self.graph.get_item(&self.drive_id, &item_id)) {
             Ok(fresh) => {
                 // Check if file is locked (co-authoring, checkout)
                 if fresh.is_locked() {

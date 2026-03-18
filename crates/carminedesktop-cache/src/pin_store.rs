@@ -203,9 +203,7 @@ impl PinStore {
                     expires_at: row.get(3)?,
                 })
             })
-            .map_err(|e| {
-                carminedesktop_core::Error::Cache(format!("pin query failed: {e}"))
-            })?
+            .map_err(|e| carminedesktop_core::Error::Cache(format!("pin query failed: {e}")))?
             .filter_map(|r| r.ok())
             .collect();
 

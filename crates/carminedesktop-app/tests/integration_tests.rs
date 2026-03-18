@@ -102,7 +102,13 @@ async fn test_offline_cached_files_readable() -> carminedesktop_core::Result<()>
     cleanup(&base);
     std::fs::create_dir_all(&cache_dir)?;
 
-    let cache = CacheManager::new(cache_dir, db_path, 100_000_000, Some(300), "test-drive".to_string())?;
+    let cache = CacheManager::new(
+        cache_dir,
+        db_path,
+        100_000_000,
+        Some(300),
+        "test-drive".to_string(),
+    )?;
 
     let item1 = test_drive_item("item-a", "report.docx", false);
     let item2 = test_drive_item("item-b", "notes.txt", false);
@@ -163,7 +169,13 @@ async fn test_write_conflict_creates_conflict_copy() -> carminedesktop_core::Res
     std::fs::create_dir_all(&cache_dir)?;
 
     let client = Arc::new(make_client(&server.uri()));
-    let cache = CacheManager::new(cache_dir, db_path, 100_000_000, Some(300), "test-drive".to_string())?;
+    let cache = CacheManager::new(
+        cache_dir,
+        db_path,
+        100_000_000,
+        Some(300),
+        "test-drive".to_string(),
+    )?;
 
     // Populate cache with a file that has eTag "etag-v1"
     let mut item = test_drive_item("file-1", "document.txt", false);

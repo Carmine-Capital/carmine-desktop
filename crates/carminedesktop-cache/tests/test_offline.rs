@@ -17,7 +17,16 @@ fn test_cache() -> (Arc<CacheManager>, std::path::PathBuf) {
     let db_path = base.join("metadata.db");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
-    let cache = Arc::new(CacheManager::new(cache_dir, db_path, 100_000_000, Some(300), "test-drive".to_string()).unwrap());
+    let cache = Arc::new(
+        CacheManager::new(
+            cache_dir,
+            db_path,
+            100_000_000,
+            Some(300),
+            "test-drive".to_string(),
+        )
+        .unwrap(),
+    );
     (cache, base)
 }
 

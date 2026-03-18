@@ -36,8 +36,14 @@ fn test_cache(prefix: &str) -> (Arc<CacheManager>, std::path::PathBuf) {
     let db_path = base.join("metadata.db");
     std::fs::create_dir_all(&cache_dir).unwrap();
     let cache = Arc::new(
-        CacheManager::new(cache_dir, db_path, 100_000_000, Some(300), DRIVE_ID.to_string())
-            .unwrap(),
+        CacheManager::new(
+            cache_dir,
+            db_path,
+            100_000_000,
+            Some(300),
+            DRIVE_ID.to_string(),
+        )
+        .unwrap(),
     );
     (cache, base)
 }
@@ -250,11 +256,10 @@ async fn test_core_ops_graph_call_within_timeout_succeeds() {
     cache.memory.insert(parent_ino, parent_item);
 
     let ops2 = ops.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        ops2.find_child(parent_ino, OsStr::new("hello.txt"))
-    })
-    .await
-    .unwrap();
+    let result =
+        tokio::task::spawn_blocking(move || ops2.find_child(parent_ino, OsStr::new("hello.txt")))
+            .await
+            .unwrap();
 
     assert!(result.is_some(), "find_child should find the child");
     let (_, item) = result.unwrap();

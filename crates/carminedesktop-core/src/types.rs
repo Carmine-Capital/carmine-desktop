@@ -214,9 +214,7 @@ pub enum ObsEvent {
         online: bool,
     },
     /// Auth degradation state change (global, not per-drive).
-    AuthStateChanged {
-        degraded: bool,
-    },
+    AuthStateChanged { degraded: bool },
 }
 
 /// Response for `get_dashboard_status` Tauri command.

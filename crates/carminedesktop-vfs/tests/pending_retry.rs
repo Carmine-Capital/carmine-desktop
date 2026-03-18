@@ -24,7 +24,14 @@ async fn test_pending_retry_recovers_after_transient_failure() {
     let db_path = base.join("metadata.db");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
-    let cache = CacheManager::new(cache_dir, db_path, 100_000_000, Some(300), "test-drive".to_string()).unwrap();
+    let cache = CacheManager::new(
+        cache_dir,
+        db_path,
+        100_000_000,
+        Some(300),
+        "test-drive".to_string(),
+    )
+    .unwrap();
     let graph = Arc::new(GraphClient::with_base_url(server.uri(), || async {
         Ok("test-token".to_string())
     }));
