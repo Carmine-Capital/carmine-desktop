@@ -50,11 +50,12 @@
 
 ### Last Session
 
-(no sessions yet)
+- **Stopped at:** Phase 1 context gathered
+- **Resume file:** `.planning/phases/01-winfsp-offline-pin-fix/01-CONTEXT.md`
 
 ### Resume Prompt
 
-Start planning Phase 1: WinFsp Offline Pin Fix. Review the research SUMMARY.md Phase 1 section and the codebase around `CoreOps::resolve_path`, `pin_folder`, and WinFsp offline behavior.
+Plan Phase 1: WinFsp Offline Pin Fix. Context decisions captured — review `01-CONTEXT.md` for locked decisions (immediate clean errors, VFS-path timeouts, memory cache eviction protection for pinned items, SQLite metadata population during pin). Run `/gsd-plan-phase 1`.
 
 ---
 *State initialized: 2026-03-18*
