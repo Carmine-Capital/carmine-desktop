@@ -1337,25 +1337,79 @@ fn spawn_event_forwarder(
     rt: &tokio::runtime::Handle,
     app: &tauri::AppHandle,
     mut event_rx: tokio::sync::mpsc::UnboundedReceiver<carminedesktop_vfs::core_ops::VfsEvent>,
+    obs_tx: tokio::sync::broadcast::Sender<carminedesktop_core::ObsEvent>,
 ) {
+    use carminedesktop_core::types::ObsEvent;
+
     let app_handle = app.clone();
     rt.spawn(async move {
         while let Some(event) = event_rx.recv().await {
+            let now = chrono::Utc::now().to_rfc3339();
             match event {
                 carminedesktop_vfs::core_ops::VfsEvent::ConflictDetected {
                     file_name,
                     conflict_name,
                 } => {
                     notify::conflict_detected(&app_handle, &file_name, &conflict_name);
+                    let _ = obs_tx.send(ObsEvent::Error {
+                        drive_id: None,
+                        file_name: Some(file_name.clone()),
+                        remote_path: None,
+                        error_type: "conflict_detected".to_string(),
+                        message: format!("Conflict copy created: {conflict_name}"),
+                        action_hint: Some(
+                            "A conflict copy was created in the same folder".to_string(),
+                        ),
+                        timestamp: now.clone(),
+                    });
+                    let _ = obs_tx.send(ObsEvent::Activity {
+                        drive_id: String::new(),
+                        file_path: format!("/{file_name}"),
+                        activity_type: "conflict".to_string(),
+                        timestamp: now,
+                    });
                 }
                 carminedesktop_vfs::core_ops::VfsEvent::WritebackFailed { file_name } => {
                     notify::writeback_failed(&app_handle, &file_name);
+                    let _ = obs_tx.send(ObsEvent::Error {
+                        drive_id: None,
+                        file_name: Some(file_name),
+                        remote_path: None,
+                        error_type: "writeback_failed".to_string(),
+                        message: "Writeback to buffer failed".to_string(),
+                        action_hint: Some(
+                            "Upload failed -- file queued for retry".to_string(),
+                        ),
+                        timestamp: now,
+                    });
                 }
                 carminedesktop_vfs::core_ops::VfsEvent::UploadFailed { file_name, reason } => {
                     notify::upload_failed(&app_handle, &file_name, &reason);
+                    let _ = obs_tx.send(ObsEvent::Error {
+                        drive_id: None,
+                        file_name: Some(file_name),
+                        remote_path: None,
+                        error_type: "upload_failed".to_string(),
+                        message: format!("Upload failed: {reason}"),
+                        action_hint: Some(
+                            "Upload failed -- check file permissions and size".to_string(),
+                        ),
+                        timestamp: now,
+                    });
                 }
                 carminedesktop_vfs::core_ops::VfsEvent::FileLocked { file_name } => {
                     notify::file_locked(&app_handle, &file_name);
+                    let _ = obs_tx.send(ObsEvent::Error {
+                        drive_id: None,
+                        file_name: Some(file_name),
+                        remote_path: None,
+                        error_type: "file_locked".to_string(),
+                        message: "File is locked by another user".to_string(),
+                        action_hint: Some(
+                            "File is locked by another user -- try again later".to_string(),
+                        ),
+                        timestamp: now,
+                    });
                 }
             }
         }
@@ -1409,7 +1463,8 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
 
     handle.set_sync_join(sync_join);
 
-    spawn_event_forwarder(&ctx.rt, app, ctx.event_rx);
+    let obs_tx = state.obs_tx.clone();
+    spawn_event_forwarder(&ctx.rt, app, ctx.event_rx, obs_tx);
 
     let observer = Some(handle.delta_observer());
     state.mount_caches.lock().unwrap().insert(
@@ -1480,7 +1535,8 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
 
     handle.set_sync_join(sync_join);
 
-    spawn_event_forwarder(&ctx.rt, app, ctx.event_rx);
+    let obs_tx = state.obs_tx.clone();
+    spawn_event_forwarder(&ctx.rt, app, ctx.event_rx, obs_tx);
 
     let observer = Some(handle.delta_observer());
     state.mount_caches.lock().unwrap().insert(
@@ -1632,8 +1688,108 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                 {
                     Ok(result) => {
                         notified_403.remove(drive_id.as_str());
-                        // Network is working — exit offline mode
+                        // Network is working -- exit offline mode
                         offline_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+
+                        // Update last_synced timestamp
+                        {
+                            use tauri::Manager;
+                            let state = app_handle.state::<AppState>();
+                            let mut ls = state.last_synced.lock().unwrap();
+                            ls.insert(drive_id.clone(), chrono::Utc::now().to_rfc3339());
+                        }
+
+                        // Publish activity entries for changed/deleted items
+                        {
+                            use carminedesktop_core::types::ObsEvent;
+                            use tauri::Manager;
+
+                            let now = chrono::Utc::now().to_rfc3339();
+                            let mut activity_events: Vec<ObsEvent> = Vec::new();
+
+                            for item in &result.changed_items {
+                                // Skip folders: files only per CONTEXT.md decision
+                                if item.is_folder() {
+                                    continue;
+                                }
+                                let file_path = item
+                                    .parent_reference
+                                    .as_ref()
+                                    .and_then(|pr| pr.path.as_ref())
+                                    .map(|p| {
+                                        // Graph parent_reference.path: "/drives/{id}/root:/path"
+                                        // Strip prefix to get user-visible path
+                                        if let Some(idx) = p.find(":/") {
+                                            format!("{}/{}", &p[idx + 1..], &item.name)
+                                        } else {
+                                            format!("/{}", &item.name)
+                                        }
+                                    })
+                                    .unwrap_or_else(|| format!("/{}", &item.name));
+
+                                activity_events.push(ObsEvent::Activity {
+                                    drive_id: drive_id.clone(),
+                                    file_path,
+                                    activity_type: "synced".to_string(),
+                                    timestamp: now.clone(),
+                                });
+                            }
+
+                            for deleted in &result.deleted_items {
+                                let file_path = deleted
+                                    .parent_path
+                                    .as_ref()
+                                    .map(|p| format!("{}/{}", p, &deleted.name))
+                                    .unwrap_or_else(|| format!("/{}", &deleted.name));
+
+                                activity_events.push(ObsEvent::Activity {
+                                    drive_id: drive_id.clone(),
+                                    file_path,
+                                    activity_type: "deleted".to_string(),
+                                    timestamp: now.clone(),
+                                });
+                            }
+
+                            // Batch-emit activity entries for efficient frontend delivery
+                            if !activity_events.is_empty() {
+                                let state = app_handle.state::<AppState>();
+                                for event in &activity_events {
+                                    let _ = state.obs_tx.send(event.clone());
+                                }
+                                use tauri::Emitter;
+                                let _ = app_handle.emit("activity-batch", &activity_events);
+                            }
+                        }
+
+                        // Check for stale pins: snapshot pin data, then update stale_pins
+                        if !result.changed_items.is_empty() {
+                            use tauri::Manager;
+                            // Snapshot pin item IDs from cache (under mount_caches lock)
+                            let pinned_item_ids: Option<std::collections::HashSet<String>> = {
+                                let state = app_handle.state::<AppState>();
+                                let caches = state.mount_caches.lock().unwrap();
+                                caches.get(drive_id).and_then(|(cache, _, _, _, _, _)| {
+                                    cache
+                                        .pin_store
+                                        .list_all()
+                                        .ok()
+                                        .map(|pins| pins.iter().map(|p| p.item_id.clone()).collect())
+                                })
+                            };
+                            // Update stale_pins outside mount_caches lock
+                            if let Some(pinned_ids) = pinned_item_ids {
+                                let state = app_handle.state::<AppState>();
+                                let mut stale = state.stale_pins.lock().unwrap();
+                                for item in &result.changed_items {
+                                    if let Some(pr) = &item.parent_reference
+                                        && let Some(parent_id) = &pr.id
+                                        && pinned_ids.contains(parent_id)
+                                    {
+                                        stale.insert((drive_id.clone(), parent_id.clone()));
+                                    }
+                                }
+                            }
+                        }
 
                         // Re-download changed items in pinned folders
                         if !result.changed_items.is_empty() {
@@ -1655,6 +1811,25 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                         let _ = stop_mount(&app_handle, mount_id);
                         remove_mount_from_config(&app_handle, mount_id);
                         notify::mount_orphaned(&app_handle, mount_name);
+                        {
+                            use carminedesktop_core::types::ObsEvent;
+                            use tauri::Manager;
+                            let state = app_handle.state::<AppState>();
+                            let _ = state.obs_tx.send(ObsEvent::Error {
+                                drive_id: Some(drive_id.clone()),
+                                file_name: None,
+                                remote_path: None,
+                                error_type: "drive_deleted".to_string(),
+                                message: format!(
+                                    "Drive '{}' was deleted or not found",
+                                    mount_name
+                                ),
+                                action_hint: Some(
+                                    "This drive was deleted or access was revoked".to_string(),
+                                ),
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                            });
+                        }
                     }
                     Err(carminedesktop_core::Error::GraphApi { status: 403, .. }) => {
                         if notified_403.insert(drive_id.clone()) {
@@ -1662,6 +1837,25 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                                 "mount '{mount_name}' access denied during delta sync (403)"
                             );
                             notify::mount_access_denied(&app_handle, mount_name);
+                            {
+                                use carminedesktop_core::types::ObsEvent;
+                                use tauri::Manager;
+                                let state = app_handle.state::<AppState>();
+                                let _ = state.obs_tx.send(ObsEvent::Error {
+                                    drive_id: Some(drive_id.clone()),
+                                    file_name: None,
+                                    remote_path: None,
+                                    error_type: "permission_denied".to_string(),
+                                    message: format!(
+                                        "Access denied for drive '{}'",
+                                        mount_name
+                                    ),
+                                    action_hint: Some(
+                                        "Check your permissions for this drive".to_string(),
+                                    ),
+                                    timestamp: chrono::Utc::now().to_rfc3339(),
+                                });
+                            }
                         }
                     }
                     Err(carminedesktop_core::Error::Auth(ref msg))
@@ -1679,14 +1873,42 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                             tracing::warn!("auth degraded: {msg}");
                             notify::auth_expired(&app_handle);
                             tray::update_tray_menu(&app_handle);
+                            let _ = state.obs_tx.send(
+                                carminedesktop_core::types::ObsEvent::AuthStateChanged {
+                                    degraded: true,
+                                },
+                            );
                         }
                     }
                     Err(carminedesktop_core::Error::Network(_)) => {
                         tracing::warn!("delta sync for {drive_id}: network unavailable");
                         offline_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        {
+                            use carminedesktop_core::types::ObsEvent;
+                            use tauri::Manager;
+                            let state = app_handle.state::<AppState>();
+                            let _ = state.obs_tx.send(ObsEvent::OnlineStateChanged {
+                                drive_id: drive_id.clone(),
+                                online: false,
+                            });
+                        }
                     }
                     Err(e) => {
                         tracing::error!("delta sync failed for drive {drive_id}: {e}");
+                        {
+                            use carminedesktop_core::types::ObsEvent;
+                            use tauri::Manager;
+                            let state = app_handle.state::<AppState>();
+                            let _ = state.obs_tx.send(ObsEvent::Error {
+                                drive_id: Some(drive_id.clone()),
+                                file_name: None,
+                                remote_path: None,
+                                error_type: "sync_error".to_string(),
+                                message: format!("Delta sync failed: {e}"),
+                                action_hint: None,
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                            });
+                        }
                     }
                 }
             }
