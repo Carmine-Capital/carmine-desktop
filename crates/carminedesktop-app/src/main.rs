@@ -10,6 +10,9 @@ mod ipc_server;
 #[cfg(feature = "desktop")]
 mod notify;
 #[cfg(feature = "desktop")]
+#[allow(dead_code)] // Used in Task 2 when wired into AppState; suppress until then
+mod observability;
+#[cfg(feature = "desktop")]
 mod shell_integration;
 #[cfg(feature = "desktop")]
 mod tray;
