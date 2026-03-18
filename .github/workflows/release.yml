@@ -113,19 +113,27 @@ jobs:
             -o -name '*.exe' -o -name '*.msi' 2>/dev/null | sort || echo "(nothing found)"
 
           if [ "$RUNNER_OS" = "Linux" ]; then
-            # Tauri v2 produces .AppImage + .AppImage.tar.gz (updater) + .sig
+            # Collect Linux bundles and signatures. Depending on updater mode,
+            # updater artifact may be .AppImage.tar.gz or direct .AppImage.
             find "$BUNDLE/appimage" -maxdepth 1 -name '*.AppImage.tar.gz'     -exec cp {} artifacts/ \;
             find "$BUNDLE/appimage" -maxdepth 1 -name '*.AppImage.tar.gz.sig' -exec cp {} artifacts/ \;
             find "$BUNDLE/appimage" -maxdepth 1 -name '*.AppImage' ! -name '*.sig' ! -name '*.tar.gz' -exec cp {} artifacts/ \;
+            find "$BUNDLE/appimage" -maxdepth 1 -name '*.AppImage.sig'        -exec cp {} artifacts/ \;
             find "$BUNDLE/deb"      -maxdepth 1 -name '*.deb'                 -exec cp {} artifacts/ \;
 
-            # Validate updater bundles exist
-            if ! ls artifacts/*.AppImage.tar.gz 1>/dev/null 2>&1; then
-              echo "::error::Missing Linux updater bundle (.AppImage.tar.gz)"
-              exit 1
-            fi
-            if ! ls artifacts/*.AppImage.tar.gz.sig 1>/dev/null 2>&1; then
-              echo "::error::Missing Linux updater signature (.AppImage.tar.gz.sig)"
+            # Validate an updater bundle + signature pair exists
+            if ls artifacts/*.AppImage.tar.gz 1>/dev/null 2>&1; then
+              if ! ls artifacts/*.AppImage.tar.gz.sig 1>/dev/null 2>&1; then
+                echo "::error::Missing Linux updater signature (.AppImage.tar.gz.sig)"
+                exit 1
+              fi
+            elif ls artifacts/*.AppImage 1>/dev/null 2>&1; then
+              if ! ls artifacts/*.AppImage.sig 1>/dev/null 2>&1; then
+                echo "::error::Missing Linux updater signature (.AppImage.sig)"
+                exit 1
+              fi
+            else
+              echo "::error::Missing Linux updater bundle (.AppImage or .AppImage.tar.gz)"
               exit 1
             fi
 
@@ -146,18 +154,26 @@ jobs:
             fi
 
           elif [ "$RUNNER_OS" = "Windows" ]; then
-            # Tauri v2: NSIS installer (.exe) + updater bundle (.nsis.zip) + .sig
-            find "$BUNDLE/nsis" -maxdepth 1 -name '*-setup.exe'    -exec cp {} artifacts/ \;
-            find "$BUNDLE/nsis" -maxdepth 1 -name '*.nsis.zip'     -exec cp {} artifacts/ \;
-            find "$BUNDLE/nsis" -maxdepth 1 -name '*.nsis.zip.sig' -exec cp {} artifacts/ \;
+            # Collect Windows bundles and signatures. Depending on updater mode,
+            # updater artifact may be .nsis.zip or direct setup.exe.
+            find "$BUNDLE/nsis" -maxdepth 1 -name '*-setup.exe'     -exec cp {} artifacts/ \;
+            find "$BUNDLE/nsis" -maxdepth 1 -name '*-setup.exe.sig' -exec cp {} artifacts/ \;
+            find "$BUNDLE/nsis" -maxdepth 1 -name '*.nsis.zip'      -exec cp {} artifacts/ \;
+            find "$BUNDLE/nsis" -maxdepth 1 -name '*.nsis.zip.sig'  -exec cp {} artifacts/ \;
 
-            # Validate updater bundles exist
-            if ! ls artifacts/*.nsis.zip 1>/dev/null 2>&1; then
-              echo "::error::Missing Windows updater bundle (.nsis.zip)"
-              exit 1
-            fi
-            if ! ls artifacts/*.nsis.zip.sig 1>/dev/null 2>&1; then
-              echo "::error::Missing Windows updater signature (.nsis.zip.sig)"
+            # Validate an updater bundle + signature pair exists
+            if ls artifacts/*.nsis.zip 1>/dev/null 2>&1; then
+              if ! ls artifacts/*.nsis.zip.sig 1>/dev/null 2>&1; then
+                echo "::error::Missing Windows updater signature (.nsis.zip.sig)"
+                exit 1
+              fi
+            elif ls artifacts/*-setup.exe 1>/dev/null 2>&1; then
+              if ! ls artifacts/*-setup.exe.sig 1>/dev/null 2>&1; then
+                echo "::error::Missing Windows updater signature (-setup.exe.sig)"
+                exit 1
+              fi
+            else
+              echo "::error::Missing Windows updater bundle (.nsis.zip or -setup.exe)"
               exit 1
             fi
           fi
@@ -202,9 +218,12 @@ jobs:
             fi
           }
 
-          # Find platform-specific updater bundles and signatures
-          # Linux: .AppImage.tar.gz + .sig
+          # Find platform-specific updater bundles and signatures.
+          # Prefer v1-compatible archives when present, otherwise use direct installers.
           LINUX_BUNDLE=$(find artifacts -name '*.AppImage.tar.gz' ! -name '*.sig' | head -1)
+          if [ -z "$LINUX_BUNDLE" ]; then
+            LINUX_BUNDLE=$(find artifacts -name '*.AppImage' ! -name '*.sig' ! -name '*.tar.gz' | head -1)
+          fi
           LINUX_SIG=$(read_sig "${LINUX_BUNDLE}.sig" 2>/dev/null || echo "")
           LINUX_FILENAME=$(basename "$LINUX_BUNDLE" 2>/dev/null || echo "")
 
@@ -213,8 +232,11 @@ jobs:
            MACOS_SIG=$(read_sig "${MACOS_BUNDLE}.sig" 2>/dev/null || echo "")
            MACOS_FILENAME=$(basename "$MACOS_BUNDLE" 2>/dev/null || echo "")
 
-           # Windows: .nsis.zip + .sig
+           # Windows: .nsis.zip + .sig OR setup.exe + .sig
            WIN_BUNDLE=$(find artifacts -name '*.nsis.zip' ! -name '*.sig' | head -1)
+           if [ -z "$WIN_BUNDLE" ]; then
+             WIN_BUNDLE=$(find artifacts -name '*-setup.exe' | head -1)
+           fi
            WIN_SIG=$(read_sig "${WIN_BUNDLE}.sig" 2>/dev/null || echo "")
            WIN_FILENAME=$(basename "$WIN_BUNDLE" 2>/dev/null || echo "")
 
