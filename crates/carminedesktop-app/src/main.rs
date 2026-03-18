@@ -441,7 +441,13 @@ fn main() {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("carminedesktop")
         .join("logs");
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "carminedesktop.log");
+    let file_appender = tracing_appender::rolling::Builder::new()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix("carminedesktop")
+        .filename_suffix("log")
+        .max_log_files(31)
+        .build(&log_dir)
+        .expect("failed to create log appender");
 
     tracing_subscriber::registry()
         .with(filter)
