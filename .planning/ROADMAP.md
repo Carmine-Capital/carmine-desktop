@@ -22,7 +22,10 @@
   1. User on Windows can pin a folder for offline access, disconnect from the network, and browse the pinned folder in File Explorer without any hang or crash
   2. File Explorer responds within 2-3 seconds when navigating any folder in an offline-pinned mount (no 30s timeout stalls)
   3. User who reconnects after offline period sees the mount resume normal sync without requiring remount or app restart
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 01-01-PLAN.md — VFS-path Graph API timeout + log rotation
+- [ ] 01-02-PLAN.md — Memory cache eviction protection + SQLite metadata population during pin
 
 ### Phase 2: Observability Infrastructure
 **Goal**: All sync state, activity, errors, and cache metrics are queryable from the backend — the data layer is complete and testable before any UI work
@@ -61,7 +64,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. WinFsp Offline Pin Fix | 0/? | Not started | — |
+| 1. WinFsp Offline Pin Fix | 0/2 | Planned | — |
 | 2. Observability Infrastructure | 0/? | Not started | — |
 | 3. Dashboard UI | 0/? | Not started | — |
 | 4. Visual Polish & Hardening | 0/? | Not started | — |
