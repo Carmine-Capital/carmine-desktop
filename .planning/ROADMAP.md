@@ -36,7 +36,12 @@ Plans:
   2. A Tauri `invoke("get_recent_errors")` call returns the most recent errors with file name, error type, and timestamp — verifiable from the browser console
   3. A Tauri `invoke("get_cache_stats")` call returns disk cache usage (bytes used vs. configured max), pinned item count, and writeback queue contents — verifiable from the browser console
   4. Real-time events (sync progress, state transitions, new errors) are pushed to the frontend via Tauri `emit()` — verifiable by subscribing with `listen()` in the browser console
-**Plans**: TBD
+**Plans:** 4 plans
+Plans:
+- [ ] 02-01-PLAN.md — Core observability types (ObsEvent enum, response structs) + cache stat methods
+- [ ] 02-02-PLAN.md — Observability module (ring buffers, event bridge) + AppState extensions
+- [ ] 02-03-PLAN.md — Tauri dashboard commands + delta sync/VFS event wiring
+- [ ] 02-04-PLAN.md — Browser console verification checkpoint
 
 ### Phase 3: Dashboard UI
 **Goal**: Users see sync state, activity, errors, cache usage, and offline status at a glance — the app is transparent, not a black box
@@ -65,7 +70,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. WinFsp Offline Pin Fix | 2/2 | Complete | 2026-03-18 |
-| 2. Observability Infrastructure | 0/? | Not started | — |
+| 2. Observability Infrastructure | 0/4 | In progress | — |
 | 3. Dashboard UI | 0/? | Not started | — |
 | 4. Visual Polish & Hardening | 0/? | Not started | — |
 
