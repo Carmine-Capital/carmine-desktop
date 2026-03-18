@@ -39,8 +39,8 @@ Plans:
 **Plans:** 4 plans
 Plans:
 - [x] 02-01-PLAN.md — Core observability types (ObsEvent enum, response structs) + cache stat methods
-- [ ] 02-02-PLAN.md — Observability module (ring buffers, event bridge) + AppState extensions
-- [ ] 02-03-PLAN.md — Tauri dashboard commands + delta sync/VFS event wiring
+- [x] 02-02-PLAN.md — Observability module (ring buffers, event bridge) + AppState extensions
+- [x] 02-03-PLAN.md — Tauri dashboard commands + delta sync/VFS event wiring
 - [ ] 02-04-PLAN.md — Browser console verification checkpoint
 
 ### Phase 3: Dashboard UI
@@ -70,7 +70,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. WinFsp Offline Pin Fix | 2/2 | Complete | 2026-03-18 |
-| 2. Observability Infrastructure | 1/4 | In progress | — |
+| 2. Observability Infrastructure | 3/4 | In progress | — |
 | 3. Dashboard UI | 0/? | Not started | — |
 | 4. Visual Polish & Hardening | 0/? | Not started | — |
 

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-03-18T12:48:36.000Z"
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-03-18T12:59:15.000Z"
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 4
-  completed_plans: 2
-  percent: 50
+  completed_plans: 3
+  percent: 75
 ---
 
 # State: CarmineDesktop — Stabilization & Observability
@@ -23,19 +23,20 @@ progress:
 ## Current Position
 
 **Phase:** 2 of 4 — Observability Infrastructure
-**Plan:** 2 of 4 complete
+**Plan:** 3 of 4 complete
 **Status:** Executing
-**Progress:** [█████-----] 50%
+**Progress:** [████████--] 75%
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
 | Phases completed | 1/4 |
-| Plans completed | 2/4 (Phase 2) |
+| Plans completed | 3/4 (Phase 2) |
 | Requirements delivered | 0/15 |
 | Plan 02-01 duration | 6min |
 | Plan 02-02 duration | 10min |
+| Plan 02-03 duration | 6min |
 
 ## Accumulated Context
 
@@ -57,6 +58,10 @@ progress:
 | Inline #[cfg(test)] for binary crate ring buffer tests | App crate has no lib.rs; ring buffer structs inaccessible to external test files | Phase 2 |
 | Lock ordering documented on AppState | Prevents deadlocks as observability adds more Mutex-guarded state | Phase 2 |
 | SyncHandle stored as 6th MountCacheEntry element | Cheap clone; enables dashboard SyncMetrics access without platform-gated MountHandle | Phase 2 |
+| expand_mount_point for DriveStatus mount path | Matches existing list_mounts command pattern; resolves ~ and env vars | Phase 2 |
+| Stale pin check avoids nested Mutex | Snapshot pin IDs under mount_caches, then update stale_pins separately | Phase 2 |
+| Activity_type uploaded deferred | No VFS upload-success event yet; only synced/deleted/conflict produced | Phase 2 |
+| VFS ConflictDetected dual event | Both ObsEvent::Error for error log and ObsEvent::Activity for activity feed | Phase 2 |
 
 ### Todos
 
@@ -77,13 +82,13 @@ progress:
 
 ### Last Session
 
-- **Stopped at:** Completed 02-02-PLAN.md
-- **Resume file:** .planning/phases/02-observability-infrastructure/02-02-SUMMARY.md
+- **Stopped at:** Completed 02-03-PLAN.md
+- **Resume file:** .planning/phases/02-observability-infrastructure/02-03-SUMMARY.md
 
 ### Resume Prompt
 
-Plan 02-02 complete. ErrorAccumulator (100-cap) and ActivityBuffer (500-cap) ring buffers, event bridge, AppState extended with obs_tx/error_ring/activity_ring/last_synced/stale_pins, MountCacheEntry gains SyncHandle. Zero clippy warnings. Ready for Plan 02-03 (Tauri commands + delta sync wiring).
+Plan 02-03 complete. Four Tauri commands (get_dashboard_status, get_recent_errors, get_activity_feed, get_cache_stats) implemented and registered. Delta sync publishes ObsEvent for all success/error conditions. VFS event forwarder routes all VfsEvent variants to ObsEvent. Zero clippy warnings. Ready for Plan 02-04 (browser console verification checkpoint).
 
 ---
 *State initialized: 2026-03-18*
-*Last updated: 2026-03-18T12:48:36Z*
+*Last updated: 2026-03-18T12:59:15Z*
