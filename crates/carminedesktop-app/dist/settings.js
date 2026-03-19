@@ -887,6 +887,8 @@ async function init() {
       invoke('get_activity_feed'),
       invoke('get_cache_stats'),
     ]);
+    recentActivity.reverse();
+    recentErrors.reverse();
     setState({ settings, mounts, handlers, offlinePins, dashboardStatus, recentErrors, recentActivity, cacheStats });
     document.title = settings.app_name + ' Settings';
   } catch (e) {

@@ -1755,10 +1755,21 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                             }
 
                             for deleted in &result.deleted_items {
+                                // Skip items without a resolved name (not in SQLite)
+                                if deleted.name.is_empty() {
+                                    continue;
+                                }
                                 let file_path = deleted
                                     .parent_path
                                     .as_ref()
-                                    .map(|p| format!("{}/{}", p, &deleted.name))
+                                    .map(|p| {
+                                        // Strip OData prefix (e.g. "/drive/root:/path")
+                                        if let Some(idx) = p.find(":/") {
+                                            format!("{}/{}", &p[idx + 1..], &deleted.name)
+                                        } else {
+                                            format!("{}/{}", p, &deleted.name)
+                                        }
+                                    })
                                     .unwrap_or_else(|| format!("/{}", &deleted.name));
 
                                 activity_events.push(ObsEvent::Activity {
