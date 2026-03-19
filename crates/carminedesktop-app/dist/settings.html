@@ -15,7 +15,16 @@
         <span class="sidebar-title">Carmine</span>
       </div>
       <nav class="sidebar-nav" role="tablist">
-        <button class="nav-item active" data-panel="general" role="tab" tabindex="0" aria-selected="true" aria-controls="panel-general" id="tab-general">
+        <button class="nav-item active" data-panel="dashboard" role="tab" tabindex="0" aria-selected="true" aria-controls="panel-dashboard" id="tab-dashboard">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7" rx="1"/>
+            <rect x="14" y="3" width="7" height="7" rx="1"/>
+            <rect x="3" y="14" width="7" height="7" rx="1"/>
+            <rect x="14" y="14" width="7" height="7" rx="1"/>
+          </svg>
+          Dashboard
+        </button>
+        <button class="nav-item" data-panel="general" role="tab" tabindex="-1" aria-selected="false" aria-controls="panel-general" id="tab-general">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           General
         </button>
@@ -38,8 +47,23 @@
       </div>
     </aside>
     <main class="main-content">
+      <!-- Dashboard panel -->
+      <div class="panel active" id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard">
+        <div id="auth-banner" class="auth-banner" role="alert" style="display: none;"></div>
+        <p class="section-heading">Drives</p>
+        <div id="drive-cards" class="drive-cards"></div>
+        <div id="upload-summary" class="upload-summary" style="display: none;"></div>
+        <div id="upload-detail" class="upload-detail" style="display: none;"></div>
+        <p class="section-heading">Recent Activity</p>
+        <ul id="activity-list" class="activity-list"></ul>
+        <p class="section-heading" id="errors-heading">Errors</p>
+        <div id="error-list" class="error-list"></div>
+        <p class="section-heading">Cache &amp; Offline</p>
+        <div id="cache-section"></div>
+      </div>
+
       <!-- General panel -->
-      <div class="panel active" id="panel-general" role="tabpanel" aria-labelledby="tab-general">
+      <div class="panel" id="panel-general" role="tabpanel" aria-labelledby="tab-general">
 
         <p class="section-heading">General</p>
 
