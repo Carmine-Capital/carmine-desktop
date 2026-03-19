@@ -180,10 +180,7 @@ function renderHandlers() {
     li.className = 'setting-row';
 
     const info = document.createElement('div');
-    info.className = 'setting-label';
-    info.style.display = 'flex';
-    info.style.alignItems = 'center';
-    info.style.gap = '10px';
+    info.className = 'handler-info';
 
     const extEl = document.createElement('span');
     extEl.className = 'handler-ext';
@@ -274,9 +271,7 @@ function renderOfflinePins() {
         metaEl.appendChild(badge);
         if (health.totalFiles > 0) {
           const fileCount = document.createElement('span');
-          fileCount.style.fontSize = '11px';
-          fileCount.style.color = 'var(--text-muted)';
-          fileCount.style.marginLeft = '4px';
+          fileCount.className = 'pin-file-count';
           fileCount.textContent = health.cachedFiles + '/' + health.totalFiles + ' files';
           metaEl.appendChild(fileCount);
         }
@@ -329,7 +324,7 @@ function renderDashboard() {
       icon.setAttribute('stroke-width', '2');
       icon.setAttribute('stroke-linecap', 'round');
       icon.setAttribute('stroke-linejoin', 'round');
-      icon.style.color = 'var(--warning)';
+      icon.classList.add('auth-banner-icon');
       const path1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path1.setAttribute('d', 'M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z');
       const line1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
