@@ -576,6 +576,7 @@ async function removeSource(mountId) {
   state.addedSources = state.addedSources.filter(s => s.mountId !== mountId);
   renderAddedSources();
   updateGetStartedBtn();
+  showStatus('Source removed', 'success');
 }
 
 // ---------------------------------------------------------------------------
