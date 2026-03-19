@@ -852,6 +852,14 @@ impl CoreOps {
                         let ino = self.inodes.allocate(&item.id);
                         children_map.insert(item.name.clone(), ino);
                         self.cache.memory.insert(ino, item.clone());
+                        // Persist to SQLite so delta sync invalidations
+                        // don't leave partial directory listings.
+                        let _ = self.cache.sqlite.upsert_item(
+                            ino,
+                            &self.drive_id,
+                            &item,
+                            Some(parent_ino),
+                        );
                         (ino, item)
                     })
                     .collect();

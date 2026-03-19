@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -185,27 +184,23 @@ impl OfflineManager {
             return Ok(());
         }
 
-        // Build HashSet of pinned item_ids
-        let pinned_set: HashSet<String> = pinned_folders.into_iter().map(|pf| pf.item_id).collect();
-
         for item in changed_items {
-            // Check if this item's parent is in the pinned set
-            if let Some(parent_ref) = &item.parent_reference
-                && let Some(parent_id) = &parent_ref.id
-                && pinned_set.contains(parent_id)
-            {
-                // Re-download the item if it's a file
-                if !item.is_folder() {
-                    let content = self
-                        .graph
-                        .download_content(&self.drive_id, &item.id)
-                        .await?;
-                    self.cache
-                        .disk
-                        .put(&self.drive_id, &item.id, &content, item.etag.as_deref())
-                        .await?;
-                    tracing::debug!("offline: re-downloaded {}/{}", self.drive_id, item.id);
-                }
+            // Check if this item (or any ancestor) is in a pinned subtree.
+            // is_protected walks the parent chain in SQLite.
+            if !self.pin_store.is_protected(&self.drive_id, &item.id) {
+                continue;
+            }
+
+            if !item.is_folder() {
+                let content = self
+                    .graph
+                    .download_content(&self.drive_id, &item.id)
+                    .await?;
+                self.cache
+                    .disk
+                    .put(&self.drive_id, &item.id, &content, item.etag.as_deref())
+                    .await?;
+                tracing::debug!("offline: re-downloaded {}/{}", self.drive_id, item.id);
             }
         }
 
