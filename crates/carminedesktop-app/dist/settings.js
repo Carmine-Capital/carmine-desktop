@@ -245,7 +245,8 @@ function renderOfflinePins() {
     info.className = 'pin-info';
     const nameEl = document.createElement('div');
     nameEl.className = 'pin-name';
-    nameEl.textContent = pin.folder_name;
+    const displayName = pin.folder_name === 'root' ? pin.mount_name : pin.folder_name;
+    nameEl.textContent = displayName;
     const metaEl = document.createElement('div');
     metaEl.className = 'pin-meta';
     const remaining = formatTimeRemaining(pin.expires_at);
@@ -262,16 +263,23 @@ function renderOfflinePins() {
       });
       if (health) {
         const badge = document.createElement('span');
-        badge.className = 'health-badge ' + health.status;
-        badge.textContent = health.status;
+        if (health.totalFiles === 0) {
+          badge.className = 'health-badge partial';
+          badge.textContent = 'scanning';
+        } else {
+          badge.className = 'health-badge ' + health.status;
+          badge.textContent = health.status;
+        }
         metaEl.appendChild(document.createTextNode(' '));
         metaEl.appendChild(badge);
-        const fileCount = document.createElement('span');
-        fileCount.style.fontSize = '11px';
-        fileCount.style.color = 'var(--text-muted)';
-        fileCount.style.marginLeft = '4px';
-        fileCount.textContent = health.cachedFiles + '/' + health.totalFiles + ' files';
-        metaEl.appendChild(fileCount);
+        if (health.totalFiles > 0) {
+          const fileCount = document.createElement('span');
+          fileCount.style.fontSize = '11px';
+          fileCount.style.color = 'var(--text-muted)';
+          fileCount.style.marginLeft = '4px';
+          fileCount.textContent = health.cachedFiles + '/' + health.totalFiles + ' files';
+          metaEl.appendChild(fileCount);
+        }
       }
     }
     info.appendChild(nameEl);
@@ -833,6 +841,37 @@ async function clearOverride(target) {
 }
 
 // ---------------------------------------------------------------------------
+// Data refresh helpers
+// ---------------------------------------------------------------------------
+
+async function refreshDashboardData() {
+  try {
+    const [dashboardStatus, cacheStats] = await Promise.all([
+      invoke('get_dashboard_status'),
+      invoke('get_cache_stats'),
+    ]);
+    Object.assign(state, { dashboardStatus, cacheStats });
+    render();
+  } catch (_) { /* silent — dashboard data is best-effort */ }
+}
+
+async function refreshOfflineData() {
+  try {
+    const [offlinePins, cacheStats] = await Promise.all([
+      invoke('list_offline_pins'),
+      invoke('get_cache_stats'),
+    ]);
+    Object.assign(state, { offlinePins, cacheStats });
+    render();
+  } catch (_) { /* silent */ }
+}
+
+function refreshPanelData(panel) {
+  if (panel === 'dashboard') refreshDashboardData();
+  else if (panel === 'offline') refreshOfflineData();
+}
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 
@@ -867,7 +906,11 @@ async function init() {
     if (target) { e.preventDefault(); setState({ activePanel: target.dataset.panel }); target.focus(); }
   }
   navItems.forEach(item => {
-    item.addEventListener('click', () => setState({ activePanel: item.dataset.panel }));
+    item.addEventListener('click', () => {
+      const panel = item.dataset.panel;
+      setState({ activePanel: panel });
+      refreshPanelData(panel);
+    });
     item.addEventListener('keydown', handleNavKeydown);
   });
 
@@ -915,14 +958,18 @@ async function init() {
     if (target.dataset.action === 'toggle-mount') await toggleMount(target.dataset.id);
   });
 
-  // Backend-triggered refresh
+  // Backend-triggered refresh (tray icon re-opens window)
   listen('refresh-settings', async () => {
-    const [settings, mounts, offlinePins] = await Promise.all([
-      invoke('get_settings'),
-      invoke('list_mounts'),
-      invoke('list_offline_pins'),
-    ]);
-    setState({ settings, mounts, offlinePins });
+    try {
+      const [settings, mounts, offlinePins, dashboardStatus, cacheStats] = await Promise.all([
+        invoke('get_settings'),
+        invoke('list_mounts'),
+        invoke('list_offline_pins'),
+        invoke('get_dashboard_status'),
+        invoke('get_cache_stats'),
+      ]);
+      setState({ settings, mounts, offlinePins, dashboardStatus, cacheStats });
+    } catch (_) { /* silent */ }
   });
 
   // Real-time dashboard events
@@ -934,7 +981,14 @@ async function init() {
     switch (p.type) {
       case 'syncStateChanged': {
         const drive = ds.drives.find(function(d) { return d.driveId === p.driveId; });
-        if (drive) drive.syncState = p.state;
+        if (drive) {
+          const wasSyncing = drive.syncState === 'syncing';
+          drive.syncState = p.state;
+          if (wasSyncing && p.state !== 'syncing') {
+            drive.lastSynced = new Date().toISOString();
+            refreshDashboardData();
+          }
+        }
         break;
       }
       case 'onlineStateChanged': {
@@ -973,15 +1027,10 @@ async function init() {
     scheduleRender();
   });
 
-  // Refresh relative timestamps every 60 seconds (only when dashboard visible)
-  let _timestampTimer = null;
-  function startTimestampRefresh() {
-    if (_timestampTimer) return;
-    _timestampTimer = setInterval(function() {
-      if (state.activePanel === 'dashboard') render();
-    }, 60000);
-  }
-  startTimestampRefresh();
+  // Periodic data refresh: re-fetch dashboard/offline data every 30 seconds
+  setInterval(function() {
+    refreshPanelData(state.activePanel);
+  }, 30000);
 }
 
 init();
