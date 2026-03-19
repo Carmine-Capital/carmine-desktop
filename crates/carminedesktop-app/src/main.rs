@@ -983,6 +983,22 @@ async fn handle_deep_link_url(app: &tauri::AppHandle, url: url::Url) {
     }
 }
 
+/// Return the user-facing mount name for a drive, falling back to the drive_id.
+#[cfg(feature = "desktop")]
+fn mount_display_name(state: &AppState, drive_id: &str) -> String {
+    state
+        .effective_config
+        .lock()
+        .ok()
+        .and_then(|cfg| {
+            cfg.mounts
+                .iter()
+                .find(|m| m.drive_id.as_deref() == Some(drive_id))
+                .map(|m| m.name.clone())
+        })
+        .unwrap_or_else(|| drive_id.to_string())
+}
+
 #[cfg(feature = "desktop")]
 async fn handle_offline_pin(app: &tauri::AppHandle, path: &str) -> Result<String, String> {
     use tauri::Manager;
@@ -1050,7 +1066,11 @@ async fn resolve_and_pin(app: &tauri::AppHandle, path: &str) -> Result<String, S
         mgr.clone()
     };
 
-    let folder_name = item.name.clone();
+    let folder_name = if item.name == "root" {
+        mount_display_name(&state, &drive_id)
+    } else {
+        item.name.clone()
+    };
     match offline_mgr
         .pin_folder(&item.id, &folder_name)
         .await
@@ -1078,7 +1098,11 @@ async fn resolve_and_unpin(app: &tauri::AppHandle, path: &str) -> Result<String,
         mgr.clone()
     };
 
-    let folder_name = item.name.clone();
+    let folder_name = if item.name == "root" {
+        mount_display_name(&state, &drive_id)
+    } else {
+        item.name.clone()
+    };
     offline_mgr
         .unpin_folder(&item.id)
         .map_err(|e| e.to_string())?;
