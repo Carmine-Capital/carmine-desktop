@@ -673,7 +673,7 @@ pub async fn get_cache_stats(app: AppHandle) -> Result<CacheStatsResponse, Strin
             for (pin, total_files, cached_files) in health {
                 let status = if stale_pins.contains(&(pin.drive_id.clone(), pin.item_id.clone())) {
                     "stale".to_string()
-                } else if cached_files >= total_files && total_files > 0 {
+                } else if cached_files >= total_files {
                     "downloaded".to_string()
                 } else {
                     "partial".to_string()

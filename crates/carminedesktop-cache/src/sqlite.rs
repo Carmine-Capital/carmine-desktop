@@ -117,6 +117,20 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Return the stored inode for an item_id without deserializing JSON.
+    pub fn get_inode(&self, item_id: &str) -> carminedesktop_core::Result<Option<u64>> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn
+            .query_row(
+                "SELECT inode FROM items WHERE item_id = ?1",
+                params![item_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|e| carminedesktop_core::Error::Cache(format!("query failed: {e}")))?;
+        Ok(result.map(|i| i as u64))
+    }
+
     pub fn get_item_by_id(
         &self,
         item_id: &str,

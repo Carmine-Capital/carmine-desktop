@@ -94,7 +94,8 @@ impl OfflineManager {
         // Starts at 1_000_000 to avoid collisions with real VFS inodes (which
         // start from 2). If the item already exists in SQLite from a previous
         // browse, upsert_item's ON CONFLICT(item_id) DO UPDATE preserves the
-        // existing row with the real inode.
+        // existing row with the real inode — so after upsert we read back the
+        // actual stored inode to use as parent_inode for children.
         let next_inode = AtomicU64::new(1_000_000);
         let root_temp_inode = next_inode.fetch_add(1, Ordering::Relaxed);
 
@@ -106,6 +107,15 @@ impl OfflineManager {
         {
             tracing::warn!("offline: failed to persist root folder metadata: {e}");
         }
+
+        // Read back actual inode (may differ from temp if item was already in DB)
+        let root_actual_inode = self
+            .cache
+            .sqlite
+            .get_inode(&item.id)
+            .ok()
+            .flatten()
+            .unwrap_or(root_temp_inode);
 
         // Spawn background download task
         let graph = self.graph.clone();
@@ -121,7 +131,7 @@ impl OfflineManager {
                 &cache,
                 &drive_id,
                 &item_id,
-                root_temp_inode,
+                root_actual_inode,
                 &next_inode,
             )
             .await
@@ -221,19 +231,21 @@ async fn recursive_download(
     cache: &CacheManager,
     drive_id: &str,
     folder_id: &str,
-    parent_temp_inode: u64,
+    parent_inode: u64,
     next_inode: &AtomicU64,
 ) -> carminedesktop_core::Result<()> {
     let children = graph.list_children(drive_id, folder_id).await?;
 
     for child in &children {
-        let child_inode = next_inode.fetch_add(1, Ordering::Relaxed);
+        let child_temp_inode = next_inode.fetch_add(1, Ordering::Relaxed);
 
-        // Persist metadata to SQLite for offline directory listings
+        // Persist metadata to SQLite for offline directory listings.
+        // Use the parent's actual DB inode so the parent_inode chain is
+        // consistent even when items were already browsed via VFS.
         if let Err(e) =
             cache
                 .sqlite
-                .upsert_item(child_inode, drive_id, child, Some(parent_temp_inode))
+                .upsert_item(child_temp_inode, drive_id, child, Some(parent_inode))
         {
             tracing::warn!(
                 "offline: failed to persist metadata for {}/{}: {}",
@@ -245,12 +257,20 @@ async fn recursive_download(
         }
 
         if child.is_folder() {
+            // Read back actual inode (may differ from temp if item existed)
+            let child_actual_inode = cache
+                .sqlite
+                .get_inode(&child.id)
+                .ok()
+                .flatten()
+                .unwrap_or(child_temp_inode);
+
             Box::pin(recursive_download(
                 graph,
                 cache,
                 drive_id,
                 &child.id,
-                child_inode,
+                child_actual_inode,
                 next_inode,
             ))
             .await?;
