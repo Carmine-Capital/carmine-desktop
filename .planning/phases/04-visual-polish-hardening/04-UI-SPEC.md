@@ -29,22 +29,37 @@ created: 2026-03-19
 
 ## Spacing Scale
 
-All values are multiples of 4. The existing token names (`--space-1` through `--space-8`) are preserved. Values are mapped to a consistent 4-based scale, replacing the current rem-based tokens.
+All values are multiples of 4 and drawn exclusively from the standard set {4, 8, 16, 24, 32, 48, 64}. The existing token names are preserved where values align. Former `--space-3` (12px) and `--space-5` (20px) are removed because they fall outside the standard set. All usage sites are remapped to adjacent standard values.
 
 | Token | Current Value | New Value | Usage |
 |-------|---------------|-----------|-------|
 | `--space-1` | 0.25rem (4px) | 4px | Icon gaps, inline padding, tight internal gaps |
-| `--space-2` | 0.5rem (8px) | 8px | Compact element spacing, button icon gap |
-| `--space-3` | 0.75rem (12px) | 12px | Nav item padding, card internal padding, sidebar footer padding. Exception: 12px is not in the standard set but is retained because the existing token `--space-3` bridges the 8px-to-16px gap in a dense desktop UI where 8px is too tight for card padding and 16px is too loose. Used in 6+ component rules. |
-| `--space-4` | 1rem (16px) | 16px | Default section padding, card gaps, status bar padding |
-| `--space-5` | 1.25rem (20px) | 20px | Section heading margin-bottom, sidebar header bottom padding. Exception: 20px is not in the standard set but is retained because it provides visual breathing room below section headings without the full 24px gap that would create too much separation in the compact sidebar and dashboard layouts. Remapping to 16px collapses headings into content; 24px wastes vertical space in a dense data display. |
-| `--space-6` | 1.5rem (24px) | 24px | Main content horizontal padding, major section gaps |
+| `--space-2` | 0.5rem (8px) | 8px | Compact element spacing, button icon gap, `.btn-sm` vertical padding |
+| `--space-4` | 1rem (16px) | 16px | Default section padding, card gaps, card internal padding, nav item horizontal padding, input horizontal padding, sidebar horizontal padding, status bar padding, `.btn-sm` horizontal padding |
+| `--space-6` | 1.5rem (24px) | 24px | Main content horizontal padding, major section gaps, section heading margin-bottom, sidebar header bottom padding |
 | `--space-8` | 2rem (32px) | 32px | Main content vertical padding, page-level spacing |
+
+Removed tokens:
+- `--space-3` (was 12px): Removed. Usage sites remapped to `--space-2` (8px) or `--space-4` (16px) per component. See component specifications below.
+- `--space-5` (was 20px): Removed. Usage sites remapped to `--space-4` (16px) or `--space-6` (24px) per component. See component specifications below.
+
+Migration guide for removed tokens:
+- `--space-3` (12px) in nav item horizontal padding --> `--space-4` (16px)
+- `--space-3` (12px) in card internal padding --> `--space-4` (16px)
+- `--space-3` (12px) in sidebar footer horizontal padding --> `--space-4` (16px)
+- `--space-3` (12px) in `.btn-sm` horizontal padding --> `--space-4` (16px)
+- `--space-3` (12px) in input horizontal padding --> `--space-4` (16px)
+- `--space-3` (12px) in sidebar horizontal padding --> `--space-4` (16px)
+- `--space-3` (12px) in error entry vertical padding --> `--space-4` (16px)
+- `--space-3` (12px) in setting row vertical padding --> `--space-4` (16px)
+- `--space-5` (20px) in section heading margin-bottom --> `--space-6` (24px)
+- `--space-5` (20px) in sidebar header bottom padding --> `--space-6` (24px)
+- `--space-5` (20px) in wizard `.auth-status-row` margin-bottom --> `--space-6` (24px)
+- `--space-5` (20px) in wizard `.cancel-link` margin-top --> `--space-6` (24px)
 
 Exceptions:
 - Touch targets on icon buttons: minimum 28px hit area (7x the base unit) for comfortable click targets on desktop. This is below the 44px mobile guideline but appropriate for a desktop-only app.
 - Main content padding changes from `22px 28px` to `--space-8 --space-6` (32px 24px) for more breathing room.
-- `--space-3` (12px) and `--space-5` (20px) are declared exceptions to the standard set {4, 8, 16, 24, 32, 48, 64} with rationale documented in the table above. Both are multiples of 4.
 
 ---
 
@@ -187,7 +202,7 @@ New transition properties to add on interactive elements:
 | Font size | `12.5px` | `13px` |
 | Font weight | `500` | `400` |
 | Border radius | `var(--radius-md)` (6px) | `var(--radius-md)` (8px, updated token) |
-| `.btn-sm` padding | `var(--space-1) var(--space-3)` | `4px 12px` |
+| `.btn-sm` padding | `var(--space-1) var(--space-3)` | `var(--space-1) var(--space-4)` (4px 16px) |
 | `.btn-sm` font-size | `11px` | `11px` (unchanged) |
 | `.btn-ghost` border | `1px solid rgba(255,255,255,0.10)` | `1px solid var(--border)` (use token) |
 
@@ -195,7 +210,7 @@ New transition properties to add on interactive elements:
 
 | Property | Current | New |
 |----------|---------|-----|
-| Padding | `4px 10px` | `8px 12px` |
+| Padding | `4px 10px` | `8px 16px` |
 | Font size | `11.5px` | `13px` |
 | Border radius | `5px` | `var(--radius-md)` (8px) |
 | Border | `1px solid rgba(255,255,255,0.10)` | `1px solid var(--border)` (use token) |
@@ -231,7 +246,7 @@ New transition properties to add on interactive elements:
 
 | Property | Current | New |
 |----------|---------|-----|
-| Padding | `12px` | `var(--space-3) var(--space-4)` (12px 16px) |
+| Padding | `12px` | `var(--space-4)` (16px uniform) |
 | Gap (internal) | `4px` | `8px` |
 | Border | `1px solid var(--border)` | `1px solid var(--border)` (unchanged, token value softer) |
 | Shadow | none | `var(--shadow-sm)` |
@@ -241,7 +256,7 @@ New transition properties to add on interactive elements:
 
 | Property | Current | New |
 |----------|---------|-----|
-| Padding | `8px 16px` | `12px 16px` |
+| Padding | `8px 16px` | `16px 16px` |
 | Border-left | `3px solid var(--danger)` | `3px solid var(--danger)` (unchanged) |
 | Border radius | `var(--radius-sm)` (4px) | `var(--radius-sm)` (6px, updated token) |
 | Shadow | none | `var(--shadow-sm)` |
@@ -251,17 +266,17 @@ New transition properties to add on interactive elements:
 | Property | Current | New |
 |----------|---------|-----|
 | Width | `190px` | `190px` (unchanged) |
-| Padding | `14px 10px` | `16px 12px` |
-| Nav item padding | `7px 12px` | `8px 12px` |
+| Padding | `14px 10px` | `16px 16px` |
+| Nav item padding | `7px 12px` | `8px 16px` |
 | Nav item gap | `2px` | `2px` (unchanged) |
-| Header padding-bottom | `18px` | `20px` |
-| Footer padding | `10px 12px` | `12px 12px` |
+| Header padding-bottom | `18px` | `24px` |
+| Footer padding | `10px 12px` | `8px 16px` |
 
 ### Setting Rows
 
 | Property | Current | New |
 |----------|---------|-----|
-| Padding | `9px 0` | `12px 0` |
+| Padding | `9px 0` | `16px 0` |
 | Border-bottom | `1px solid var(--border-row)` | `1px solid var(--border-row)` (token value is now softer) |
 
 ### Cache Bar
@@ -283,10 +298,10 @@ The following inline styles in JS render functions must be migrated to CSS class
 | `settings.js` | `renderHandlers()` | `info.style.display = 'flex'; info.style.alignItems = 'center'; info.style.gap = '10px'` | `.handler-info { display: flex; align-items: center; gap: var(--space-2); }` |
 | `settings.js` | `renderOfflinePins()` | `fileCount.style.fontSize = '11px'; fileCount.style.color = 'var(--text-muted)'; fileCount.style.marginLeft = '4px'` | `.pin-file-count { font-size: 11px; color: var(--text-muted); margin-left: var(--space-1); }` |
 | `settings.js` | `renderDashboard()` | `icon.style.color = 'var(--warning)'` | `.auth-banner-icon { color: var(--warning); }` |
-| `wizard.html` | Various | `style="display:flex;align-items:center;gap:10px;margin-bottom:20px"` | `.auth-status-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-5); }` |
+| `wizard.html` | Various | `style="display:flex;align-items:center;gap:10px;margin-bottom:20px"` | `.auth-status-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-6); }` |
 | `wizard.html` | Various | `style="margin-top:var(--space-6);display:flex;flex-direction:column;align-items:center;gap:var(--space-2)"` | `.wizard-actions { margin-top: var(--space-6); display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }` |
 | `wizard.html` | Various | `style="margin-top:8px"` | `.hint { margin-top: var(--space-2); }` (update existing rule) |
-| `wizard.html` | Various | `style="margin-top:20px"` | `.cancel-link { margin-top: var(--space-5); }` |
+| `wizard.html` | Various | `style="margin-top:20px"` | `.cancel-link { margin-top: var(--space-6); }` |
 
 ---
 
