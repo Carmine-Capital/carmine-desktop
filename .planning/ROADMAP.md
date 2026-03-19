@@ -66,7 +66,10 @@ Plans:
   1. UI has consistent styling — proper spacing, aligned elements, semantic color palette for status indicators (online/offline/syncing/error), and a professional, modern appearance
   2. Every user-initiated action (mount, unmount, sync now, pin folder) shows visible feedback via status indicators — no operation completes silently
   3. Dashboard renders correctly on both Linux (FUSE) and Windows (WinFsp) without layout breaks or missing data
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 04-01-PLAN.md — CSS design token overhaul + component rule updates (colors, typography, spacing, borders, shadows)
+- [ ] 04-02-PLAN.md — Inline style migration to CSS classes + UI-02 action feedback fixes
 
 ## Progress
 
@@ -75,7 +78,7 @@ Plans:
 | 1. WinFsp Offline Pin Fix | 2/2 | Complete | 2026-03-18 |
 | 2. Observability Infrastructure | 4/4 | Complete   | 2026-03-18 |
 | 3. Dashboard UI | 1/2 | Executing | — |
-| 4. Visual Polish & Hardening | 0/? | Not started | — |
+| 4. Visual Polish & Hardening | 0/2 | Not started | — |
 
 ---
 *Roadmap created: 2026-03-18*
