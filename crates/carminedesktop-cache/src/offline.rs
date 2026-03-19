@@ -212,6 +212,71 @@ impl OfflineManager {
         Ok(())
     }
 
+    /// Resume incomplete pin downloads.  Called once at startup.
+    ///
+    /// For each non-expired pin, re-runs `recursive_download` which skips
+    /// files already in disk cache.  This handles the case where the app
+    /// exited mid-download on a previous run.
+    pub async fn resume_incomplete(&self) -> carminedesktop_core::Result<()> {
+        let stale_pins = std::collections::HashSet::new();
+        let health = self.pin_store.health(&stale_pins)?;
+
+        for (pin, total_files, cached_files) in health {
+            if cached_files >= total_files && total_files > 0 {
+                continue; // Already complete
+            }
+
+            // Need to resume — look up actual inode for correct parent chain
+            let next_inode = AtomicU64::new(2_000_000);
+            let root_inode = self
+                .cache
+                .sqlite
+                .get_inode(&pin.item_id)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| next_inode.fetch_add(1, Ordering::Relaxed));
+
+            tracing::info!(
+                "offline: resuming incomplete download for {}/{} ({}/{} files)",
+                self.drive_id,
+                pin.item_id,
+                cached_files,
+                total_files
+            );
+
+            let graph = self.graph.clone();
+            let cache = self.cache.clone();
+            let drive_id = self.drive_id.clone();
+            let item_id = pin.item_id.clone();
+            let error_handler = self.on_download_error.read().unwrap().clone();
+
+            tokio::spawn(async move {
+                if let Err(e) = recursive_download(
+                    &graph,
+                    &cache,
+                    &drive_id,
+                    &item_id,
+                    root_inode,
+                    &AtomicU64::new(2_000_000),
+                )
+                .await
+                {
+                    tracing::error!(
+                        "offline: resume download failed for {}/{}: {}",
+                        drive_id,
+                        item_id,
+                        e
+                    );
+                    if let Some(handler) = &error_handler {
+                        handler(&item_id, &e.to_string());
+                    }
+                }
+            });
+        }
+
+        Ok(())
+    }
+
     pub fn set_ttl_secs(&self, ttl: u64) {
         self.ttl_secs.store(ttl, Ordering::Relaxed);
     }

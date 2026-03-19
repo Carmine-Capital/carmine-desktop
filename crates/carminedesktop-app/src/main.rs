@@ -1629,6 +1629,22 @@ fn start_delta_sync(app: &tauri::AppHandle) {
         // Tracks drives that already sent a 403 notification to avoid spam.
         let mut notified_403: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+        // Resume incomplete offline pin downloads from previous session.
+        let offline_mgrs: Vec<_> = {
+            use tauri::Manager;
+            let state = app_handle.state::<AppState>();
+            let caches = state.mount_caches.lock().unwrap();
+            caches
+                .values()
+                .map(|(_, _, _, offline_mgr, _, _)| offline_mgr.clone())
+                .collect()
+        };
+        for mgr in offline_mgrs {
+            if let Err(e) = mgr.resume_incomplete().await {
+                tracing::warn!("offline resume failed: {e}");
+            }
+        }
+
         loop {
             // Snapshot includes mount_id and mount_name for error handling.
             let snapshot: Vec<SyncSnapshotRow> = {
