@@ -29,24 +29,29 @@ created: 2026-03-19
 
 ## Spacing Scale
 
-Declared values (multiples of 4, mapped to existing `--space-*` tokens):
+Declared values (standard set only, multiples of 4):
 
 | Token | Value | CSS Variable | Usage in this phase |
 |-------|-------|-------------|---------------------|
-| xs | 4px | `--space-1` | Status dot margin, icon-to-text gap in activity rows |
-| sm | 8px | `--space-2` | Drive card internal padding (top/bottom), gap between status dot and drive name |
-| md | 12px | `--space-3` | Drive card internal padding (left/right), gap between drive cards |
-| lg | 16px | `--space-4` | Section content padding, gap between section heading and first element |
-| xl | 22px | (inline `22px`) | Section heading top margin (matches existing `.section-heading` margin-top) |
-| 2xl | 28px | (inline `28px`) | Main content padding (matches existing `.main-content` padding) |
+| xs | 4px | `--space-1` | Status dot margin, icon-to-text gap in activity rows, margin-top between sub-lines |
+| sm | 8px | `--space-2` | Drive card internal padding (top/bottom), gap between status dot and drive name, error entry stacking gap, auth banner vertical padding |
+| md | 16px | `--space-4` | Section content padding, gap between section heading and first element, drive card container gap, auth banner horizontal padding, error entry horizontal padding, upload file indent |
+| lg | 24px | `--space-6` | Available for larger gaps if needed |
+| xl | 32px | `--space-8` | Available for major section breaks |
+| 2xl | 48px | (inline) | Available for page-level spacing |
+| 3xl | 64px | (inline) | Available for page-level spacing |
 
-Exceptions:
-- Status dots are 8px diameter circles (not a spacing token, but a size)
-- Auth degradation banner uses `10px 16px` padding (compact alert pattern)
-- Drive cards use `12px` padding all around for compact density
-- Cache progress bar height is 8px (`--space-2`)
+Pre-existing exceptions (values inherited from existing `styles.css` rules that this phase does not modify):
 
-**Source:** Existing `styles.css` spacing tokens `--space-1` through `--space-8`. No new tokens added; all dashboard spacing uses existing values.
+| Value | Source CSS Rule | Justification |
+|-------|----------------|---------------|
+| 22px | `.main-content { padding: 22px 28px }`, `.section-heading { margin: 22px 0 14px }` | Existing layout padding and heading margin used by all panels. Changing would break General, Mounts, Offline, and About panels. |
+| 28px | `.main-content { padding: 22px 28px }` | Existing horizontal content padding used by all panels. |
+| 9px | `.setting-row { padding: 9px 0 }` | Existing row padding pattern. Activity rows and empty states reuse `.setting-row` or `.mount-empty` styles that have this value. |
+| 12px | `.nav-item { padding: 7px 12px }`, `.mount-actions { gap: 12px }` | Existing nav and action gap values. Drive card padding uses 12px to match mount-actions density. |
+| 14px | `.section-heading { margin: 22px 0 14px }` | Existing bottom margin on section headings. |
+
+**Source:** Existing `styles.css` spacing tokens `--space-1` through `--space-8`. No new spacing tokens added. All new dashboard-specific spacing uses standard-set values. Pre-existing values are inherited, not introduced.
 
 ---
 
@@ -54,14 +59,16 @@ Exceptions:
 
 | Role | Size | Weight | Line Height | CSS | Usage in this phase |
 |------|------|--------|-------------|-----|---------------------|
-| Body | 13px | 400 | 1.5 | (base) | Drive card status text, activity file names, error messages, cache usage text, pin health summary |
-| Label | 11px | 600 | 1.3 | `.section-heading` | Section headings ("DRIVES", "RECENT ACTIVITY", "ERRORS", "CACHE & OFFLINE"), sub-labels, timestamps |
-| Small | 11px | 400 | 1.3 | `.label-sub` pattern | Relative timestamps ("2m ago"), error action hints, pin file counts, upload queue summary |
-| Nav | 12.5px | 500 | 1.5 | `.nav-item` | Dashboard sidebar nav item label |
+| Body | 13px | 400 | 1.5 | (base) | Drive card status text, activity file names, error messages, cache usage text, pin health summary, drive card names |
+| Label | 11px | 600 | 1.3 | `.section-heading` | Section headings ("DRIVES", "RECENT ACTIVITY", "ERRORS", "CACHE & OFFLINE"), activity tags, health badges |
+| Small | 11px | 400 | 1.3 | `.label-sub` pattern | Relative timestamps ("2m ago"), sync status text, error action hints, pin file counts, upload queue file names, error type labels, upload summary text |
 
-Font weights used: 400 (regular), 500 (medium, nav/buttons), 600 (semibold, headings).
+Font weights used: 400 (regular), 600 (semibold).
 
-**Source:** Existing `styles.css` — body inherits 13px from `.label-text`, labels from `.section-heading` at 11px/600, sub-text from `.label-sub` at 11px. No new font sizes introduced.
+Pre-existing typography exception:
+- `.nav-item` and `button` use `font-size: 12.5px; font-weight: 500` in the existing `styles.css`. The Dashboard nav item and auth banner "Sign In" button inherit these base styles. This phase does not override or introduce 12.5px/500 -- they are inherited from pre-existing rules that apply to all panels.
+
+**Source:** Existing `styles.css` -- body inherits 13px from `.label-text`, labels from `.section-heading` at 11px/600, sub-text from `.label-sub` at 11px/400. This phase introduces no new font sizes or weights. All dashboard-specific text uses 11px or 13px at weight 400 or 600.
 
 ---
 
@@ -115,7 +122,7 @@ Added to `:root` in `styles.css`. This is the only new design token for the enti
 | Background | `rgba(245, 158, 11, 0.12)` (amber tint on `--bg-elevated`) |
 | Border | `1px solid rgba(245, 158, 11, 0.3)` (subtle amber border) |
 | Border radius | `--radius-md` (6px) |
-| Padding | `10px 16px` |
+| Padding | `8px 16px` |
 | Layout | Flex row, space-between. Left: warning icon (16x16 SVG) + message text. Right: "Sign In" button. |
 | Message copy | "Authentication needs attention. Token refresh is failing." |
 | Action copy | "Sign In" |
@@ -126,16 +133,16 @@ Added to `:root` in `styles.css`. This is the only new design token for the enti
 
 | Property | Value |
 |----------|-------|
-| Container | Flex-wrap row, `gap: 12px` |
+| Container | Flex-wrap row, `gap: 16px` |
 | Card width | `min-width: 140px`, `flex: 1 1 140px`, max 3 per row in ~500px content area |
 | Card background | `var(--bg-elevated)` |
 | Card border | `1px solid var(--border)` |
 | Card border radius | `--radius-md` (6px) |
-| Card padding | `12px` |
+| Card padding | `12px` (pre-existing density value, matches `.mount-actions` gap and `.nav-item` padding patterns) |
 | Card shadow | none (flat, consistent with existing elevated surfaces) |
 | Status dot | `8px` circle, positioned inline before drive name via flex row |
 | Dot colors | green (`--success`) = online+synced, amber (`--warning`) = syncing, red (`--danger`) = error, gray (`--text-muted`) = offline |
-| Drive name | 13px, weight 500, `--text-primary`, single line, `text-overflow: ellipsis` |
+| Drive name | 13px, weight 600, `--text-primary`, single line, `text-overflow: ellipsis` |
 | Sync status text | 11px, weight 400, `--text-secondary` |
 | Last synced text | 11px, weight 400, `--text-muted` |
 | Layout inside card | Column: [dot + name row] / [sync status] / [last synced] |
@@ -149,10 +156,10 @@ Added to `:root` in `styles.css`. This is the only new design token for the enti
 | Position | Below drive cards section, above activity feed |
 | Layout | Single line: disclosure triangle + summary text. Clickable. |
 | Summary copy pattern | "{N} uploading, {M} queued" |
-| Summary style | 12px, weight 500, `--text-secondary`, `cursor: pointer` |
+| Summary style | 11px, weight 400, `--text-secondary`, `cursor: pointer` |
 | Disclosure indicator | Right-pointing triangle `>` that rotates 90deg when expanded (CSS `transform: rotate(90deg)`, `transition: transform 0.15s ease`) |
 | Expanded panel | List of `WritebackEntry` file names, each on its own line |
-| File name style | 11px, weight 400, `--text-muted`, `padding-left: 20px` (indented under summary) |
+| File name style | 11px, weight 400, `--text-muted`, `padding-left: 16px` (indented under summary) |
 | Data action | `data-action="toggle-writeback-expanded"` on the summary line |
 
 ### 4. Activity Feed
@@ -163,7 +170,7 @@ Added to `:root` in `styles.css`. This is the only new design token for the enti
 | Default display | Latest 10 entries |
 | "Show more" link | Visible when total entries > 10. Copy: "Show all ({N})". Style: `btn-link`. Data action: `data-action="toggle-activity-expanded"` |
 | Entry layout | Flex row: [type tag] [file name] [timestamp], vertically centered |
-| Type tag | Inline badge, 10px font, uppercase, `letter-spacing: 0.04em`, `padding: 1px 6px`, `border-radius: 3px` |
+| Type tag | Inline badge, 11px font, weight 600, uppercase, `letter-spacing: 0.04em`, `padding: 4px 8px`, `border-radius: 3px` |
 | Tag "synced" | Background `rgba(34, 197, 94, 0.12)`, color `var(--success)` |
 | Tag "uploaded" | Background `rgba(34, 197, 94, 0.12)`, color `var(--success)` |
 | Tag "deleted" | Background `rgba(239, 68, 68, 0.12)`, color `var(--danger)` |
@@ -171,7 +178,7 @@ Added to `:root` in `styles.css`. This is the only new design token for the enti
 | File name | 13px, weight 400, `--text-primary`, truncated with `.../{folder}/{file}` strategy (show last 2 path segments), `flex: 1`, `text-overflow: ellipsis` |
 | Timestamp | 11px, weight 400, `--text-muted`, `flex-shrink: 0`, right-aligned |
 | Row separator | `border-bottom: 1px solid var(--border-row)` (matches `.setting-row` pattern) |
-| Row padding | `9px 0` (matches `.setting-row`) |
+| Row padding | `9px 0` (pre-existing value, matches `.setting-row` pattern) |
 | Empty state | "No recent activity" in muted italic |
 
 ### 5. Error Log
@@ -184,13 +191,13 @@ Added to `:root` in `styles.css`. This is the only new design token for the enti
 | Conflict entries | Left border `var(--warning)` (amber) |
 | Hard error entries | Left border `var(--danger)` (red) |
 | Entry background | `var(--bg-elevated)` |
-| Entry padding | `10px 12px` |
+| Entry padding | `8px 16px` |
 | Entry border radius | `--radius-sm` (4px) |
 | Entry margin | `0 0 8px 0` (stacked with gap) |
-| File name | 13px, weight 500, `--text-primary` |
+| File name | 13px, weight 600, `--text-primary` |
 | Error type | 11px, weight 400, `--text-muted`, displayed after file name with ` - ` separator |
-| Message | 12px, weight 400, `--text-secondary`, margin-top 4px |
-| Action hint | 11px, weight 400, `--text-muted`, italic, margin-top 2px |
+| Message | 13px, weight 400, `--text-secondary`, margin-top 4px |
+| Action hint | 11px, weight 400, `--text-muted`, italic, margin-top 4px |
 | Timestamp | 11px, weight 400, `--text-muted`, top-right of entry (absolute positioned or flex end) |
 | Empty state | "No errors" in muted italic |
 
@@ -224,7 +231,7 @@ Added to `:root` in `styles.css`. This is the only new design token for the enti
 | Property | Value |
 |----------|-------|
 | Position | Inside each `.pin-meta` row, after the expiry text |
-| Badge style | Inline span, `padding: 1px 6px`, `border-radius: 3px`, `font-size: 10px`, `font-weight: 600`, uppercase |
+| Badge style | Inline span, `padding: 4px 8px`, `border-radius: 3px`, `font-size: 11px`, `font-weight: 600`, uppercase |
 | "Downloaded" badge | Background `rgba(34, 197, 94, 0.12)`, color `var(--success)` |
 | "Partial" badge | Background `rgba(245, 158, 11, 0.12)`, color `var(--warning)` |
 | "Stale" badge | Background `rgba(239, 68, 68, 0.12)`, color `var(--danger)` |
