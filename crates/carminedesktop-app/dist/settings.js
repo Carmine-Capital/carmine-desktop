@@ -10,12 +10,75 @@ const state = {
   mounts: [],
   handlers: [],
   offlinePins: [],
-  activePanel: 'general',
+  activePanel: 'dashboard',
+  dashboardStatus: null,
+  recentActivity: [],
+  recentErrors: [],
+  cacheStats: null,
+  activityExpanded: false,
+  writebackExpanded: false,
 };
 
 function setState(patch) {
   Object.assign(state, patch);
   render();
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard helpers
+// ---------------------------------------------------------------------------
+
+function formatRelativeTime(isoString) {
+  if (!isoString) return 'Never';
+  const now = Date.now();
+  const then = new Date(isoString).getTime();
+  const diffSec = Math.floor((now - then) / 1000);
+  if (diffSec < 60) return 'Just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return diffMin + 'm ago';
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return diffHr + 'h ago';
+  const diffDay = Math.floor(diffHr / 24);
+  return diffDay + 'd ago';
+}
+
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const val = bytes / Math.pow(1024, i);
+  return (i === 0 ? val : val.toFixed(1)) + ' ' + units[i];
+}
+
+function truncatePath(fullPath, maxLen) {
+  if (!fullPath) return '';
+  if (!maxLen) maxLen = 40;
+  if (fullPath.length <= maxLen) return fullPath;
+  const parts = fullPath.split('/').filter(Boolean);
+  if (parts.length <= 2) return fullPath;
+  return '\u2026/' + parts.slice(-2).join('/');
+}
+
+function formatSyncStatus(drive) {
+  if (!drive.online) return 'Offline';
+  if (drive.syncState === 'error') return 'Error';
+  if (drive.syncState === 'syncing') {
+    const total = (drive.uploadQueue ? drive.uploadQueue.inFlight + drive.uploadQueue.queueDepth : 0);
+    return total > 0 ? 'Syncing ' + total + ' files' : 'Syncing';
+  }
+  return 'Up to date';
+}
+
+function aggregateUploadQueue(drives) {
+  let inFlight = 0, queued = 0;
+  if (!drives) return { inFlight: 0, queued: 0 };
+  drives.forEach(function(d) {
+    if (d.uploadQueue) {
+      inFlight += d.uploadQueue.inFlight;
+      queued += d.uploadQueue.queueDepth;
+    }
+  });
+  return { inFlight: inFlight, queued: queued };
 }
 
 // ---------------------------------------------------------------------------
@@ -219,12 +282,311 @@ function renderOfflinePins() {
   }
 }
 
+function renderDashboard() {
+  // Auth banner
+  const banner = document.getElementById('auth-banner');
+  if (banner) {
+    const ds = state.dashboardStatus;
+    if (ds && ds.authDegraded) {
+      banner.style.display = '';
+      banner.innerHTML = '';
+      const left = document.createElement('div');
+      left.className = 'auth-banner-left';
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('width', '16');
+      icon.setAttribute('height', '16');
+      icon.setAttribute('viewBox', '0 0 24 24');
+      icon.setAttribute('fill', 'none');
+      icon.setAttribute('stroke', 'currentColor');
+      icon.setAttribute('stroke-width', '2');
+      icon.setAttribute('stroke-linecap', 'round');
+      icon.setAttribute('stroke-linejoin', 'round');
+      icon.style.color = 'var(--warning)';
+      const path1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path1.setAttribute('d', 'M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z');
+      const line1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line1.setAttribute('x1', '12'); line1.setAttribute('y1', '9');
+      line1.setAttribute('x2', '12'); line1.setAttribute('y2', '13');
+      const line2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line2.setAttribute('x1', '12'); line2.setAttribute('y1', '17');
+      line2.setAttribute('x2', '12.01'); line2.setAttribute('y2', '17');
+      icon.appendChild(path1);
+      icon.appendChild(line1);
+      icon.appendChild(line2);
+      left.appendChild(icon);
+      const msg = document.createElement('span');
+      msg.textContent = 'Authentication needs attention. Token refresh is failing.';
+      left.appendChild(msg);
+      banner.appendChild(left);
+      const btn = document.createElement('button');
+      btn.className = 'btn-ghost btn-sm';
+      btn.dataset.action = 'dashboard-sign-in';
+      btn.textContent = 'Sign In';
+      banner.appendChild(btn);
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+
+  // Drive cards
+  const cardsContainer = document.getElementById('drive-cards');
+  if (cardsContainer) {
+    cardsContainer.innerHTML = '';
+    const ds = state.dashboardStatus;
+    if (ds && ds.drives && ds.drives.length > 0) {
+      ds.drives.forEach(function(drive) {
+        const card = document.createElement('div');
+        card.className = 'drive-card';
+
+        const header = document.createElement('div');
+        header.className = 'drive-card-header';
+        const dot = document.createElement('span');
+        dot.className = 'status-dot';
+        if (!drive.online) {
+          dot.classList.add('offline');
+          dot.setAttribute('aria-label', 'Offline');
+        } else if (drive.syncState === 'error') {
+          dot.classList.add('error');
+          dot.setAttribute('aria-label', 'Error');
+        } else if (drive.syncState === 'syncing') {
+          dot.classList.add('syncing');
+          dot.setAttribute('aria-label', 'Syncing');
+        } else {
+          dot.classList.add('ok');
+          dot.setAttribute('aria-label', 'Online, up to date');
+        }
+        header.appendChild(dot);
+        const name = document.createElement('div');
+        name.className = 'drive-card-name';
+        name.textContent = drive.name;
+        header.appendChild(name);
+
+        const status = document.createElement('div');
+        status.className = 'drive-card-status';
+        status.textContent = formatSyncStatus(drive);
+
+        const lastSync = document.createElement('div');
+        lastSync.className = 'drive-card-last-sync';
+        lastSync.textContent = 'Last: ' + formatRelativeTime(drive.lastSynced);
+
+        card.appendChild(header);
+        card.appendChild(status);
+        card.appendChild(lastSync);
+        cardsContainer.appendChild(card);
+      });
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'mount-empty';
+      empty.textContent = 'No drives mounted';
+      cardsContainer.appendChild(empty);
+    }
+  }
+
+  // Upload queue summary
+  const uploadSummary = document.getElementById('upload-summary');
+  const uploadDetail = document.getElementById('upload-detail');
+  if (uploadSummary) {
+    const ds = state.dashboardStatus;
+    const agg = aggregateUploadQueue(ds ? ds.drives : []);
+    const total = agg.inFlight + agg.queued;
+    if (total > 0) {
+      uploadSummary.style.display = '';
+      uploadSummary.innerHTML = '';
+      const arrow = document.createElement('span');
+      arrow.className = 'disclosure-arrow' + (state.writebackExpanded ? ' expanded' : '');
+      arrow.textContent = '\u25B6';
+      uploadSummary.appendChild(arrow);
+      const text = document.createElement('span');
+      const parts = [];
+      if (agg.inFlight > 0) parts.push(agg.inFlight + ' uploading');
+      if (agg.queued > 0) parts.push(agg.queued + ' queued');
+      text.textContent = parts.join(', ');
+      uploadSummary.appendChild(text);
+      uploadSummary.dataset.action = 'toggle-writeback-expanded';
+      uploadSummary.setAttribute('aria-expanded', state.writebackExpanded ? 'true' : 'false');
+    } else {
+      uploadSummary.style.display = 'none';
+    }
+
+    if (uploadDetail) {
+      const cs = state.cacheStats;
+      if (state.writebackExpanded && cs && cs.writebackQueue && cs.writebackQueue.length > 0) {
+        uploadDetail.style.display = '';
+        uploadDetail.innerHTML = '';
+        cs.writebackQueue.forEach(function(entry) {
+          const row = document.createElement('div');
+          row.className = 'upload-detail-file';
+          row.textContent = entry.fileName;
+          uploadDetail.appendChild(row);
+        });
+      } else {
+        uploadDetail.style.display = 'none';
+      }
+    }
+  }
+
+  // Activity feed
+  const activityList = document.getElementById('activity-list');
+  if (activityList) {
+    activityList.innerHTML = '';
+    const entries = state.recentActivity;
+    if (entries && entries.length > 0) {
+      const limit = state.activityExpanded ? entries.length : Math.min(entries.length, 10);
+      for (let i = 0; i < limit; i++) {
+        const entry = entries[i];
+        const li = document.createElement('li');
+        li.className = 'activity-row';
+
+        const tag = document.createElement('span');
+        tag.className = 'activity-tag ' + entry.activityType;
+        tag.textContent = entry.activityType;
+
+        const name = document.createElement('span');
+        name.className = 'activity-name';
+        name.textContent = truncatePath(entry.filePath);
+
+        const time = document.createElement('span');
+        time.className = 'activity-time';
+        time.textContent = formatRelativeTime(entry.timestamp);
+
+        li.appendChild(tag);
+        li.appendChild(name);
+        li.appendChild(time);
+        activityList.appendChild(li);
+      }
+      if (entries.length > 10) {
+        const showMore = document.createElement('li');
+        showMore.className = 'activity-show-more';
+        const link = document.createElement('button');
+        link.className = 'btn-link';
+        link.dataset.action = 'toggle-activity-expanded';
+        link.textContent = state.activityExpanded ? 'Show less' : 'Show all (' + entries.length + ')';
+        showMore.appendChild(link);
+        activityList.appendChild(showMore);
+      }
+    } else {
+      const empty = document.createElement('li');
+      empty.className = 'activity-empty';
+      empty.textContent = 'No recent activity';
+      activityList.appendChild(empty);
+    }
+  }
+
+  // Error log
+  const errorsHeading = document.getElementById('errors-heading');
+  const errorList = document.getElementById('error-list');
+  if (errorsHeading) {
+    const count = state.recentErrors ? state.recentErrors.length : 0;
+    errorsHeading.textContent = count > 0 ? 'Errors (' + count + ')' : 'Errors';
+  }
+  if (errorList) {
+    errorList.innerHTML = '';
+    const errors = state.recentErrors;
+    if (errors && errors.length > 0) {
+      errors.forEach(function(err) {
+        const entry = document.createElement('div');
+        entry.className = 'error-entry' + (err.errorType === 'conflict' ? ' conflict' : '');
+
+        const header = document.createElement('div');
+        header.className = 'error-header';
+        const fileEl = document.createElement('span');
+        fileEl.className = 'error-file';
+        fileEl.textContent = err.fileName || 'Unknown file';
+        const typeEl = document.createElement('span');
+        typeEl.className = 'error-type';
+        typeEl.textContent = ' \u2013 ' + (err.errorType || 'error');
+        const timeEl = document.createElement('span');
+        timeEl.className = 'error-time';
+        timeEl.textContent = formatRelativeTime(err.timestamp);
+        header.appendChild(fileEl);
+        header.appendChild(typeEl);
+        header.appendChild(timeEl);
+
+        entry.appendChild(header);
+
+        if (err.message) {
+          const msgEl = document.createElement('div');
+          msgEl.className = 'error-message';
+          msgEl.textContent = err.message;
+          entry.appendChild(msgEl);
+        }
+        if (err.actionHint) {
+          const hintEl = document.createElement('div');
+          hintEl.className = 'error-hint';
+          hintEl.textContent = err.actionHint;
+          entry.appendChild(hintEl);
+        }
+
+        errorList.appendChild(entry);
+      });
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'error-empty';
+      empty.textContent = 'No errors';
+      errorList.appendChild(empty);
+    }
+  }
+
+  // Cache & Offline
+  const cacheSection = document.getElementById('cache-section');
+  if (cacheSection) {
+    cacheSection.innerHTML = '';
+    const cs = state.cacheStats;
+
+    // Cache bar (always visible)
+    const usedBytes = cs ? cs.diskUsedBytes : 0;
+    const maxBytes = cs ? cs.diskMaxBytes : 0;
+    const pct = maxBytes > 0 ? Math.min((usedBytes / maxBytes) * 100, 100) : 0;
+    const barColor = pct >= 90 ? 'red' : (pct >= 70 ? 'amber' : 'green');
+
+    const bar = document.createElement('div');
+    bar.className = 'cache-bar';
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-valuenow', String(usedBytes));
+    bar.setAttribute('aria-valuemin', '0');
+    bar.setAttribute('aria-valuemax', String(maxBytes));
+    bar.setAttribute('aria-label', 'Cache disk usage');
+    const fill = document.createElement('div');
+    fill.className = 'cache-bar-fill ' + barColor;
+    fill.style.width = pct + '%';
+    bar.appendChild(fill);
+    cacheSection.appendChild(bar);
+
+    const text = document.createElement('div');
+    text.className = 'cache-text';
+    text.textContent = formatBytes(usedBytes) + ' / ' + formatBytes(maxBytes);
+    cacheSection.appendChild(text);
+
+    // Pin health summary
+    const pins = cs ? cs.pinnedItems : [];
+    if (pins && pins.length > 0) {
+      const summary = document.createElement('div');
+      summary.className = 'pin-summary';
+      const counts = { downloaded: 0, partial: 0, stale: 0 };
+      pins.forEach(function(p) { counts[p.status] = (counts[p.status] || 0) + 1; });
+      const parts = [pins.length + ' pins'];
+      const statusParts = [];
+      if (counts.downloaded > 0) statusParts.push(counts.downloaded + ' Downloaded');
+      if (counts.partial > 0) statusParts.push(counts.partial + ' Partial');
+      if (counts.stale > 0) statusParts.push(counts.stale + ' Stale');
+      summary.textContent = parts[0] + ' \u00B7 ' + statusParts.join(', ');
+      cacheSection.appendChild(summary);
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'pin-summary-empty';
+      empty.textContent = 'No offline pins';
+      cacheSection.appendChild(empty);
+    }
+  }
+}
+
 function render() {
   renderNav();
   renderSettings();
   renderMounts();
   renderHandlers();
   renderOfflinePins();
+  renderDashboard();
 }
 
 // ---------------------------------------------------------------------------
@@ -447,13 +809,17 @@ async function clearOverride(target) {
 
 async function init() {
   try {
-    const [settings, mounts, handlers, offlinePins] = await Promise.all([
+    const [settings, mounts, handlers, offlinePins, dashboardStatus, recentErrors, recentActivity, cacheStats] = await Promise.all([
       invoke('get_settings'),
       invoke('list_mounts'),
       invoke('get_file_handlers'),
       invoke('list_offline_pins'),
+      invoke('get_dashboard_status'),
+      invoke('get_recent_errors'),
+      invoke('get_activity_feed'),
+      invoke('get_cache_stats'),
     ]);
-    setState({ settings, mounts, handlers, offlinePins });
+    setState({ settings, mounts, handlers, offlinePins, dashboardStatus, recentErrors, recentActivity, cacheStats });
     document.title = settings.app_name + ' Settings';
   } catch (e) {
     showStatus(formatError(e), 'error');
@@ -498,6 +864,20 @@ async function init() {
     else if (action === 'set-override') await setOverride(target);
     else if (action === 'clear-override') await clearOverride(target);
     else if (action === 'remove-pin') await removeOfflinePin(target.dataset.driveId, target.dataset.itemId, target.dataset.name);
+    else if (action === 'toggle-activity-expanded') {
+      setState({ activityExpanded: !state.activityExpanded });
+    }
+    else if (action === 'toggle-writeback-expanded') {
+      setState({ writebackExpanded: !state.writebackExpanded });
+    }
+    else if (action === 'dashboard-sign-in') {
+      try {
+        await invoke('sign_out');
+        showStatus('Please sign in again', 'info');
+      } catch (e) {
+        showStatus(formatError(e), 'error');
+      }
+    }
   });
 
   document.querySelector('.main-content').addEventListener('change', async (e) => {
