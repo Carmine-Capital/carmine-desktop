@@ -2,7 +2,7 @@
 
 ## What This Is
 
-CarmineDesktop mounts Microsoft OneDrive and SharePoint document libraries as local filesystems on Linux, macOS, and Windows. This milestone focuses on making the app robust enough for company-wide deployment: fixing the offline pin crash on Windows, adding a dashboard UI with sync observability, and polishing the overall user experience. Currently dogfooded by the developer on Linux; target deployment is Windows across the organization.
+CarmineDesktop mounts Microsoft OneDrive and SharePoint document libraries as local filesystems on Linux, macOS, and Windows. After v1.0, the app is robust enough for company-wide deployment: offline pin crash on Windows is fixed, a dashboard UI provides full sync observability, and the UI is modernized with a consistent dark theme.
 
 ## Core Value
 
@@ -12,7 +12,7 @@ When something goes wrong, you know about it and can diagnose it — the app is 
 
 ### Validated
 
-<!-- Shipped and confirmed valuable. Inferred from existing codebase. -->
+<!-- Shipped and confirmed valuable. -->
 
 - ✓ OAuth2 PKCE authentication with Microsoft 365 organizational accounts — existing
 - ✓ Mount OneDrive drives as local filesystem (FUSE on Linux/macOS, WinFsp on Windows) — existing
@@ -29,20 +29,24 @@ When something goes wrong, you know about it and can diagnose it — the app is 
 - ✓ Autostart on login (systemd, LaunchAgent, Registry) — existing
 - ✓ Auto-updater via tauri-plugin-updater — existing
 - ✓ Shell integration: file associations, context menus, Explorer nav pane — existing
+- ✓ WinFsp offline pin crash fixed (5s VFS timeout + eviction protection + SQLite metadata) — v1.0
+- ✓ Dashboard UI with sync state, activity, errors, cache, offline status at a glance — v1.0
+- ✓ Per-drive sync status display (last synced, syncing, error indicators) — v1.0
+- ✓ Upload queue and writeback queue detail visible in UI — v1.0
+- ✓ Error log in UI with actionable detail (file, type, timestamp) — v1.0
+- ✓ Cache disk usage display (current vs. max) — v1.0
+- ✓ Online/offline status indicator per drive — v1.0
+- ✓ Conflict notifications surfaced in dashboard — v1.0
+- ✓ Offline pin health badges (Downloaded/Partial/Scanning) — v1.0
+- ✓ Auth degraded banner when token refresh failing — v1.0
+- ✓ UI visual polish: soft dark palette, consolidated typography, normalized spacing — v1.0
+- ✓ Real-time dashboard updates via ObsEvent bus — v1.0
 
 ### Active
 
-<!-- Current scope. Building toward these. -->
+<!-- Next milestone scope. -->
 
-- [ ] Dashboard UI showing sync state, file activity, errors, cache, and offline status at a glance
-- [ ] Sync status display per drive (last synced, next sync, items pending upload/download)
-- [ ] Upload/download activity display with progress indication
-- [ ] Error log visible in UI with actionable detail (not just log files)
-- [ ] Cache usage display (disk space consumed, pinned items size)
-- [ ] Online/offline status indicator per drive
-- [ ] Fix WinFsp offline pin crash (File Explorer hangs when navigating offline pinned mount)
-- [ ] Sync observability: make sync behavior transparent without digging through log files
-- [ ] UI visual polish: modernize look, improve usability, provide consistent user feedback
+(None yet — define with `/gsd:new-milestone`)
 
 ### Out of Scope
 
@@ -51,24 +55,25 @@ When something goes wrong, you know about it and can diagnose it — the app is 
 - New cloud providers (Google Drive, Dropbox) — OneDrive/SharePoint only for v1
 - Personal Microsoft accounts — organizational M365 only per v1 constraint
 - Mobile app — desktop-only product
-- New sync features beyond fixing/observing existing behavior — stabilize first
-- Headless mode improvements — desktop deployment is the priority
-- New file operation features (e.g., shared links, version history UI) — stabilize core first
+- Per-file sync status overlay icons — VFS model doesn't integrate with shell icon overlay providers
+- Real-time file-change streaming to UI — poll-based SyncMetrics with batched events sufficient
+- Selective sync / folder exclusion — VFS on-demand architecture makes this unnecessary
+- Version history / file restore UI — available via "Open in SharePoint"
+- Dark mode / theme customization — CSS custom properties allow future theming, but not prioritized
+- Pause/resume sync — defer to future milestone
+- Notification center UI — OS notifications + dashboard error panel sufficient
 
 ## Context
 
-- **Brownfield:** Rust 2024 workspace with 6 crates, Tauri v2 desktop app, ~8000 lines of core VFS/cache logic. Fully functional but with rough edges.
-- **Current UI:** Vanilla JS frontend (no framework, no build step) with two pages: `wizard.html` (setup) and `settings.html` (configuration). No dashboard or observability surface.
-- **Known issues from codebase audit:**
-  - WinFsp offline pin interaction causes File Explorer crash — likely VFS responses during offline state trigger Explorer hang
-  - No UI indicator for online/offline state (VFS silently enters offline mode)
-  - No cache size display or management UI
-  - Memory cache eviction is O(n) scan of all entries
+- **Shipped v1.0** with 26,187 LOC Rust + 2,920 LOC JS/HTML/CSS across 6 crates
+- **Tech stack:** Rust 2024, Tauri v2, Vanilla JS (no framework, no build step), FUSE/WinFsp
+- **Dashboard:** 6-section panel (drive cards, upload queue, activity feed, error log, cache & offline) with real-time obs-event updates
+- **Deployment target:** Windows across the organization. Developer dogfoods on Linux.
+- **CI:** GitHub Actions enforces zero warnings (`RUSTFLAGS=-Dwarnings`), clippy all targets
+- **Known limitations:**
+  - Activity feed only shows delta-sync-driven events (not local writes or offline downloads)
   - `OpenFileTable::find_by_ino` is O(n) scan — performance concern with many open files
-  - Monolithic `main.rs` (2167 lines) — may need refactoring to add observability hooks
-- **Deployment target:** Windows across the organization. Developer dogfoods on Linux. Cross-platform parity maintained.
-- **CI:** GitHub Actions enforces zero warnings (`RUSTFLAGS=-Dwarnings`), clippy all targets, fmt check.
-- **CSP constraint:** `script-src 'self'` — no inline event handlers in HTML.
+  - Memory cache eviction is O(n) scan of all entries
 
 ## Constraints
 
@@ -81,14 +86,18 @@ When something goes wrong, you know about it and can diagnose it — the app is 
 
 ## Key Decisions
 
-<!-- Decisions that constrain future work. Add throughout project lifecycle. -->
-
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Keep vanilla JS frontend | No build step, fast iteration, matches existing codebase | — Pending |
-| Dashboard replaces/extends settings page | Single UI surface rather than adding new windows | — Pending |
-| Windows is primary deployment target | Company uses Windows; developer uses Linux for dev | — Pending |
-| Fix offline pins before adding new features | Crash is a showstopper for rollout | — Pending |
+| Keep vanilla JS frontend | No build step, fast iteration, matches existing codebase | ✓ Good — dashboard delivered in 2 plans without tooling overhead |
+| Dashboard replaces/extends settings page | Single UI surface rather than adding new windows | ✓ Good — dashboard is default panel, settings/mounts/offline are tabs |
+| Windows is primary deployment target | Company uses Windows; developer uses Linux for dev | ✓ Good — offline pin crash fixed, cross-platform parity maintained |
+| Fix offline pins before adding new features | Crash is a showstopper for rollout | ✓ Good — VFS timeout + eviction protection + SQLite metadata solved it |
+| Zero new dependencies for observability | All capabilities exist in workspace (Tauri IPC, tokio broadcast, tracing) | ✓ Good — no dep additions, ring buffers + broadcast channel sufficient |
+| graph_with_timeout centralizes VFS-path timeouts | Consistent 5s timeout + offline-flag logic, avoids duplication | ✓ Good — single helper wraps all 6 VFS Graph call sites |
+| ObsEvent bus with ring buffers | Decouples producers (VFS, delta sync) from consumers (dashboard, Tauri emit) | ✓ Good — verified end-to-end from browser console |
+| 30s periodic dashboard refresh | Balances data freshness vs. IPC overhead | ✓ Good — real-time events for immediate changes + periodic for staleness |
+| Lock ordering documented on AppState | Prevents deadlocks as observability adds more Mutex state | ✓ Good — no deadlocks encountered |
+| PinStore::health() uses recursive CTE | Joins items and cache_entries without Graph API calls | ✓ Good — fast, accurate pin health from SQLite alone |
 
 ---
-*Last updated: 2026-03-18 after initialization*
+*Last updated: 2026-03-19 after v1.0 milestone*
