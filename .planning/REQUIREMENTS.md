@@ -13,24 +13,24 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Dashboard
 
-- [ ] **DASH-01**: User can see a dashboard view showing sync state, activity, errors, cache usage, and offline status at a glance
-- [ ] **DASH-02**: User can see per-drive sync status indicator showing "Up to date" / "Syncing N files" / "Error" for each mounted drive
-- [ ] **DASH-03**: User can see online/offline status indicator per drive, prominently displayed
-- [ ] **DASH-04**: User can see auth status indicator — degraded auth banner displayed when token refresh is failing or re-authentication is required
-- [ ] **DASH-05**: User can see last synced timestamp per drive ("Last synced: 2 minutes ago") that updates in real time
+- [x] **DASH-01**: User can see a dashboard view showing sync state, activity, errors, cache usage, and offline status at a glance
+- [x] **DASH-02**: User can see per-drive sync status indicator showing "Up to date" / "Syncing N files" / "Error" for each mounted drive
+- [x] **DASH-03**: User can see online/offline status indicator per drive, prominently displayed
+- [x] **DASH-04**: User can see auth status indicator — degraded auth banner displayed when token refresh is failing or re-authentication is required
+- [x] **DASH-05**: User can see last synced timestamp per drive ("Last synced: 2 minutes ago") that updates in real time
 
 ### Activity & Errors
 
-- [ ] **ACT-01**: User can see upload queue count showing number of files uploading and number queued ("3 uploading, 2 queued")
-- [ ] **ACT-02**: User can see recent errors in the UI with actionable detail: file name, error type, timestamp, and enough context to understand what went wrong
-- [ ] **ACT-03**: User can see conflict notifications surfaced in the UI — which files had conflicts, when, and that a conflict copy was created
-- [ ] **ACT-04**: User can see a recent activity feed showing synced, uploaded, and deleted items in a scrollable log
-- [ ] **ACT-05**: User can see writeback queue detail showing which specific files are pending upload, by name (not just count)
+- [x] **ACT-01**: User can see upload queue count showing number of files uploading and number queued ("3 uploading, 2 queued")
+- [x] **ACT-02**: User can see recent errors in the UI with actionable detail: file name, error type, timestamp, and enough context to understand what went wrong
+- [x] **ACT-03**: User can see conflict notifications surfaced in the UI — which files had conflicts, when, and that a conflict copy was created
+- [x] **ACT-04**: User can see a recent activity feed showing synced, uploaded, and deleted items in a scrollable log
+- [x] **ACT-05**: User can see writeback queue detail showing which specific files are pending upload, by name (not just count)
 
 ### Cache & Offline
 
-- [ ] **COFF-01**: User can see cache disk usage display showing current usage vs. configured maximum (e.g., "2.1 GB / 5 GB")
-- [ ] **COFF-02**: User can see offline pin health status per pin: "Downloaded" / "Partial" / "Stale" — indicating whether pinned content is actually available offline
+- [x] **COFF-01**: User can see cache disk usage display showing current usage vs. configured maximum (e.g., "2.1 GB / 5 GB")
+- [x] **COFF-02**: User can see offline pin health status per pin: "Downloaded" / "Partial" / "Stale" — indicating whether pinned content is actually available offline
 
 ### UI Polish
 
@@ -77,18 +77,18 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | BUG-01 | Phase 1: WinFsp Offline Pin Fix | Complete |
-| DASH-01 | Phase 3: Dashboard UI | Pending |
-| DASH-02 | Phase 3: Dashboard UI | Pending |
-| DASH-03 | Phase 3: Dashboard UI | Pending |
-| DASH-04 | Phase 3: Dashboard UI | Pending |
-| DASH-05 | Phase 3: Dashboard UI | Pending |
-| ACT-01 | Phase 3: Dashboard UI | Pending |
-| ACT-02 | Phase 3: Dashboard UI | Pending |
-| ACT-03 | Phase 3: Dashboard UI | Pending |
-| ACT-04 | Phase 3: Dashboard UI | Pending |
-| ACT-05 | Phase 3: Dashboard UI | Pending |
-| COFF-01 | Phase 3: Dashboard UI | Pending |
-| COFF-02 | Phase 3: Dashboard UI | Pending |
+| DASH-01 | Phase 3: Dashboard UI | Complete |
+| DASH-02 | Phase 3: Dashboard UI | Complete |
+| DASH-03 | Phase 3: Dashboard UI | Complete |
+| DASH-04 | Phase 3: Dashboard UI | Complete |
+| DASH-05 | Phase 3: Dashboard UI | Complete |
+| ACT-01 | Phase 3: Dashboard UI | Complete |
+| ACT-02 | Phase 3: Dashboard UI | Complete |
+| ACT-03 | Phase 3: Dashboard UI | Complete |
+| ACT-04 | Phase 3: Dashboard UI | Complete |
+| ACT-05 | Phase 3: Dashboard UI | Complete |
+| COFF-01 | Phase 3: Dashboard UI | Complete |
+| COFF-02 | Phase 3: Dashboard UI | Complete |
 | UI-01 | Phase 4: Visual Polish & Hardening | Pending |
 | UI-02 | Phase 4: Visual Polish & Hardening | Pending |
 

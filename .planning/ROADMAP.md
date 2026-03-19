@@ -55,7 +55,7 @@ Plans:
   5. Dashboard updates in near-real-time (~1-2s) as sync events occur, without requiring manual refresh
 **Plans:** 2 plans
 Plans:
-- [ ] 03-01-PLAN.md — Dashboard HTML/CSS structure + JS state, helpers, renderDashboard, init data loading
+- [x] 03-01-PLAN.md — Dashboard HTML/CSS structure + JS state, helpers, renderDashboard, init data loading
 - [ ] 03-02-PLAN.md — Real-time event wiring, timestamp refresh, Offline panel health badges, visual verification
 
 ### Phase 4: Visual Polish & Hardening
@@ -74,7 +74,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. WinFsp Offline Pin Fix | 2/2 | Complete | 2026-03-18 |
 | 2. Observability Infrastructure | 4/4 | Complete   | 2026-03-18 |
-| 3. Dashboard UI | 0/2 | Planning complete | — |
+| 3. Dashboard UI | 1/2 | Executing | — |
 | 4. Visual Polish & Hardening | 0/? | Not started | — |
 
 ---
