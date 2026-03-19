@@ -34,7 +34,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### UI Polish
 
-- [ ] **UI-01**: UI visual design is modernized with consistent styling, proper spacing, and professional appearance
+- [x] **UI-01**: UI visual design is modernized with consistent styling, proper spacing, and professional appearance
 - [ ] **UI-02**: All user-facing actions provide visible feedback via status indicators — no operation completes silently
 
 ## v2 Requirements
@@ -89,7 +89,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ACT-05 | Phase 3: Dashboard UI | Complete |
 | COFF-01 | Phase 3: Dashboard UI | Complete |
 | COFF-02 | Phase 3: Dashboard UI | Complete |
-| UI-01 | Phase 4: Visual Polish & Hardening | Pending |
+| UI-01 | Phase 4: Visual Polish & Hardening | Complete |
 | UI-02 | Phase 4: Visual Polish & Hardening | Pending |
 
 **Coverage:**
