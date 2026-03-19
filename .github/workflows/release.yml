@@ -91,14 +91,15 @@ jobs:
           key: ${{ runner.os }}-release-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-release-
 
-      - name: Build with tauri-action
-        uses: tauri-apps/tauri-action@v0
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Build and sign
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          args: --features desktop --target ${{ matrix.target }}
-          projectPath: crates/carminedesktop-app
+        run: cargo tauri build --features desktop --target ${{ matrix.target }}
+        working-directory: crates/carminedesktop-app
 
       - name: Collect artifacts
         shell: bash
