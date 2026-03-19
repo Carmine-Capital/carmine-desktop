@@ -254,6 +254,26 @@ function renderOfflinePins() {
     expirySpan.textContent = remaining.text;
     metaEl.appendChild(document.createTextNode(pin.mount_name + ' \u00B7 '));
     metaEl.appendChild(expirySpan);
+    // Health badge from cacheStats
+    const cs = state.cacheStats;
+    if (cs && cs.pinnedItems) {
+      const health = cs.pinnedItems.find(function(h) {
+        return h.itemId === pin.item_id && h.driveId === pin.drive_id;
+      });
+      if (health) {
+        const badge = document.createElement('span');
+        badge.className = 'health-badge ' + health.status;
+        badge.textContent = health.status;
+        metaEl.appendChild(document.createTextNode(' '));
+        metaEl.appendChild(badge);
+        const fileCount = document.createElement('span');
+        fileCount.style.fontSize = '11px';
+        fileCount.style.color = 'var(--text-muted)';
+        fileCount.style.marginLeft = '4px';
+        fileCount.textContent = health.cachedFiles + '/' + health.totalFiles + ' files';
+        metaEl.appendChild(fileCount);
+      }
+    }
     info.appendChild(nameEl);
     info.appendChild(metaEl);
 
@@ -589,6 +609,15 @@ function render() {
   renderDashboard();
 }
 
+let _renderRAF = null;
+function scheduleRender() {
+  if (_renderRAF) return;
+  _renderRAF = requestAnimationFrame(function() {
+    _renderRAF = null;
+    render();
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
@@ -895,6 +924,64 @@ async function init() {
     ]);
     setState({ settings, mounts, offlinePins });
   });
+
+  // Real-time dashboard events
+  listen('obs-event', function(event) {
+    const p = event.payload;
+    const ds = state.dashboardStatus;
+    if (!ds) return;
+
+    switch (p.type) {
+      case 'syncStateChanged': {
+        const drive = ds.drives.find(function(d) { return d.driveId === p.driveId; });
+        if (drive) drive.syncState = p.state;
+        break;
+      }
+      case 'onlineStateChanged': {
+        const drive = ds.drives.find(function(d) { return d.driveId === p.driveId; });
+        if (drive) drive.online = p.online;
+        break;
+      }
+      case 'authStateChanged': {
+        ds.authDegraded = p.degraded;
+        break;
+      }
+      case 'error': {
+        state.recentErrors.unshift({
+          driveId: p.driveId,
+          fileName: p.fileName,
+          remotePath: p.remotePath,
+          errorType: p.errorType,
+          message: p.message,
+          actionHint: p.actionHint,
+          timestamp: p.timestamp,
+        });
+        if (state.recentErrors.length > 100) state.recentErrors.length = 100;
+        break;
+      }
+      case 'activity': {
+        state.recentActivity.unshift({
+          driveId: p.driveId,
+          filePath: p.filePath,
+          activityType: p.activityType,
+          timestamp: p.timestamp,
+        });
+        if (state.recentActivity.length > 500) state.recentActivity.length = 500;
+        break;
+      }
+    }
+    scheduleRender();
+  });
+
+  // Refresh relative timestamps every 60 seconds (only when dashboard visible)
+  let _timestampTimer = null;
+  function startTimestampRefresh() {
+    if (_timestampTimer) return;
+    _timestampTimer = setInterval(function() {
+      if (state.activePanel === 'dashboard') render();
+    }, 60000);
+  }
+  startTimestampRefresh();
 }
 
 init();
