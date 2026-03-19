@@ -39,6 +39,17 @@ impl InodeTable {
         }
     }
 
+    /// Seed the table with pre-existing inode↔item_id pairs from SQLite.
+    /// Must be called before any `allocate()` calls so that VFS and SQLite
+    /// agree on inode values for items persisted by offline download.
+    pub fn seed(&self, pairs: &[(u64, String)]) {
+        let mut maps = self.maps.write().expect("inode table lock poisoned");
+        for (inode, item_id) in pairs {
+            maps.inode_to_item.insert(*inode, item_id.clone());
+            maps.item_to_inode.insert(item_id.clone(), *inode);
+        }
+    }
+
     pub fn allocate(&self, item_id: &str) -> u64 {
         let mut maps = self.maps.write().expect("inode table lock poisoned");
         if let Some(&inode) = maps.item_to_inode.get(item_id) {

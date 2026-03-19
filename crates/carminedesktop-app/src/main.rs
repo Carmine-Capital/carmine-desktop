@@ -1279,6 +1279,11 @@ fn start_mount_common(
     );
     let max_inode = cache.sqlite.max_inode().unwrap_or(0);
     let inodes = Arc::new(InodeTable::new_starting_after(max_inode));
+    // Seed InodeTable with existing SQLite mappings so VFS and offline
+    // download agree on inode values (prevents ghost entries after delta sync).
+    if let Ok(pairs) = cache.sqlite.all_inode_pairs() {
+        inodes.seed(&pairs);
+    }
 
     let (offline_ttl, offline_max_bytes) = {
         let cfg = state.effective_config.lock().map_err(|e| e.to_string())?;
@@ -2186,6 +2191,9 @@ fn run_headless(
                 };
                 let max_inode = mount_cache.sqlite.max_inode().unwrap_or(0);
                 let mount_inodes = Arc::new(InodeTable::new_starting_after(max_inode));
+                if let Ok(pairs) = mount_cache.sqlite.all_inode_pairs() {
+                    mount_inodes.seed(&pairs);
+                }
 
                 let offline_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
                 match MountHandle::mount(

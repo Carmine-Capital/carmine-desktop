@@ -264,6 +264,30 @@ impl SqliteStore {
         Ok(max.unwrap_or(0) as u64)
     }
 
+    /// Return all (inode, item_id) pairs for seeding the InodeTable at mount
+    /// startup.  This ensures VFS and SQLite agree on inode values for items
+    /// persisted by offline download.
+    pub fn all_inode_pairs(&self) -> carminedesktop_core::Result<Vec<(u64, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT inode, item_id FROM items")
+            .map_err(|e| carminedesktop_core::Error::Cache(format!("prepare failed: {e}")))?;
+        let rows = stmt
+            .query_map([], |row| {
+                let inode: i64 = row.get(0)?;
+                let item_id: String = row.get(1)?;
+                Ok((inode as u64, item_id))
+            })
+            .map_err(|e| carminedesktop_core::Error::Cache(format!("query failed: {e}")))?;
+        let mut pairs = Vec::new();
+        for row in rows {
+            pairs.push(
+                row.map_err(|e| carminedesktop_core::Error::Cache(format!("row failed: {e}")))?,
+            );
+        }
+        Ok(pairs)
+    }
+
     pub fn clear(&self) -> carminedesktop_core::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch("DELETE FROM items; DELETE FROM delta_tokens; DELETE FROM sync_state;")

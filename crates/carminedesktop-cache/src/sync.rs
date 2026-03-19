@@ -166,7 +166,7 @@ pub async fn run_delta_sync(
     let mut result = DeltaSyncResult::default();
 
     for item in &response.value {
-        if item.name.is_empty() && item.file.is_none() && item.folder.is_none() {
+        if item.name.is_empty() {
             // Capture deleted item info and parent inode BEFORE removing from caches
             let (deleted_info, parent_inode) = match cache.sqlite.get_item_by_id(&item.id) {
                 Ok(Some((_, old_item))) => {
