@@ -53,7 +53,10 @@ Plans:
   3. User can see cache disk usage as a visual bar ("2.1 GB / 5 GB"), upload queue counts, writeback queue file names, and per-pin offline health status ("Downloaded" / "Partial" / "Stale")
   4. User sees a degraded auth banner when token refresh is failing, and conflict notifications surface directly in the dashboard (not buried in logs)
   5. Dashboard updates in near-real-time (~1-2s) as sync events occur, without requiring manual refresh
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 03-01-PLAN.md — Dashboard HTML/CSS structure + JS state, helpers, renderDashboard, init data loading
+- [ ] 03-02-PLAN.md — Real-time event wiring, timestamp refresh, Offline panel health badges, visual verification
 
 ### Phase 4: Visual Polish & Hardening
 **Goal**: The UI looks professional and every user action provides visible feedback — ready for org-wide deployment
@@ -71,9 +74,9 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. WinFsp Offline Pin Fix | 2/2 | Complete | 2026-03-18 |
 | 2. Observability Infrastructure | 4/4 | Complete   | 2026-03-18 |
-| 3. Dashboard UI | 0/? | Not started | — |
+| 3. Dashboard UI | 0/2 | Planning complete | — |
 | 4. Visual Polish & Hardening | 0/? | Not started | — |
 
 ---
 *Roadmap created: 2026-03-18*
-*Last updated: 2026-03-18*
+*Last updated: 2026-03-19*
