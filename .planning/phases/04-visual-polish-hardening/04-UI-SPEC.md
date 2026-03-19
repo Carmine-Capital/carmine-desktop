@@ -35,15 +35,16 @@ All values are multiples of 4. The existing token names (`--space-1` through `--
 |-------|---------------|-----------|-------|
 | `--space-1` | 0.25rem (4px) | 4px | Icon gaps, inline padding, tight internal gaps |
 | `--space-2` | 0.5rem (8px) | 8px | Compact element spacing, button icon gap |
-| `--space-3` | 0.75rem (12px) | 12px | Nav item padding, card internal padding |
+| `--space-3` | 0.75rem (12px) | 12px | Nav item padding, card internal padding, sidebar footer padding. Exception: 12px is not in the standard set but is retained because the existing token `--space-3` bridges the 8px-to-16px gap in a dense desktop UI where 8px is too tight for card padding and 16px is too loose. Used in 6+ component rules. |
 | `--space-4` | 1rem (16px) | 16px | Default section padding, card gaps, status bar padding |
-| `--space-5` | 1.25rem (20px) | 20px | Section heading margin-bottom |
+| `--space-5` | 1.25rem (20px) | 20px | Section heading margin-bottom, sidebar header bottom padding. Exception: 20px is not in the standard set but is retained because it provides visual breathing room below section headings without the full 24px gap that would create too much separation in the compact sidebar and dashboard layouts. Remapping to 16px collapses headings into content; 24px wastes vertical space in a dense data display. |
 | `--space-6` | 1.5rem (24px) | 24px | Main content horizontal padding, major section gaps |
 | `--space-8` | 2rem (32px) | 32px | Main content vertical padding, page-level spacing |
 
 Exceptions:
 - Touch targets on icon buttons: minimum 28px hit area (7x the base unit) for comfortable click targets on desktop. This is below the 44px mobile guideline but appropriate for a desktop-only app.
 - Main content padding changes from `22px 28px` to `--space-8 --space-6` (32px 24px) for more breathing room.
+- `--space-3` (12px) and `--space-5` (20px) are declared exceptions to the standard set {4, 8, 16, 24, 32, 48, 64} with rationale documented in the table above. Both are multiples of 4.
 
 ---
 
@@ -51,34 +52,36 @@ Exceptions:
 
 Font: Inter Variable, weight range 100-900.
 
-The existing type scale uses too many fractional pixel sizes (11px, 11.5px, 12px, 12.5px, 13px, 16px, 18px). This contract consolidates to 4 distinct sizes with 3 weights.
+The existing type scale uses too many fractional pixel sizes (11px, 11.5px, 12px, 12.5px, 13px, 16px, 18px). This contract consolidates to 4 distinct sizes with 2 weights.
 
 | Role | Size | Weight | Line Height | Usage |
 |------|------|--------|-------------|-------|
-| Body | 13px | 400 | 1.5 | Default text, setting labels `.label-text`, activity names, error messages, cache text, mount names, pin names |
-| Small / Meta | 11px | 400 | 1.4 | Timestamps, sublabels `.label-sub`, error hints, mount paths, pin meta, health badge text, activity tags, section heading overline |
-| Label / UI | 13px | 500 | 1.4 | Button text, nav items, card names `.drive-card-name`, error file names, handler extensions, sidebar title |
-| Heading | 16px | 600 | 1.25 | Step titles `h1`, panel headings (if added). Wizard large title: 18px weight 600 (existing `step-title-lg`). |
+| Body | 13px | 400 | 1.5 | Default text, setting labels `.label-text`, activity names, error messages, cache text, mount names, pin names, button text, nav items, card names `.drive-card-name`, error file names, handler extensions, sidebar title, input/select text |
+| Small / Meta | 11px | 400 | 1.4 | Timestamps, sublabels `.label-sub`, error hints, mount paths, pin meta, health badge text, activity tags, `.btn-sm` text, status bar text |
+| Heading | 16px | 600 | 1.25 | Section heading overline, panel headings, step titles `h1`, wizard step-title-lg (merged into this tier at 16px, down from 18px) |
+| Display | 32px | 600 | 1.1 | Reserved for future use. Not used in current UI surfaces. |
 
 Weight system:
-- 400 (regular): Body text, descriptions, metadata
-- 500 (medium): Interactive labels, buttons, nav items, card titles
-- 600 (semibold): Section headings (overline), heading text, active emphasis
+- 400 (regular): Body text, descriptions, metadata, nav items, button text, card names, input text
+- 600 (semibold): Section headings, panel headings, step titles, active nav emphasis, health badge labels
 
 Migration from current values:
-- 12.5px button text --> 13px weight 500
-- 11.5px inputs --> 12px weight 400 (exception: inputs get 12px for optical clarity at small size, between the two body tiers)
-- 12.5px nav items --> 13px weight 500
+- 12.5px button text --> 13px weight 400
+- 11.5px inputs --> 13px weight 400 (folded into body tier for consistency)
+- 12.5px nav items --> 13px weight 400
 - 11px section headings --> 11px weight 600 (unchanged)
 - 13px label text --> 13px weight 400 (unchanged)
-
-Input exception: `input`, `select`, `.input` elements use 12px at weight 400 with line-height 1.4. This is a deliberate half-step between the 11px meta tier and 13px body tier, providing optical balance inside compact form controls.
+- 18px wizard step-title-lg --> 16px weight 600 (merged into heading tier)
+- 12px status bar --> 11px weight 400 (folded into small/meta tier)
+- 500 weight (previously used for buttons, nav, card titles) --> collapsed into 400 for body-level elements and 600 for heading-level elements
 
 ---
 
 ## Color
 
 Direction: **Soft dark refresh** -- lift the dark palette for more visual warmth and less cave-like heaviness. Inspired by Linear/Raycast soft dark, not stark terminal-black. `color-scheme: dark` is preserved.
+
+**Primary visual focal point:** The drive card list is the primary visual anchor on the dashboard. Drive cards receive elevated backgrounds, subtle shadows, and hover border transitions to draw the eye and communicate interactivity. All other dashboard sections (activity, errors, cache, offline) are secondary surfaces that support the drive status overview.
 
 ### Background Tokens (60% Dominant)
 
@@ -182,9 +185,9 @@ New transition properties to add on interactive elements:
 |----------|---------|-----|
 | Padding (default) | `7px 18px` | `8px 16px` |
 | Font size | `12.5px` | `13px` |
-| Font weight | `500` | `500` |
+| Font weight | `500` | `400` |
 | Border radius | `var(--radius-md)` (6px) | `var(--radius-md)` (8px, updated token) |
-| `.btn-sm` padding | `var(--space-1) var(--space-3)` | `4px 10px` |
+| `.btn-sm` padding | `var(--space-1) var(--space-3)` | `4px 12px` |
 | `.btn-sm` font-size | `11px` | `11px` (unchanged) |
 | `.btn-ghost` border | `1px solid rgba(255,255,255,0.10)` | `1px solid var(--border)` (use token) |
 
@@ -192,8 +195,8 @@ New transition properties to add on interactive elements:
 
 | Property | Current | New |
 |----------|---------|-----|
-| Padding | `4px 10px` | `6px 10px` |
-| Font size | `11.5px` | `12px` |
+| Padding | `4px 10px` | `8px 12px` |
+| Font size | `11.5px` | `13px` |
 | Border radius | `5px` | `var(--radius-md)` (8px) |
 | Border | `1px solid rgba(255,255,255,0.10)` | `1px solid var(--border)` (use token) |
 
@@ -219,7 +222,7 @@ New transition properties to add on interactive elements:
 
 | Property | Current | New |
 |----------|---------|-----|
-| Padding | `4px 8px` | `3px 8px` |
+| Padding | `4px 8px` | `4px 8px` (unchanged) |
 | Border radius | `3px` | `var(--radius-sm)` (6px, rounder) |
 | Font size | `11px` | `11px` (unchanged) |
 | Font weight | `600` | `600` (unchanged) |
@@ -229,7 +232,7 @@ New transition properties to add on interactive elements:
 | Property | Current | New |
 |----------|---------|-----|
 | Padding | `12px` | `var(--space-3) var(--space-4)` (12px 16px) |
-| Gap (internal) | `4px` | `6px` |
+| Gap (internal) | `4px` | `8px` |
 | Border | `1px solid var(--border)` | `1px solid var(--border)` (unchanged, token value softer) |
 | Shadow | none | `var(--shadow-sm)` |
 | Hover | none | `border-color: rgba(255,255,255,0.12)` on hover for subtle interactivity hint |
@@ -238,7 +241,7 @@ New transition properties to add on interactive elements:
 
 | Property | Current | New |
 |----------|---------|-----|
-| Padding | `8px 16px` | `10px 16px` |
+| Padding | `8px 16px` | `12px 16px` |
 | Border-left | `3px solid var(--danger)` | `3px solid var(--danger)` (unchanged) |
 | Border radius | `var(--radius-sm)` (4px) | `var(--radius-sm)` (6px, updated token) |
 | Shadow | none | `var(--shadow-sm)` |
@@ -258,7 +261,7 @@ New transition properties to add on interactive elements:
 
 | Property | Current | New |
 |----------|---------|-----|
-| Padding | `9px 0` | `10px 0` |
+| Padding | `9px 0` | `12px 0` |
 | Border-bottom | `1px solid var(--border-row)` | `1px solid var(--border-row)` (token value is now softer) |
 
 ### Cache Bar
@@ -277,10 +280,10 @@ The following inline styles in JS render functions must be migrated to CSS class
 
 | File | Function | Current Inline Style | Target CSS Class |
 |------|----------|---------------------|-----------------|
-| `settings.js` | `renderHandlers()` | `info.style.display = 'flex'; info.style.alignItems = 'center'; info.style.gap = '10px'` | `.handler-info { display: flex; align-items: center; gap: 10px; }` |
-| `settings.js` | `renderOfflinePins()` | `fileCount.style.fontSize = '11px'; fileCount.style.color = 'var(--text-muted)'; fileCount.style.marginLeft = '4px'` | `.pin-file-count { font-size: 11px; color: var(--text-muted); margin-left: 4px; }` |
+| `settings.js` | `renderHandlers()` | `info.style.display = 'flex'; info.style.alignItems = 'center'; info.style.gap = '10px'` | `.handler-info { display: flex; align-items: center; gap: var(--space-2); }` |
+| `settings.js` | `renderOfflinePins()` | `fileCount.style.fontSize = '11px'; fileCount.style.color = 'var(--text-muted)'; fileCount.style.marginLeft = '4px'` | `.pin-file-count { font-size: 11px; color: var(--text-muted); margin-left: var(--space-1); }` |
 | `settings.js` | `renderDashboard()` | `icon.style.color = 'var(--warning)'` | `.auth-banner-icon { color: var(--warning); }` |
-| `wizard.html` | Various | `style="display:flex;align-items:center;gap:10px;margin-bottom:20px"` | `.auth-status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }` |
+| `wizard.html` | Various | `style="display:flex;align-items:center;gap:10px;margin-bottom:20px"` | `.auth-status-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-5); }` |
 | `wizard.html` | Various | `style="margin-top:var(--space-6);display:flex;flex-direction:column;align-items:center;gap:var(--space-2)"` | `.wizard-actions { margin-top: var(--space-6); display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }` |
 | `wizard.html` | Various | `style="margin-top:8px"` | `.hint { margin-top: var(--space-2); }` (update existing rule) |
 | `wizard.html` | Various | `style="margin-top:20px"` | `.cancel-link { margin-top: var(--space-5); }` |
@@ -303,7 +306,7 @@ This phase does not introduce new panels or features. Copywriting contract cover
 | Error state (generic) | Handled by `formatError()` in `ui.js` with pattern matching. Existing patterns preserved. |
 | Destructive: Remove mount | Confirmation dialog: "Remove this mount? This cannot be undone." (existing, unchanged) |
 | Destructive: Sign out | Confirmation dialog: "Sign out? All mounts will stop." (existing, unchanged) |
-| Destructive: Clear cache | Button label "Clear" with `showStatus('Cache cleared', 'success')` feedback (existing, unchanged) |
+| Destructive: Clear cache | Button label "Clear Cache" with `showStatus('Cache cleared', 'success')` feedback. Label updated from bare "Clear" to include noun for clarity. |
 | Destructive: Remove pin | No confirmation dialog (existing behavior -- lightweight action). Feedback: "Unpinned {name}" via `showStatus()` (existing). |
 
 ### UI-02 Action Feedback Audit
@@ -353,7 +356,7 @@ The wizard (`wizard.html`, `wizard.js`) receives **proportional visual updates**
 
 | Property | Current | New |
 |----------|---------|-----|
-| Font size | `12px` | `12px` (unchanged) |
+| Font size | `12px` | `11px` (folded into small/meta tier) |
 | Padding | `var(--space-2) var(--space-4)` | `var(--space-2) var(--space-4)` (unchanged) |
 | Success background | `var(--success)` | `var(--success)` (new value `#34d399`) |
 | Error background | `var(--danger)` | `var(--danger)` (new value `#f87171`) |
