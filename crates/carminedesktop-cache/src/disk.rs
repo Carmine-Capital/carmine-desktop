@@ -24,12 +24,13 @@ impl DiskCache {
         let conn = Connection::open(db_path).map_err(|e| {
             carminedesktop_core::Error::Cache(format!("failed to open cache tracker db: {e}"))
         })?;
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout = 5000;",
-        )
-        .map_err(|e| {
-            carminedesktop_core::Error::Cache(format!("failed to set tracker pragmas: {e}"))
+        conn.pragma_update(None, "busy_timeout", 5000).map_err(|e| {
+            carminedesktop_core::Error::Cache(format!("failed to set busy_timeout: {e}"))
         })?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+            .map_err(|e| {
+                carminedesktop_core::Error::Cache(format!("failed to set tracker pragmas: {e}"))
+            })?;
 
         // Migrate: if cache_entries was created with incompatible schema (cache_path NOT NULL),
         // drop and recreate. Tracker data is unreliable from those installs anyway.

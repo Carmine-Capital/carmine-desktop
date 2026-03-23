@@ -14,10 +14,10 @@ impl SqliteStore {
             carminedesktop_core::Error::Cache(format!("failed to open SQLite: {e}"))
         })?;
 
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout = 5000;",
-        )
-        .map_err(|e| carminedesktop_core::Error::Cache(format!("failed to set pragmas: {e}")))?;
+        conn.pragma_update(None, "busy_timeout", 5000)
+            .map_err(|e| carminedesktop_core::Error::Cache(format!("failed to set busy_timeout: {e}")))?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+            .map_err(|e| carminedesktop_core::Error::Cache(format!("failed to set pragmas: {e}")))?;
 
         let store = Self {
             conn: Mutex::new(conn),
