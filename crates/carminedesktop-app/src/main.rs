@@ -388,7 +388,13 @@ fn preflight_checks() -> Result<(), String> {
                     if let Some(idx) = line.find("REG_SZ") {
                         let install_dir = line[idx + "REG_SZ".len()..].trim();
                         let bin_dir = std::path::Path::new(install_dir).join("bin");
-                        if bin_dir.join("winfsp-x64.dll").exists() {
+                        #[cfg(target_arch = "x86_64")]
+                        const WINFSP_DLL: &str = "winfsp-x64.dll";
+                        #[cfg(target_arch = "aarch64")]
+                        const WINFSP_DLL: &str = "winfsp-a64.dll";
+                        #[cfg(target_arch = "x86")]
+                        const WINFSP_DLL: &str = "winfsp-x86.dll";
+                        if bin_dir.join(WINFSP_DLL).exists() {
                             return Some(bin_dir.to_string_lossy().into_owned());
                         }
                     }

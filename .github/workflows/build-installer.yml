@@ -21,7 +21,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   # Pinned WinFsp version for bundling — update alongside winfsp crate dependency
-  WINFSP_MSI_VERSION: "2.0.23075"
+  WINFSP_MSI_VERSION: "2.1.25156"
 
 jobs:
   build:

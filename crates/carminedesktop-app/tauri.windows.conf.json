@@ -1,7 +1,11 @@
 {
   "bundle": {
-    "resources": [
-      "resources/winfsp.msi"
-    ]
+    "resources": {
+      "icons/files/doc.ico": "icons/doc.ico",
+      "icons/files/xls.ico": "icons/xls.ico",
+      "icons/files/ppt.ico": "icons/ppt.ico",
+      "icons/files/pdf.ico": "icons/pdf.ico",
+      "resources/winfsp.msi": "resources/winfsp.msi"
+    }
   }
 }
