@@ -574,7 +574,7 @@ dependencies = [
 
 [[package]]
 name = "carminedesktop-app"
-version = "0.1.0-rc.23"
+version = "0.1.0-rc.24"
 dependencies = [
  "anyhow",
  "bytes",
@@ -614,7 +614,7 @@ dependencies = [
 
 [[package]]
 name = "carminedesktop-auth"
-version = "0.1.0-rc.23"
+version = "0.1.0-rc.24"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -643,7 +643,7 @@ dependencies = [
 
 [[package]]
 name = "carminedesktop-cache"
-version = "0.1.0-rc.23"
+version = "0.1.0-rc.24"
 dependencies = [
  "anyhow",
  "bytes",
@@ -663,7 +663,7 @@ dependencies = [
 
 [[package]]
 name = "carminedesktop-core"
-version = "0.1.0-rc.23"
+version = "0.1.0-rc.24"
 dependencies = [
  "anyhow",
  "chrono",
@@ -679,7 +679,7 @@ dependencies = [
 
 [[package]]
 name = "carminedesktop-graph"
-version = "0.1.0-rc.23"
+version = "0.1.0-rc.24"
 dependencies = [
  "anyhow",
  "bytes",
@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "carminedesktop-vfs"
-version = "0.1.0-rc.23"
+version = "0.1.0-rc.24"
 dependencies = [
  "anyhow",
  "bytes",
