@@ -2481,7 +2481,7 @@ mod tests {
     #[test]
     fn test_client_id_constant() {
         // CLIENT_ID is the official Carmine Desktop Azure AD app registration
-        assert_eq!(CLIENT_ID, "8ebe3ef7-f509-4146-8fef-c9b5d7c22252");
+        assert_eq!(CLIENT_ID, "70053421-2c1b-44fe-80f8-d258d0a81133");
     }
 
     #[test]
