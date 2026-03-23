@@ -115,7 +115,7 @@ type SyncSnapshotRow = (
 );
 
 #[allow(dead_code)] // Used conditionally across platform×feature combos; referenced by tests on all platforms
-const CLIENT_ID: &str = "8ebe3ef7-f509-4146-8fef-c9b5d7c22252";
+const CLIENT_ID: &str = "70053421-2c1b-44fe-80f8-d258d0a81133";
 
 /// Annotated default configuration printed by `--print-default-config`.
 const DEFAULT_CONFIG_TOML: &str = "\
