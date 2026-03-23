@@ -200,6 +200,8 @@ fn machine_id() -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn machine_id() -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     std::process::Command::new("reg")
         .args([
             "query",
@@ -207,6 +209,7 @@ fn machine_id() -> Option<String> {
             "/v",
             "MachineGuid",
         ])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()
         .and_then(|out| {

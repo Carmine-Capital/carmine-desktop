@@ -371,8 +371,11 @@ fn preflight_checks() -> Result<(), String> {
             // is used on 64-bit Windows. Check both.
             let reg_keys = [r"HKLM\SOFTWARE\WinFsp", r"HKLM\SOFTWARE\WOW6432Node\WinFsp"];
             for key in reg_keys {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
                 let Ok(output) = std::process::Command::new("reg")
                     .args(["query", key, "/v", "InstallDir"])
+                    .creation_flags(CREATE_NO_WINDOW)
                     .output()
                 else {
                     continue;

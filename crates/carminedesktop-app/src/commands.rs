@@ -1411,12 +1411,16 @@ fn no_handler_error(app: &tauri::AppHandle, ext: &str) -> String {
 #[cfg(target_os = "windows")]
 fn spawn_from_cmd_template(template: &str, path: &str) -> std::io::Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let cmd = template.replace("%1", path);
     if let Some(stripped) = cmd.strip_prefix('"') {
         if let Some(end_quote) = stripped.find('"') {
             let exe = &stripped[..end_quote];
             let args = stripped[end_quote + 1..].trim();
-            std::process::Command::new(exe).raw_arg(args).spawn()
+            std::process::Command::new(exe)
+                .raw_arg(args)
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
         } else {
             Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -1427,7 +1431,10 @@ fn spawn_from_cmd_template(template: &str, path: &str) -> std::io::Result<std::p
         let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
         let exe = parts[0];
         let args = parts.get(1).unwrap_or(&"");
-        std::process::Command::new(exe).raw_arg(args).spawn()
+        std::process::Command::new(exe)
+            .raw_arg(args)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
     }
 }
 
