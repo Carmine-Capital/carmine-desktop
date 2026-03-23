@@ -1242,7 +1242,7 @@ pub fn prompt_set_default_handler() -> Result<(), String> {
 #[cfg(target_os = "windows")]
 fn launch_default_apps_ui() -> carminedesktop_core::Result<()> {
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
     };
     use windows::Win32::UI::Shell::{
         ApplicationAssociationRegistrationUI, IApplicationAssociationRegistrationUI,
@@ -1257,9 +1257,7 @@ fn launch_default_apps_ui() -> carminedesktop_core::Result<()> {
             CLSCTX_INPROC_SERVER,
         )
         .map_err(|e| {
-            carminedesktop_core::Error::Config(format!(
-                "failed to create association UI: {e}"
-            ))
+            carminedesktop_core::Error::Config(format!("failed to create association UI: {e}"))
         })?;
         ui.LaunchAdvancedAssociationUI(&HSTRING::from("CarmineDesktop"))
             .map_err(|e| {
@@ -1546,8 +1544,25 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
     };
 
     if is_carminedesktop_path {
-        // Path is on a Carmine Desktop drive — delegate to open_online
-        tracing::info!("open_file: path is on Carmine Desktop, delegating to open_online");
+        // Check if file content is cached locally — open with OS handler if so.
+        // This ensures offline-pinned files open in the registered application
+        // (Excel, Word, etc.) instead of the browser.
+        if let Ok((drive_id, item)) = resolve_item_for_path(&state, &path).await
+            && item.file.is_some()
+        {
+            let has_local = {
+                let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+                caches
+                    .get(&drive_id)
+                    .map(|(cache, _, _, _, _, _)| cache.disk.has(&drive_id, &item.id))
+                    .unwrap_or(false)
+            };
+            if has_local {
+                tracing::info!("open_file: file cached on disk, opening with OS handler");
+                return open_with_os_default(&path);
+            }
+        }
+        tracing::info!("open_file: no local cache, delegating to open_online");
         open_online(app, path).await
     } else {
         // Path is NOT on a Carmine Desktop drive — use the previous handler to avoid infinite loop

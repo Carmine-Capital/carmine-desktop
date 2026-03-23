@@ -24,9 +24,10 @@ impl DiskCache {
         let conn = Connection::open(db_path).map_err(|e| {
             carminedesktop_core::Error::Cache(format!("failed to open cache tracker db: {e}"))
         })?;
-        conn.pragma_update(None, "busy_timeout", 5000).map_err(|e| {
-            carminedesktop_core::Error::Cache(format!("failed to set busy_timeout: {e}"))
-        })?;
+        conn.pragma_update(None, "busy_timeout", 5000)
+            .map_err(|e| {
+                carminedesktop_core::Error::Cache(format!("failed to set busy_timeout: {e}"))
+            })?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
             .map_err(|e| {
                 carminedesktop_core::Error::Cache(format!("failed to set tracker pragmas: {e}"))
@@ -76,6 +77,11 @@ impl DiskCache {
         self.base_dir
             .join(drive_id)
             .join(item_id.replace(':', "%3A"))
+    }
+
+    /// Check whether a cached file exists on disk without reading its content.
+    pub fn has(&self, drive_id: &str, item_id: &str) -> bool {
+        self.content_path(drive_id, item_id).exists()
     }
 
     pub async fn get(&self, drive_id: &str, item_id: &str) -> Option<Vec<u8>> {

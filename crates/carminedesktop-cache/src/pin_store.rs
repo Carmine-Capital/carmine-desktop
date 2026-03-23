@@ -30,9 +30,12 @@ impl PinStore {
         let conn = Connection::open(db_path).map_err(|e| {
             carminedesktop_core::Error::Cache(format!("pin store: failed to open db: {e}"))
         })?;
-        conn.pragma_update(None, "busy_timeout", 5000).map_err(|e| {
-            carminedesktop_core::Error::Cache(format!("pin store: failed to set busy_timeout: {e}"))
-        })?;
+        conn.pragma_update(None, "busy_timeout", 5000)
+            .map_err(|e| {
+                carminedesktop_core::Error::Cache(format!(
+                    "pin store: failed to set busy_timeout: {e}"
+                ))
+            })?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
             .map_err(|e| {
                 carminedesktop_core::Error::Cache(format!("pin store: failed to set pragmas: {e}"))

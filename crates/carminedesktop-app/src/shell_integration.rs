@@ -223,7 +223,9 @@ pub fn unregister_file_associations() -> carminedesktop_core::Result<()> {
                 && current_progid != &progid
             {
                 // We're not the handler, skip restoring default
-                tracing::debug!("skipping {ext} default restore: not currently handled by Carmine Desktop");
+                tracing::debug!(
+                    "skipping {ext} default restore: not currently handled by Carmine Desktop"
+                );
             } else {
                 // Restore the previous handler
                 if let Ok(prev) = ext_key.get_value::<String, _>(PREVIOUS_HANDLER_VALUE) {
@@ -259,8 +261,7 @@ pub fn unregister_file_associations() -> carminedesktop_core::Result<()> {
     // Also remove the parent CarmineDesktop key if empty
     let _ = hkcu.delete_subkey(r"Software\CarmineDesktop");
 
-    if let Ok(ra_key) = hkcu.open_subkey_with_flags(r"Software\RegisteredApplications", KEY_WRITE)
-    {
+    if let Ok(ra_key) = hkcu.open_subkey_with_flags(r"Software\RegisteredApplications", KEY_WRITE) {
         let _ = ra_key.delete_value("CarmineDesktop");
     }
 

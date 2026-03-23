@@ -828,12 +828,10 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
                 // set programmatically, so we open the system Default Apps panel.
                 #[cfg(target_os = "windows")]
                 if first_run {
-                    let already_default =
-                        shell_integration::OFFICE_EXTENSIONS.iter().any(|ext| {
-                            shell_integration::get_user_choice_progid(ext).is_some_and(
-                                |p| p.starts_with(shell_integration::PROGID_PREFIX),
-                            )
-                        });
+                    let already_default = shell_integration::OFFICE_EXTENSIONS.iter().any(|ext| {
+                        shell_integration::get_user_choice_progid(ext)
+                            .is_some_and(|p| p.starts_with(shell_integration::PROGID_PREFIX))
+                    });
                     if !already_default {
                         notify::send(
                             app,
