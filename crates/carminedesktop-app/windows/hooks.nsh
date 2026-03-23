@@ -31,4 +31,93 @@
 
   ; Restore 64-bit view for Tauri's remaining NSIS steps
   SetRegView 64
+
+  ; ---------------------------------------------------------------------------
+  ; Register Carmine Desktop in the Windows file association system.
+  ;
+  ; This uses the modern Windows 10/11 model: RegisteredApplications +
+  ; Capabilities + OpenWithProgids.  The runtime code in setup_after_launch()
+  ; refreshes these on every launch, but writing them at install time ensures
+  ; Explorer knows about Carmine Desktop immediately (no reboot needed).
+  ; ---------------------------------------------------------------------------
+
+  DetailPrint "Registering file associations..."
+
+  ; Application capabilities
+  WriteRegStr HKCU "Software\CarmineDesktop\Capabilities" "ApplicationDescription" "Mounts SharePoint and OneDrive as local drives"
+  WriteRegStr HKCU "Software\CarmineDesktop\Capabilities" "ApplicationName" "Carmine Desktop"
+  WriteRegStr HKCU "Software\CarmineDesktop\Capabilities\FileAssociations" ".docx" "CarmineDesktop.OfficeFile.docx"
+  WriteRegStr HKCU "Software\CarmineDesktop\Capabilities\FileAssociations" ".xlsx" "CarmineDesktop.OfficeFile.xlsx"
+  WriteRegStr HKCU "Software\CarmineDesktop\Capabilities\FileAssociations" ".pptx" "CarmineDesktop.OfficeFile.pptx"
+  WriteRegStr HKCU "Software\CarmineDesktop\Capabilities\FileAssociations" ".doc" "CarmineDesktop.OfficeFile.doc"
+  WriteRegStr HKCU "Software\CarmineDesktop\Capabilities\FileAssociations" ".xls" "CarmineDesktop.OfficeFile.xls"
+  WriteRegStr HKCU "Software\CarmineDesktop\Capabilities\FileAssociations" ".ppt" "CarmineDesktop.OfficeFile.ppt"
+  WriteRegStr HKCU "Software\RegisteredApplications" "CarmineDesktop" "Software\CarmineDesktop\Capabilities"
+
+  ; ProgID entries with shell\open\command
+  WriteRegStr HKCU "Software\Classes\CarmineDesktop.OfficeFile.docx" "" "Word Document (Carmine Desktop)"
+  WriteRegStr HKCU "Software\Classes\CarmineDesktop.OfficeFile.docx\shell\open\command" "" '"$INSTDIR\Carmine Desktop.exe" --open "%1"'
+  WriteRegStr HKCU "Software\Classes\CarmineDesktop.OfficeFile.xlsx" "" "Excel Spreadsheet (Carmine Desktop)"
+  WriteRegStr HKCU "Software\Classes\CarmineDesktop.OfficeFile.xlsx\shell\open\command" "" '"$INSTDIR\Carmine Desktop.exe" --open "%1"'
+  WriteRegStr HKCU "Software\Classes\CarmineDesktop.OfficeFile.pptx" "" "PowerPoint Presentation (Carmine Desktop)"
+  WriteRegStr HKCU "Software\Classes\CarmineDesktop.OfficeFile.pptx\shell\open\command" "" '"$INSTDIR\Carmine Desktop.exe" --open "%1"'
+  WriteRegStr HKCU "Software\Classes\CarmineDesktop.OfficeFile.doc" "" "Word Document (Carmine Desktop)"
+  WriteRegStr HKCU "Software\Classes\CarmineDesktop.OfficeFile.doc\shell\open\command" "" '"$INSTDIR\Carmine Desktop.exe" --open "%1"'
+  WriteRegStr HKCU "Software\Classes\CarmineDesktop.OfficeFile.xls" "" "Excel Spreadsheet (Carmine Desktop)"
+  WriteRegStr HKCU "Software\Classes\CarmineDesktop.OfficeFile.xls\shell\open\command" "" '"$INSTDIR\Carmine Desktop.exe" --open "%1"'
+  WriteRegStr HKCU "Software\Classes\CarmineDesktop.OfficeFile.ppt" "" "PowerPoint Presentation (Carmine Desktop)"
+  WriteRegStr HKCU "Software\Classes\CarmineDesktop.OfficeFile.ppt\shell\open\command" "" '"$INSTDIR\Carmine Desktop.exe" --open "%1"'
+
+  ; OpenWithProgids entries (makes us appear in "Open with" dialog)
+  WriteRegStr HKCU "Software\Classes\.docx\OpenWithProgids" "CarmineDesktop.OfficeFile.docx" ""
+  WriteRegStr HKCU "Software\Classes\.xlsx\OpenWithProgids" "CarmineDesktop.OfficeFile.xlsx" ""
+  WriteRegStr HKCU "Software\Classes\.pptx\OpenWithProgids" "CarmineDesktop.OfficeFile.pptx" ""
+  WriteRegStr HKCU "Software\Classes\.doc\OpenWithProgids" "CarmineDesktop.OfficeFile.doc" ""
+  WriteRegStr HKCU "Software\Classes\.xls\OpenWithProgids" "CarmineDesktop.OfficeFile.xls" ""
+  WriteRegStr HKCU "Software\Classes\.ppt\OpenWithProgids" "CarmineDesktop.OfficeFile.ppt" ""
+
+  ; Notify Explorer that file associations changed
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0x0000, p 0, p 0)'
+
+  DetailPrint "File associations registered."
+!macroend
+
+!macro NSIS_HOOK_PREUNINSTALL
+  ; ---------------------------------------------------------------------------
+  ; Clean up file association registry keys written by POSTINSTALL and runtime.
+  ; ---------------------------------------------------------------------------
+
+  ; Remove RegisteredApplications entry
+  DeleteRegValue HKCU "Software\RegisteredApplications" "CarmineDesktop"
+
+  ; Remove Capabilities tree
+  DeleteRegKey HKCU "Software\CarmineDesktop\Capabilities"
+  DeleteRegKey HKCU "Software\CarmineDesktop"
+
+  ; Remove ProgID entries
+  DeleteRegKey HKCU "Software\Classes\CarmineDesktop.OfficeFile.docx"
+  DeleteRegKey HKCU "Software\Classes\CarmineDesktop.OfficeFile.xlsx"
+  DeleteRegKey HKCU "Software\Classes\CarmineDesktop.OfficeFile.pptx"
+  DeleteRegKey HKCU "Software\Classes\CarmineDesktop.OfficeFile.doc"
+  DeleteRegKey HKCU "Software\Classes\CarmineDesktop.OfficeFile.xls"
+  DeleteRegKey HKCU "Software\Classes\CarmineDesktop.OfficeFile.ppt"
+
+  ; Remove OpenWithProgids values (delete value, not the key itself)
+  DeleteRegValue HKCU "Software\Classes\.docx\OpenWithProgids" "CarmineDesktop.OfficeFile.docx"
+  DeleteRegValue HKCU "Software\Classes\.xlsx\OpenWithProgids" "CarmineDesktop.OfficeFile.xlsx"
+  DeleteRegValue HKCU "Software\Classes\.pptx\OpenWithProgids" "CarmineDesktop.OfficeFile.pptx"
+  DeleteRegValue HKCU "Software\Classes\.doc\OpenWithProgids" "CarmineDesktop.OfficeFile.doc"
+  DeleteRegValue HKCU "Software\Classes\.xls\OpenWithProgids" "CarmineDesktop.OfficeFile.xls"
+  DeleteRegValue HKCU "Software\Classes\.ppt\OpenWithProgids" "CarmineDesktop.OfficeFile.ppt"
+
+  ; Remove saved previous handler values
+  DeleteRegValue HKCU "Software\Classes\.docx" "CarmineDesktop.PreviousHandler"
+  DeleteRegValue HKCU "Software\Classes\.xlsx" "CarmineDesktop.PreviousHandler"
+  DeleteRegValue HKCU "Software\Classes\.pptx" "CarmineDesktop.PreviousHandler"
+  DeleteRegValue HKCU "Software\Classes\.doc" "CarmineDesktop.PreviousHandler"
+  DeleteRegValue HKCU "Software\Classes\.xls" "CarmineDesktop.PreviousHandler"
+  DeleteRegValue HKCU "Software\Classes\.ppt" "CarmineDesktop.PreviousHandler"
+
+  ; Notify Explorer
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0x0000, p 0, p 0)'
 !macroend

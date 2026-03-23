@@ -675,6 +675,7 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::redetect_file_handlers,
             commands::save_file_handler_override,
             commands::clear_file_handler_override,
+            commands::prompt_set_default_handler,
             commands::list_offline_pins,
             commands::remove_offline_pin,
             commands::get_dashboard_status,
@@ -819,6 +820,27 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
             if register_file_assoc {
                 if let Err(e) = shell_integration::register_file_associations() {
                     tracing::warn!("file association registration failed: {e}");
+                }
+
+                // On first run, prompt the user to set Carmine Desktop as the
+                // default handler for Office files via Windows Settings.
+                // UserChoice is hash-protected on Windows 10/11 and cannot be
+                // set programmatically, so we open the system Default Apps panel.
+                #[cfg(target_os = "windows")]
+                if first_run {
+                    let already_default =
+                        shell_integration::OFFICE_EXTENSIONS.iter().any(|ext| {
+                            shell_integration::get_user_choice_progid(ext).is_some_and(
+                                |p| p.starts_with(shell_integration::PROGID_PREFIX),
+                            )
+                        });
+                    if !already_default {
+                        notify::send(
+                            app,
+                            "Set file associations",
+                            "Open Settings to set Carmine Desktop as default for Office files.",
+                        );
+                    }
                 }
             } else if shell_integration::are_file_associations_registered()
                 && let Err(e) = shell_integration::unregister_file_associations()

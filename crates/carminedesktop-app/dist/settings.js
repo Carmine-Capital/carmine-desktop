@@ -113,6 +113,10 @@ function renderSettings() {
     navPaneField.style.display = '';
     document.getElementById('explorer-nav-pane').checked = s.explorer_nav_pane;
   }
+  const setDefaultBtn = document.getElementById('btn-set-default');
+  if (setDefaultBtn && s.platform === 'windows') {
+    setDefaultBtn.style.display = '';
+  }
   const offlineTtl = document.getElementById('offline-ttl');
   if (offlineTtl) offlineTtl.value = String(s.offline_ttl_secs);
   const offlineMaxSize = document.getElementById('offline-max-size');
@@ -922,6 +926,14 @@ async function init() {
   document.getElementById('btn-add-mount').addEventListener('click', addMount);
   document.getElementById('btn-clear-cache').addEventListener('click', clearCache);
   document.getElementById('btn-redetect').addEventListener('click', redetectHandlers);
+  document.getElementById('btn-set-default').addEventListener('click', async () => {
+    try {
+      await invoke('prompt_set_default_handler');
+      showStatus('Default Apps settings opened', 'success');
+    } catch (e) {
+      showStatus(formatError(e), 'error');
+    }
+  });
 
   // Delegation for dynamically rendered mount and handler rows
   document.querySelector('.main-content').addEventListener('click', async (e) => {

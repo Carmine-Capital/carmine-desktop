@@ -53,7 +53,11 @@ const PREVIOUS_HANDLER_VALUE: &str = "CarmineDesktop.PreviousHandler";
 
 /// ProgID prefix for our file type handlers.
 #[cfg(target_os = "windows")]
-const PROGID_PREFIX: &str = "CarmineDesktop.OfficeFile";
+pub(crate) const PROGID_PREFIX: &str = "CarmineDesktop.OfficeFile";
+
+/// Registry path for the Carmine Desktop capabilities key.
+#[cfg(target_os = "windows")]
+const CAPABILITIES_PATH: &str = r"Software\CarmineDesktop\Capabilities";
 
 /// Registry verb ID for the "Make available offline" context menu entry.
 #[cfg(target_os = "windows")]
@@ -149,8 +153,37 @@ pub fn register_file_associations() -> carminedesktop_core::Result<()> {
         let command = format!("\"{exe_str}\" --open \"%1\"");
         command_key.set_value("", &command)?;
 
+        // Add to OpenWithProgids so Carmine Desktop appears in the "Open with" dialog
+        // on Windows 10/11. The value name is the ProgID; the data is empty (REG_NONE).
+        let (owp_key, _) = ext_key.create_subkey("OpenWithProgids")?;
+        owp_key.set_raw_value(
+            &progid,
+            &RegValue {
+                bytes: vec![],
+                vtype: RegType::REG_NONE,
+            },
+        )?;
+
         tracing::info!("registered file association for {ext}");
     }
+
+    // Register application capabilities (Windows 10/11 modern file association model).
+    // This makes Carmine Desktop visible in Settings > Default Apps and "Open with" dialogs.
+    let (cap_key, _) = hkcu.create_subkey(CAPABILITIES_PATH)?;
+    cap_key.set_value(
+        "ApplicationDescription",
+        &"Mounts SharePoint and OneDrive as local drives",
+    )?;
+    cap_key.set_value("ApplicationName", &"Carmine Desktop")?;
+
+    let (fa_key, _) = cap_key.create_subkey("FileAssociations")?;
+    for ext in OFFICE_EXTENSIONS {
+        fa_key.set_value(ext, &format!("{PROGID_PREFIX}{ext}"))?;
+    }
+
+    // Point RegisteredApplications to our capabilities key.
+    let (ra_key, _) = hkcu.create_subkey(r"Software\RegisteredApplications")?;
+    ra_key.set_value("CarmineDesktop", &CAPABILITIES_PATH)?;
 
     // Notify the shell that file associations have changed
     notify_shell_change();
@@ -189,22 +222,26 @@ pub fn unregister_file_associations() -> carminedesktop_core::Result<()> {
             if let Ok(ref current_progid) = current
                 && current_progid != &progid
             {
-                // We're not the handler, skip
-                tracing::debug!("skipping {ext}: not currently handled by Carmine Desktop");
-                continue;
-            }
-
-            // Restore the previous handler
-            if let Ok(prev) = ext_key.get_value::<String, _>(PREVIOUS_HANDLER_VALUE) {
-                ext_key.set_value("", &prev)?;
-                tracing::debug!("restored previous handler for {ext}: {prev}");
+                // We're not the handler, skip restoring default
+                tracing::debug!("skipping {ext} default restore: not currently handled by Carmine Desktop");
             } else {
-                // No previous handler — remove the default value
-                let _ = ext_key.delete_value("");
+                // Restore the previous handler
+                if let Ok(prev) = ext_key.get_value::<String, _>(PREVIOUS_HANDLER_VALUE) {
+                    ext_key.set_value("", &prev)?;
+                    tracing::debug!("restored previous handler for {ext}: {prev}");
+                } else {
+                    // No previous handler — remove the default value
+                    let _ = ext_key.delete_value("");
+                }
+
+                // Remove the saved previous handler value
+                let _ = ext_key.delete_value(PREVIOUS_HANDLER_VALUE);
             }
 
-            // Remove the saved previous handler value
-            let _ = ext_key.delete_value(PREVIOUS_HANDLER_VALUE);
+            // Remove from OpenWithProgids
+            if let Ok(owp_key) = ext_key.open_subkey_with_flags("OpenWithProgids", KEY_WRITE) {
+                let _ = owp_key.delete_value(&progid);
+            }
         }
 
         // Delete our ProgID key tree
@@ -213,6 +250,18 @@ pub fn unregister_file_associations() -> carminedesktop_core::Result<()> {
         }
 
         tracing::info!("unregistered file association for {ext}");
+    }
+
+    // Remove Capabilities and RegisteredApplications entries
+    if let Err(e) = hkcu.delete_subkey_all(CAPABILITIES_PATH) {
+        tracing::debug!("failed to delete Capabilities key: {e}");
+    }
+    // Also remove the parent CarmineDesktop key if empty
+    let _ = hkcu.delete_subkey(r"Software\CarmineDesktop");
+
+    if let Ok(ra_key) = hkcu.open_subkey_with_flags(r"Software\RegisteredApplications", KEY_WRITE)
+    {
+        let _ = ra_key.delete_value("CarmineDesktop");
     }
 
     // Notify the shell that file associations have changed
@@ -297,7 +346,7 @@ fn get_progid_command_from_root(root: winreg::HKEY, command_path: &str) -> Optio
 /// under the `ProgId` value. This is where "always open with" selections go,
 /// and it takes precedence over `HKCU\Software\Classes\{ext}` in Windows Explorer.
 #[cfg(target_os = "windows")]
-fn get_user_choice_progid(ext: &str) -> Option<String> {
+pub(crate) fn get_user_choice_progid(ext: &str) -> Option<String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let path =
         format!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext}\UserChoice");
@@ -313,10 +362,24 @@ fn get_user_choice_progid(ext: &str) -> Option<String> {
 
 /// Check if Carmine Desktop file associations are currently registered.
 ///
-/// Returns `true` if at least one Office extension has Carmine Desktop as its handler.
+/// Returns `true` if at least one Office extension has Carmine Desktop in its
+/// `OpenWithProgids` or as its default handler, AND the `RegisteredApplications`
+/// entry exists. This covers both the legacy and modern Windows 10/11 models.
 #[cfg(target_os = "windows")]
 pub fn are_file_associations_registered() -> bool {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+
+    // Check modern registration: RegisteredApplications entry
+    if hkcu
+        .open_subkey_with_flags(r"Software\RegisteredApplications", KEY_READ)
+        .ok()
+        .and_then(|ra| ra.get_value::<String, _>("CarmineDesktop").ok())
+        .is_some()
+    {
+        return true;
+    }
+
+    // Fallback: check legacy per-extension default
     let Ok(classes) = hkcu.open_subkey_with_flags(r"Software\Classes", KEY_READ) else {
         return false;
     };

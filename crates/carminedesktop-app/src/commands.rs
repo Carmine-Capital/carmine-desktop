@@ -1221,6 +1221,56 @@ fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {
 // Open in SharePoint
 // ---------------------------------------------------------------------------
 
+/// Open the Windows "Default Apps" settings panel for Carmine Desktop.
+///
+/// Uses the `IApplicationAssociationRegistrationUI` COM interface to show a
+/// system dialog where the user can set Carmine Desktop as the default handler
+/// for Office file types.  Falls back to opening `ms-settings:defaultapps` if
+/// the COM call fails.
+#[tauri::command]
+pub fn prompt_set_default_handler() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        launch_default_apps_ui().map_err(|e| format!("{e}"))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("not supported on this platform".to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn launch_default_apps_ui() -> carminedesktop_core::Result<()> {
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::{
+        ApplicationAssociationRegistrationUI, IApplicationAssociationRegistrationUI,
+    };
+    use windows::core::HSTRING;
+
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let ui: IApplicationAssociationRegistrationUI = CoCreateInstance(
+            &ApplicationAssociationRegistrationUI,
+            None,
+            CLSCTX_INPROC_SERVER,
+        )
+        .map_err(|e| {
+            carminedesktop_core::Error::Config(format!(
+                "failed to create association UI: {e}"
+            ))
+        })?;
+        ui.LaunchAdvancedAssociationUI(&HSTRING::from("CarmineDesktop"))
+            .map_err(|e| {
+                carminedesktop_core::Error::Config(format!(
+                    "failed to open Default Apps panel: {e}"
+                ))
+            })?;
+    }
+    Ok(())
+}
+
 /// Open a mounted file in SharePoint / Office Online.
 ///
 /// Resolves the local path to its SharePoint `webUrl`, applies Office URI scheme
