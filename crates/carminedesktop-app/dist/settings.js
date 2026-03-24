@@ -890,6 +890,7 @@ async function init() {
     recentErrors.reverse();
     setState({ settings, mounts, handlers, offlinePins, dashboardStatus, recentErrors, recentActivity, cacheStats });
     document.title = settings.app_name + ' Settings';
+    document.getElementById('app-version').textContent = settings.app_version;
   } catch (e) {
     showStatus(formatError(e), 'error');
   }

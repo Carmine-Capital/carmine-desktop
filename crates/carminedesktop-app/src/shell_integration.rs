@@ -570,13 +570,15 @@ pub fn register_nav_pane(cloud_root: &std::path::Path) -> carminedesktop_core::R
     let (shell_folder_key, _) = clsid_key.create_subkey("ShellFolder")?;
     shell_folder_key.set_value("FolderValueFlags", &0x28u32)?;
     // SFGAO_HASSUBFOLDER | SFGAO_FILESYSTEM | SFGAO_FOLDER |
-    // SFGAO_FILESYSANCESTOR | SFGAO_STORAGEANCESTOR | SFGAO_ISSLOW |
+    // SFGAO_FILESYSANCESTOR | SFGAO_STORAGEANCESTOR |
     // SFGAO_HASPROPSHEET | SFGAO_STORAGE | SFGAO_CANLINK | SFGAO_CANCOPY
     // SFGAO_HASSUBFOLDER (0x80000000) enables tree expansion in the nav pane.
-    // SFGAO_ISSLOW (0x00004000) signals slow storage so Explorer avoids
-    // aggressive prefetching. Root children are pre-fetched at mount time
-    // (see winfsp_fs.rs and mount.rs) to prevent blocking on first enumeration.
-    shell_folder_key.set_value("Attributes", &0xF080404Du32)?;
+    // SFGAO_ISSLOW is intentionally NOT set: the root directory is a plain
+    // NTFS folder (not a WinFsp mount) so enumeration is instant. Including
+    // ISSLOW causes Explorer to skip nav-pane child enumeration, hiding the
+    // mounted drives from the tree. Google Drive and Dropbox use the same
+    // value (0xF080004D) for their delegate-folder nav-pane entries.
+    shell_folder_key.set_value("Attributes", &0xF080004Du32)?;
 
     // shell\open\command
     let (shell_key, _) = clsid_key.create_subkey("shell")?;
@@ -745,7 +747,7 @@ pub fn ensure_nav_pane(cloud_root: &std::path::Path) -> carminedesktop_core::Res
         && existing_target == target.as_ref()
         && let Ok(sf) = clsid_key.open_subkey_with_flags("ShellFolder", KEY_READ)
         && let Ok(attrs) = sf.get_value::<u32, _>("Attributes")
-        && attrs == 0xF080404Du32
+        && attrs == 0xF080004Du32
     {
         tracing::debug!("nav pane already registered with correct target and attributes, skipping");
         return Ok(());
@@ -1351,10 +1353,10 @@ mod tests {
         let threading: String = inproc_key.get_value("ThreadingModel")?;
         assert_eq!(threading, "Both");
 
-        // Verify ShellFolder attributes include SFGAO_HASSUBFOLDER and SFGAO_ISSLOW
+        // Verify ShellFolder attributes include SFGAO_HASSUBFOLDER (no SFGAO_ISSLOW)
         let shell_folder = clsid_key.open_subkey_with_flags("ShellFolder", KEY_READ)?;
         let attrs: u32 = shell_folder.get_value("Attributes")?;
-        assert_eq!(attrs, 0xF080404D);
+        assert_eq!(attrs, 0xF080004D);
 
         // Verify HideDesktopIcons value
         let hide_path =

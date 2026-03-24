@@ -30,6 +30,7 @@ pub struct MountInfo {
 #[derive(Serialize)]
 pub struct SettingsInfo {
     pub app_name: String,
+    pub app_version: String,
     pub auto_start: bool,
     pub cache_max_size: String,
     pub sync_interval_secs: u64,
@@ -427,6 +428,7 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsInfo, String> {
         .and_then(|a| a.email.clone().or_else(|| a.display_name.clone()));
     Ok(SettingsInfo {
         app_name: "Carmine Desktop".to_string(),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
         auto_start: config.auto_start,
         cache_max_size: config.cache_max_size.clone(),
         sync_interval_secs: config.sync_interval_secs,
