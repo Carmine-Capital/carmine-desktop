@@ -1422,10 +1422,6 @@ fn lookup_cached_item(
     None
 }
 
-/// Environment variable used as a recursion guard to prevent infinite loops
-/// when Carmine Desktop is invoked as a file handler but cannot find the original handler.
-const OPEN_GUARD_ENV: &str = "CARMINEDESKTOP_OPEN_GUARD";
-
 /// Extract the dotted file extension (e.g. ".docx") from a path.
 fn dotted_extension(path: &str) -> String {
     std::path::Path::new(path)
@@ -1506,6 +1502,121 @@ fn try_open_with_bundle(bundle_id: &str, path: &str) -> std::io::Result<()> {
     }
 }
 
+/// Try to open a file with the locally installed Office handler (Windows).
+///
+/// Checks config override → previous handler → runtime-discovered handler.
+/// Returns `Ok(())` if the file was opened, `Err` if no handler was found.
+/// Used for offline-cached files on Carmine Desktop mounts and for non-mount
+/// paths where Carmine Desktop is the registered default handler.
+#[cfg(target_os = "windows")]
+fn try_local_handler(state: &AppState, path: &str) -> Result<(), String> {
+    let ext = dotted_extension(path);
+
+    let override_handler = {
+        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+        config.file_handler_overrides.get(&ext).cloned()
+    };
+
+    if let Some(ref progid) = override_handler
+        && let Some(cmd_template) = crate::shell_integration::get_progid_command(progid)
+    {
+        tracing::info!("try_local_handler: using config override handler {progid}");
+        match spawn_from_cmd_template(&cmd_template, path) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                tracing::warn!(
+                    "failed to invoke config override handler: {e}, trying other fallbacks"
+                );
+            }
+        }
+    }
+
+    if let Some(progid) = crate::shell_integration::get_previous_handler(&ext)
+        && let Some(cmd_template) = crate::shell_integration::get_progid_command(&progid)
+    {
+        tracing::info!("try_local_handler: invoking previous handler for {ext}");
+        match spawn_from_cmd_template(&cmd_template, path) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                tracing::warn!("failed to invoke previous handler: {e}, trying other fallbacks");
+            }
+        }
+    }
+
+    if crate::shell_integration::is_handled_extension(&ext)
+        && let Some(discovered) = crate::shell_integration::discover_office_handler(&ext)
+        && let Some(cmd_template) = crate::shell_integration::get_progid_command(&discovered)
+    {
+        tracing::info!("try_local_handler: using discovered handler {discovered}");
+        match spawn_from_cmd_template(&cmd_template, path) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                tracing::warn!("failed to invoke discovered handler: {e}");
+            }
+        }
+    }
+
+    Err(format!("no local handler found for {ext}"))
+}
+
+/// Try to open a file with the locally installed Office handler (macOS).
+///
+/// Checks config override → previous handler → runtime-discovered handler.
+/// Returns `Ok(())` if the file was opened, `Err` if no handler was found.
+#[cfg(target_os = "macos")]
+fn try_local_handler(state: &AppState, path: &str) -> Result<(), String> {
+    let ext = dotted_extension(path);
+
+    let override_handler = {
+        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+        config.file_handler_overrides.get(&ext).cloned()
+    };
+
+    if let Some(ref bundle_id) = override_handler {
+        tracing::info!("try_local_handler: using config override handler {bundle_id}");
+        match try_open_with_bundle(bundle_id, path) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                tracing::warn!(
+                    "failed to invoke config override handler: {e}, trying other fallbacks"
+                );
+            }
+        }
+    }
+
+    if let Some(bundle_id) = crate::shell_integration::get_previous_handler(&ext) {
+        tracing::info!("try_local_handler: invoking previous handler {bundle_id}");
+        match try_open_with_bundle(&bundle_id, path) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                tracing::warn!("failed to invoke previous handler: {e}, trying other fallbacks");
+            }
+        }
+    }
+
+    if crate::shell_integration::is_handled_extension(&ext)
+        && let Some(discovered) = crate::shell_integration::discover_office_handler(&ext)
+    {
+        tracing::info!("try_local_handler: using discovered handler {discovered}");
+        match try_open_with_bundle(&discovered, path) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                tracing::warn!("failed to invoke discovered handler: {e}");
+            }
+        }
+    }
+
+    Err(format!("no local handler found for {ext}"))
+}
+
+/// Try to open a file with the OS default handler (Linux).
+///
+/// Linux has no file associations for Carmine Desktop, so `xdg-open` is safe.
+#[cfg(target_os = "linux")]
+fn try_local_handler(_state: &AppState, path: &str) -> Result<(), String> {
+    open_with_os_default(path)
+}
+
 /// Open a file: if on a Carmine Desktop drive, open online; otherwise fall through to OS handler.
 ///
 /// This is the entry point for file associations. When the user double-clicks
@@ -1515,23 +1626,6 @@ fn try_open_with_bundle(bundle_id: &str, path: &str) -> std::io::Result<()> {
 #[tauri::command]
 pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
     tracing::debug!("open_file: invoked with path={path}");
-
-    // Recursion guard — if we've been re-invoked in a fallback chain, bail immediately
-    if std::env::var(OPEN_GUARD_ENV).is_ok() {
-        tracing::debug!(
-            "open_file: recursion guard triggered — Carmine Desktop was re-invoked in fallback chain"
-        );
-        crate::notify::send(
-            &app,
-            "Cannot open file",
-            "Carmine Desktop detected an infinite loop while trying to open the file. \
-             The original application handler could not be found.",
-        );
-        return Err(
-            "recursion guard: Carmine Desktop was re-invoked while trying to open the file"
-                .to_string(),
-        );
-    }
 
     let state = app.state::<AppState>();
 
@@ -1546,152 +1640,53 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
     };
 
     if is_carminedesktop_path {
-        // Check if file content is cached locally — open with OS handler if so.
-        // This ensures offline-pinned files open in the registered application
-        // (Excel, Word, etc.) instead of the browser.
-        if let Ok((drive_id, item)) = resolve_item_for_path(&state, &path).await
+        // Check if the drive is offline and the file is cached locally.
+        // When offline, open with the local Office handler directly.
+        // When online, always delegate to open_online for co-authoring.
+        let (is_offline, has_local) = if let Ok((drive_id, item)) =
+            resolve_item_for_path(&state, &path).await
             && item.file.is_some()
         {
-            let has_local = {
-                let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
-                caches
-                    .get(&drive_id)
-                    .map(|(cache, _, _, _, _, _)| cache.disk.has(&drive_id, &item.id))
-                    .unwrap_or(false)
-            };
-            if has_local {
-                tracing::info!("open_file: file cached on disk, opening with OS handler");
-                return open_with_os_default(&path);
-            }
+            let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+            caches
+                .get(&drive_id)
+                .map(|(cache, _, _, _, offline_flag, _)| {
+                    let offline = offline_flag.load(Ordering::Relaxed);
+                    let cached = cache.disk.has(&drive_id, &item.id);
+                    (offline, cached)
+                })
+                .unwrap_or((false, false))
+        } else {
+            (false, false)
+        };
+
+        if is_offline && has_local {
+            // Drive is offline but file is cached — open with local Office handler
+            // directly (not open_with_os_default, which would loop back to us).
+            tracing::info!("open_file: drive offline, file cached, opening with local handler");
+            return try_local_handler(&state, &path);
+        } else if is_offline {
+            // Offline and file not cached — nothing we can do
+            let msg = "This file is not available offline. Pin the parent folder for offline use.";
+            crate::notify::send(&app, "Cannot open file", msg);
+            return Err(msg.to_string());
         }
-        tracing::info!("open_file: no local cache, delegating to open_online");
+
+        // Online — delegate to open_online (Office URI scheme / browser)
+        tracing::info!("open_file: delegating to open_online");
         open_online(app, path).await
     } else {
-        // Path is NOT on a Carmine Desktop drive — use the previous handler to avoid infinite loop
+        // Path is NOT on a Carmine Desktop drive — use the previous handler to avoid
+        // infinite loop when Carmine Desktop is registered as the default handler.
         tracing::info!("open_file: path is not on Carmine Desktop, falling through to OS handler");
 
-        // On Windows: try the previous handler first to avoid infinite loop when
-        // Carmine Desktop is registered as the default handler for Office files
-        #[cfg(target_os = "windows")]
-        {
-            let ext = dotted_extension(&path);
-
-            // Check config override first
-            let override_handler = {
-                let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-                config.file_handler_overrides.get(&ext).cloned()
-            };
-
-            if let Some(ref progid) = override_handler
-                && let Some(cmd_template) = crate::shell_integration::get_progid_command(progid)
-            {
-                tracing::info!("open_file: using config override handler {progid}");
-                match spawn_from_cmd_template(&cmd_template, &path) {
-                    Ok(_) => return Ok(()),
-                    Err(e) => {
-                        tracing::warn!(
-                            "failed to invoke config override handler: {e}, trying other fallbacks"
-                        );
-                    }
-                }
+        match try_local_handler(&state, &path) {
+            Ok(()) => Ok(()),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            Err(_) if crate::shell_integration::is_handled_extension(&dotted_extension(&path)) => {
+                Err(no_handler_error(&app, &dotted_extension(&path)))
             }
-
-            tracing::debug!("open_file: looking up previous handler for {ext}");
-
-            if let Some(progid) = crate::shell_integration::get_previous_handler(&ext)
-                && let Some(cmd_template) = crate::shell_integration::get_progid_command(&progid)
-            {
-                tracing::info!("open_file: invoking previous handler for {ext}");
-                match spawn_from_cmd_template(&cmd_template, &path) {
-                    Ok(_) => return Ok(()),
-                    Err(e) => {
-                        tracing::warn!(
-                            "failed to invoke previous handler: {e}, trying other fallbacks"
-                        );
-                    }
-                }
-            }
-
-            if crate::shell_integration::is_handled_extension(&ext) {
-                // Try runtime discovery before giving up
-                if let Some(discovered) = crate::shell_integration::discover_office_handler(&ext)
-                    && let Some(cmd_template) =
-                        crate::shell_integration::get_progid_command(&discovered)
-                {
-                    tracing::info!("open_file: using discovered handler {discovered}");
-                    match spawn_from_cmd_template(&cmd_template, &path) {
-                        Ok(_) => return Ok(()),
-                        Err(e) => {
-                            tracing::warn!("failed to invoke discovered handler: {e}");
-                        }
-                    }
-                }
-
-                return Err(no_handler_error(&app, &ext));
-            }
-
-            open_with_os_default(&path)
-        }
-
-        // On Linux: no file associations, just open with OS default handler
-        #[cfg(target_os = "linux")]
-        {
-            open_with_os_default(&path)
-        }
-
-        // On macOS: try the previous handler (resolved via bundle ID → app path)
-        #[cfg(target_os = "macos")]
-        {
-            let ext = dotted_extension(&path);
-
-            // Check config override first
-            let override_handler = {
-                let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-                config.file_handler_overrides.get(&ext).cloned()
-            };
-
-            if let Some(ref bundle_id) = override_handler {
-                tracing::info!("open_file: using config override handler {bundle_id}");
-                match try_open_with_bundle(bundle_id, &path) {
-                    Ok(()) => return Ok(()),
-                    Err(e) => {
-                        tracing::warn!(
-                            "failed to invoke config override handler: {e}, trying other fallbacks"
-                        );
-                    }
-                }
-            }
-
-            tracing::debug!("open_file: looking up previous handler for {ext}");
-
-            if let Some(bundle_id) = crate::shell_integration::get_previous_handler(&ext) {
-                tracing::info!("open_file: invoking previous handler {bundle_id}");
-                match try_open_with_bundle(&bundle_id, &path) {
-                    Ok(()) => return Ok(()),
-                    Err(e) => {
-                        tracing::warn!(
-                            "failed to invoke previous handler: {e}, trying other fallbacks"
-                        );
-                    }
-                }
-            }
-
-            if crate::shell_integration::is_handled_extension(&ext) {
-                // Try runtime discovery before giving up
-                if let Some(discovered) = crate::shell_integration::discover_office_handler(&ext) {
-                    tracing::info!("open_file: using discovered handler {discovered}");
-                    match try_open_with_bundle(&discovered, &path) {
-                        Ok(()) => return Ok(()),
-                        Err(e) => {
-                            tracing::warn!("failed to invoke discovered handler: {e}");
-                        }
-                    }
-                }
-
-                return Err(no_handler_error(&app, &ext));
-            }
-
-            open_with_os_default(&path)
+            Err(_) => open_with_os_default(&path),
         }
     }
 }

@@ -116,6 +116,8 @@ type SyncSnapshotRow = (
 
 #[allow(dead_code)] // Used conditionally across platform×feature combos; referenced by tests on all platforms
 const CLIENT_ID: &str = "70053421-2c1b-44fe-80f8-d258d0a81133";
+#[allow(dead_code)]
+const TENANT_ID: &str = "6a658318-4ef7-4de5-a2a6-d3c1698f272a";
 
 /// Annotated default configuration printed by `--print-default-config`.
 const DEFAULT_CONFIG_TOML: &str = "\
@@ -434,7 +436,10 @@ fn init_components(overrides: &RuntimeOverrides, opener: OpenerFn) -> Components
         .client_id
         .clone()
         .unwrap_or_else(|| CLIENT_ID.to_string());
-    let tenant_id = overrides.tenant_id.clone();
+    let tenant_id = overrides
+        .tenant_id
+        .clone()
+        .or_else(|| Some(TENANT_ID.to_string()));
 
     let auth = Arc::new(AuthManager::new(client_id, tenant_id, opener));
 
@@ -2502,6 +2507,8 @@ mod tests {
     fn test_client_id_constant() {
         // CLIENT_ID is the official Carmine Desktop Azure AD app registration
         assert_eq!(CLIENT_ID, "70053421-2c1b-44fe-80f8-d258d0a81133");
+        // TENANT_ID is the Carmine Capital Azure AD tenant
+        assert_eq!(TENANT_ID, "6a658318-4ef7-4de5-a2a6-d3c1698f272a");
     }
 
     #[test]
@@ -2529,6 +2536,11 @@ mod tests {
             .clone()
             .unwrap_or_else(|| CLIENT_ID.to_string());
         assert_eq!(client_id, CLIENT_ID);
-        assert!(no_overrides.tenant_id.is_none());
+        // tenant_id defaults to TENANT_ID when not overridden
+        let tenant_id = no_overrides
+            .tenant_id
+            .clone()
+            .or_else(|| Some(TENANT_ID.to_string()));
+        assert_eq!(tenant_id.as_deref(), Some(TENANT_ID));
     }
 }

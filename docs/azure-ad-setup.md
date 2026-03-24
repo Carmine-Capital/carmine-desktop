@@ -7,10 +7,11 @@ This document describes the official Carmine Desktop app registration for develo
 Carmine Desktop uses a single, shared Azure AD app registration:
 
 - **Client ID**: `70053421-2c1b-44fe-80f8-d258d0a81133`
+- **Tenant ID**: `6a658318-4ef7-4de5-a2a6-d3c1698f272a` (Carmine Capital)
 - **Supported account types**: Microsoft 365 org accounts only (`AzureADMyOrg` — single tenant, Carmine Capital)
 - **Redirect URI**: `http://localhost:8400/callback` (Public client/native)
 
-This client ID is hardcoded in `crates/carminedesktop-app/src/main.rs` as `CLIENT_ID`. No build-time configuration is required.
+Both values are hardcoded in `crates/carminedesktop-app/src/main.rs` as `CLIENT_ID` and `TENANT_ID`. No build-time configuration is required.
 
 ## For Local Development
 
