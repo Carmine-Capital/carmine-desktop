@@ -469,7 +469,13 @@ pub fn expand_mount_point(template: &str) -> String {
                 .into_owned()
         }
     } else {
-        template.replace("{home}", &home)
+        let parts: Vec<&str> = template.split("{home}").collect();
+        let mut path = std::path::Path::new(&home).to_path_buf();
+        for part in parts.into_iter().skip(1) {
+            let part = part.trim_start_matches(['/', '\\']);
+            path = path.join(part);
+        }
+        path.to_string_lossy().into_owned()
     };
 
     normalize_mountpoint(expanded)
