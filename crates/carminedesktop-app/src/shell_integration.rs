@@ -944,7 +944,7 @@ fn acl_override_delete_user_choice(ext: &str, parent: &RegKey) -> carminedesktop
 
         // Convert the raw HKEY to a HANDLE for SetSecurityInfo
         let raw_hkey = uc_key.raw_handle();
-        let handle = HANDLE(raw_hkey as *mut std::ffi::c_void);
+        let handle = HANDLE(raw_hkey);
 
         // Take ownership
         let result = SetSecurityInfo(
