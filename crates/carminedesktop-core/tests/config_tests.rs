@@ -72,12 +72,11 @@ fn test_expand_mount_point_home() {
         .or_else(|_| env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
 
-    let template = "/home/{home}/OneDrive";
+    let template = "{home}/OneDrive";
     let expanded = expand_mount_point(template);
 
-    assert!(expanded.contains(&home));
+    assert!(expanded.starts_with(&home));
     assert!(!expanded.contains("{home}"));
-    assert!(expanded.starts_with("/home/"));
     assert!(expanded.ends_with("/OneDrive"));
 }
 
