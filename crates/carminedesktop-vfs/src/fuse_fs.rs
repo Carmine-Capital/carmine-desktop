@@ -275,6 +275,11 @@ impl Filesystem for CarmineDesktopFs {
         _flags: Option<BsdFileFlags>,
         reply: ReplyAttr,
     ) {
+        // Timestamps are server-authoritative — local mtime/atime changes are
+        // intentionally ignored. With FUSE_WRITEBACK_CACHE enabled, the kernel
+        // sends setattr with updated mtime after writes; the divergence between
+        // kernel-cached mtime and server mtime resolves on the next delta sync.
+        // Only size (truncation) is handled here.
         if let Some(new_size) = size
             && let Err(e) = self.ops.truncate(ino.0, new_size)
         {
@@ -462,9 +467,15 @@ impl Filesystem for CarmineDesktopFs {
         fh: FileHandle,
         _flags: OpenFlags,
         _lock_owner: Option<LockOwner>,
-        _flush: bool,
+        flush: bool,
         reply: ReplyEmpty,
     ) {
+        // Best-effort non-blocking flush when the kernel requests it.
+        // Errors are swallowed — release_file writes dirty content to
+        // writeback as a safety net, and the sync processor picks it up.
+        if flush {
+            let _ = self.ops.flush_handle(fh.0, false);
+        }
         match self.ops.release_file(fh.0) {
             Ok(()) => reply.ok(),
             Err(e) => reply.error(Self::vfs_err_to_errno(e)),
@@ -479,7 +490,7 @@ impl Filesystem for CarmineDesktopFs {
         _datasync: bool,
         reply: ReplyEmpty,
     ) {
-        match self.ops.flush_handle(fh.0, false) {
+        match self.ops.flush_handle(fh.0, true) {
             Ok(()) => reply.ok(),
             Err(e) => reply.error(Self::vfs_err_to_errno(e)),
         }

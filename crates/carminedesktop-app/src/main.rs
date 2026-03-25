@@ -1472,6 +1472,20 @@ fn spawn_event_forwarder(
                         timestamp: now,
                     });
                 }
+                carminedesktop_vfs::core_ops::VfsEvent::DeleteFailed { file_name, reason } => {
+                    notify::delete_failed(&app_handle, &file_name, &reason);
+                    let _ = obs_tx.send(ObsEvent::Error {
+                        drive_id: None,
+                        file_name: Some(file_name),
+                        remote_path: None,
+                        error_type: "delete_failed".to_string(),
+                        message: format!("Delete failed: {reason}"),
+                        action_hint: Some(
+                            "Delete failed -- the file may still exist on the server".to_string(),
+                        ),
+                        timestamp: now,
+                    });
+                }
             }
         }
     });

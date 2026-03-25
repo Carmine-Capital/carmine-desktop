@@ -704,6 +704,18 @@ impl FileSystemContext for CarmineDesktopWinFsp {
         _extra_buffer: Option<&[u8]>,
         file_info: &mut FileInfo,
     ) -> winfsp::Result<()> {
+        // Best-effort: flush pending dirty data before truncating.
+        // The user intends to replace the file, so we proceed regardless.
+        if self.ops.is_dirty(context.ino)
+            && let Some(fh) = context.fh
+            && let Err(e) = self.ops.flush_handle(fh, true)
+        {
+            tracing::warn!(
+                ino = context.ino,
+                "overwrite: best-effort flush of dirty data failed: {e}"
+            );
+        }
+
         self.ops
             .truncate(context.ino, 0)
             .map_err(vfs_err_to_ntstatus)?;
@@ -757,10 +769,22 @@ impl FileSystemContext for CarmineDesktopWinFsp {
                 };
 
                 if let Some(parent_ino) = parent_ino {
-                    if context.is_dir {
-                        let _ = self.ops.rmdir(parent_ino, name);
+                    let result = if context.is_dir {
+                        self.ops.rmdir(parent_ino, name)
                     } else {
-                        let _ = self.ops.unlink(parent_ino, name);
+                        self.ops.unlink(parent_ino, name)
+                    };
+                    if let Err(e) = result {
+                        tracing::warn!(
+                            parent_ino,
+                            name = %name,
+                            is_dir = context.is_dir,
+                            "cleanup delete-on-close failed: {e}"
+                        );
+                        self.ops.send_event(VfsEvent::DeleteFailed {
+                            file_name: name.to_string(),
+                            reason: format!("{e:?}"),
+                        });
                     }
                 }
             }
@@ -862,7 +886,10 @@ impl FileSystemContext for CarmineDesktopWinFsp {
         _change_time: u64,
         file_info: &mut FileInfo,
     ) -> winfsp::Result<()> {
-        // No-op: server timestamps are authoritative. Return current FileInfo.
+        // Timestamps are server-authoritative — local timestamp changes
+        // (creation, last-access, last-write, change) are intentionally
+        // ignored. The server sets authoritative timestamps on upload.
+        // Return current FileInfo unchanged.
         let item = self
             .ops
             .lookup_item(context.ino)

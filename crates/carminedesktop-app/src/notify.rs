@@ -139,6 +139,14 @@ pub fn upload_failed(app: &AppHandle, file_name: &str, reason: &str) {
     );
 }
 
+pub fn delete_failed(app: &AppHandle, file_name: &str, reason: &str) {
+    send(
+        app,
+        "Delete Failed",
+        &format!("Failed to delete '{file_name}': {reason}"),
+    );
+}
+
 pub fn file_locked(app: &AppHandle, file_name: &str) {
     send(
         app,

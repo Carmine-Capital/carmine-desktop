@@ -13,12 +13,12 @@ In `flush_inode`, before uploading existing files:
 
 - All `Filesystem`/`FileSystemContext` trait methods are sync. Bridge to async via `rt.block_on()`.
 - Reply `Errno::ENOENT` for missing items, `Errno::EIO` for server/upload errors.
-- After child mutations (create, delete, rename): invalidate parent's memory cache entry.
+- After child mutations (create, delete, rename): update parent's children map via `add_child`/`remove_child`. Do NOT call `invalidate(parent_ino)` — that destroys the entire cache entry (item + children map) and forces a full re-fetch.
 
 ## ANTI-PATTERNS
 
 - Do NOT make Filesystem trait methods async — `fuser` requires sync.
 - Do NOT hold cache locks across `block_on` calls — deadlock risk.
 - Do NOT skip conflict detection in flush — data loss risk.
-- Do NOT forget `invalidate(parent_ino)` after child create/delete/rename.
+- Do NOT call `invalidate(parent_ino)` after child mutations — use `add_child`/`remove_child` instead. `invalidate` destroys the children map and triggers unnecessary Graph API re-fetches.
 - Do NOT remove writeback entry before successful upload confirmation.

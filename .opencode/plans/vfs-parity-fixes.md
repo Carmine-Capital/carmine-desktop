@@ -2,7 +2,8 @@
 
 ## Context
 
-VFS parity review identified 7 issues across FUSE and WinFsp backends. This plan details fixes for each.
+VFS parity review identified 7 issues across FUSE and WinFsp backends.
+Post-verification against the codebase, 6 are real fixes and 1 is dropped.
 
 ---
 
@@ -10,9 +11,9 @@ VFS parity review identified 7 issues across FUSE and WinFsp backends. This plan
 
 **File:** `crates/carminedesktop-vfs/src/fuse_fs.rs:474-486`
 
-**Problem:** Both `flush` and `fsync` call `flush_handle(fh, false)`. `fsync` should block until data is persisted per POSIX semantics.
+**Problem:** Both `flush` and `fsync` call `flush_handle(fh, false)`. `fsync` should block until data is persisted per POSIX semantics. `flush_handle(_, true)` sends a `FlushSync` request and blocks on a oneshot channel until upload completes (60 s timeout).
 
-**Fix:**
+**Fix:** One-character change — `false` to `true` on line 482:
 ```rust
 fn fsync(
     &self,
@@ -22,7 +23,6 @@ fn fsync(
     _datasync: bool,
     reply: ReplyEmpty,
 ) {
-    // fsync should block until data is persisted (true), not fire-and-forget (false)
     match self.ops.flush_handle(fh.0, true) {
         Ok(()) => reply.ok(),
         Err(e) => reply.error(Self::vfs_err_to_errno(e)),
@@ -30,15 +30,28 @@ fn fsync(
 }
 ```
 
+**Note:** FUSE `flush` (called on `close(2)`) correctly uses `false` — POSIX close does not require durability. Only `fsync` needs `true`.
+
 ---
 
 ## Issue 2: WinFsp `cleanup` silently swallows `unlink`/`rmdir` errors (HIGH)
 
-**File:** `crates/carminedesktop-vfs/src/winfsp_fs.rs:759-765`
+**File:** `crates/carminedesktop-vfs/src/winfsp_fs.rs:759-764`
 
-**Problem:** Delete-on-close uses `let _ =` on both `unlink` and `rmdir`, silently discarding errors.
+**Problem:** Delete-on-close uses `let _ =` on both `unlink` and `rmdir`, silently discarding errors. Since `cleanup` returns `()` per the WinFsp trait, errors cannot propagate to the OS.
 
-**Fix:**
+**Fix:** Log the error and emit a `VfsEvent` so the user sees feedback via the notification system (matching the `UploadFailed` pattern at lines 728-742). Requires adding a `DeleteFailed` variant to `VfsEvent` in `core_ops.rs`.
+
+**Step 1 — Add variant to `VfsEvent` (`core_ops.rs:346-358`):**
+```rust
+pub enum VfsEvent {
+    // ... existing variants ...
+    /// A delete-on-close operation failed during cleanup.
+    DeleteFailed { file_name: String, reason: String },
+}
+```
+
+**Step 2 — Replace `let _ =` block (`winfsp_fs.rs:759-764`):**
 ```rust
 if let Some(parent_ino) = parent_ino {
     let result = if context.is_dir {
@@ -53,92 +66,75 @@ if let Some(parent_ino) = parent_ino {
             is_dir = context.is_dir,
             "cleanup delete-on-close failed: {e}"
         );
+        self.ops.send_event(VfsEvent::DeleteFailed {
+            file_name: name.to_string(),
+            reason: format!("{e:?}"),
+        });
     }
 }
 ```
+
+**Step 3 — Handle the new variant** in `carminedesktop-app` notification dispatch (wherever `VfsEvent` is matched).
 
 ---
 
 ## Issue 3: `setattr`/`set_basic_info` ignore mtime (MEDIUM) — **DECIDED: Option B**
 
-**Files:** 
+**Files:**
 - `crates/carminedesktop-vfs/src/fuse_fs.rs:260-297`
 - `crates/carminedesktop-vfs/src/winfsp_fs.rs:855-879`
 
-**Problem:** Neither backend applies timestamp updates. FUSE ignores `_mtime` entirely. WinFsp is documented as no-op.
+**Problem:** Neither backend applies timestamp updates. FUSE ignores all 6 timestamp params (`_atime`, `_mtime`, `_ctime`, `_crtime`, `_chgtime`, `_bkuptime`). WinFsp `set_basic_info` is a documented no-op.
 
 **Chosen approach:** Document that timestamps are server-authoritative (current behavior is intentional).
 
-**Fix:** Add doc comments to both backends:
+**Fix — `fuse_fs.rs` `setattr` (add above the `if let Some(new_size)` block):**
 ```rust
-// In fuse_fs.rs setattr and winfsp_fs.rs set_basic_info:
-// Timestamps are server-authoritative. Local mtime changes are ignored.
+// Timestamps are server-authoritative — local mtime/atime changes are
+// intentionally ignored. With FUSE_WRITEBACK_CACHE enabled, the kernel
+// sends setattr with updated mtime after writes; the divergence between
+// kernel-cached mtime and server mtime resolves on the next delta sync.
+// Only size (truncation) is handled here.
+```
+
+**Fix — `winfsp_fs.rs` `set_basic_info` (expand existing comment on line 865):**
+```rust
+// Timestamps are server-authoritative — local timestamp changes
+// (creation, last-access, last-write, change) are intentionally
+// ignored. The server sets authoritative timestamps on upload.
+// Return current FileInfo unchanged.
 ```
 
 ---
 
-## Issue 4: Parent cache not invalidated after child mutations (MEDIUM)
+## Issue 4: ~~Parent cache not invalidated after child mutations~~ — **DROPPED**
 
-**File:** `crates/carminedesktop-vfs/src/core_ops.rs`
+**Original claim:** `add_child`/`remove_child` don't invalidate the parent, so an explicit `invalidate(parent_ino)` is needed after every child mutation.
 
-**Problem:** `AGENTS.md` specifies: "After child mutations: invalidate parent's memory cache entry." None of the mutation functions do this.
+**Verification result:** This is wrong. The memory cache in `carminedesktop-cache/src/memory.rs` works as follows:
+- `add_child(parent, name, child)` — surgically inserts into the parent's `children` HashMap in-place. Children map stays consistent.
+- `remove_child(parent, name)` — surgically removes from the HashMap. Children map stays consistent.
+- `invalidate(ino)` — calls `self.entries.remove(&ino)`, **destroying the entire cache entry** (DriveItem metadata + children map).
 
-**Functions affected:**
-- `create_file` (line ~1501) - after `add_child`
-- `mkdir` (line ~1588) - after `add_child`
-- `unlink` (line ~1605) - after `remove_child`
-- `rmdir` (line ~1650) - after `remove_child`
-- `rename` (lines ~1774-1777) - after `remove_child`/`add_child`
+Calling `invalidate(parent_ino)` after every mutation would:
+1. Destroy valid cached children maps, forcing a full Graph API re-fetch on next `readdir`/`find_child`
+2. Create race conditions — concurrent sibling operations would miss the cache between invalidation and re-fetch
+3. Degrade offline mode — the parent could vanish from cache until re-fetched
 
-**Fix for `create_file` (line ~1501):**
-```rust
-self.cache.memory.insert(inode, item.clone());
-self.cache.memory.add_child(parent_ino, name, inode);
-self.cache.memory.invalidate(parent_ino);  // ADD THIS
-```
+The existing `add_child`/`remove_child` calls are the correct approach. The `AGENTS.md` convention that led to this issue has been corrected (see below).
 
-**Fix for `mkdir` (line ~1588):**
-```rust
-self.cache.memory.insert(inode, folder_item.clone());
-self.cache.memory.add_child(parent_ino, name, inode);
-self.cache.memory.invalidate(parent_ino);  // ADD THIS
-```
-
-**Fix for `unlink` (line ~1605):**
-```rust
-self.cache.memory.remove_child(parent_ino, name);
-self.cache.memory.invalidate(parent_ino);  // ADD THIS
-self.cleanup_deleted_item(&item_id, child_ino);
-```
-
-**Fix for `rmdir` (line ~1650):**
-```rust
-self.cache.memory.invalidate(child_ino);
-self.cache.memory.remove_child(parent_ino, name);
-self.cache.memory.invalidate(parent_ino);  // ADD THIS
-```
-
-**Fix for `rename` (lines ~1774-1777):**
-```rust
-self.cache.memory.remove_child(parent_ino, name);
-self.cache.memory.invalidate(parent_ino);  // ADD THIS
-self.cache
-    .memory
-    .add_child(new_parent_ino, new_name, child_ino);
-if new_parent_ino != parent_ino {
-    self.cache.memory.invalidate(new_parent_ino);  // ADD THIS
-}
-```
+**Action:** No code change. Fix `crates/carminedesktop-vfs/AGENTS.md` to correct the misleading convention.
 
 ---
 
-## Issue 5: WinFsp `overwrite` doesn't check dirty flag (MEDIUM)
+## Issue 5: WinFsp `overwrite` doesn't flush dirty data (MEDIUM)
 
 **File:** `crates/carminedesktop-vfs/src/winfsp_fs.rs:698-718`
 
-**Problem:** `overwrite` unconditionally truncates to 0. If file has unsaved local modifications, they are lost.
+**Problem:** `overwrite` (triggered by `CREATE_ALWAYS`/`TRUNCATE_EXISTING`) unconditionally truncates to 0. If the file has dirty content from a concurrent writer that hasn't been uploaded yet, that data is silently lost.
 
-**Fix:**
+**Fix:** Best-effort flush before truncating. The user intends to replace the file, so we proceed with truncation regardless — but we give the pending upload a chance to complete first. `CoreOps::is_dirty(ino)` exists at `core_ops.rs:660`.
+
 ```rust
 fn overwrite(
     &self,
@@ -149,14 +145,18 @@ fn overwrite(
     _extra_buffer: Option<&[u8]>,
     file_info: &mut FileInfo,
 ) -> winfsp::Result<()> {
-    // Check if file has unsaved local modifications
-    if self.ops.is_dirty(context.ino) {
+    // Best-effort: flush pending dirty data before truncating.
+    // The user intends to replace the file, so we proceed regardless.
+    if self.ops.is_dirty(context.ino)
+        && let Some(fh) = context.fh
+        && let Err(e) = self.ops.flush_handle(fh, true)
+    {
         tracing::warn!(
             ino = context.ino,
-            "overwrite on dirty file - local changes will be discarded"
+            "overwrite: best-effort flush of dirty data failed: {e}"
         );
     }
-    
+
     self.ops
         .truncate(context.ino, 0)
         .map_err(vfs_err_to_ntstatus)?;
@@ -177,9 +177,12 @@ fn overwrite(
 
 **File:** `crates/carminedesktop-vfs/src/fuse_fs.rs:458-472`
 
-**Problem:** `release` receives `_flush: bool` but ignores it. If OS requests flush before release, dirty data could be orphaned.
+**Problem:** `release` receives `_flush: bool` but ignores it. When the kernel sets `flush=true`, dirty data should be flushed before the handle is released.
 
-**Fix:**
+**Fix:** Non-blocking best-effort flush (`false`, not `true`) before `release_file`. Using `true` would block the FUSE thread up to 60 s, which is too aggressive for release. `release_file` already writes dirty content to the writeback buffer as a safety net, so errors from the flush are swallowed.
+
+Both paths must end with `release_file` to clean up the handle from the open-file table.
+
 ```rust
 fn release(
     &self,
@@ -188,16 +191,16 @@ fn release(
     fh: FileHandle,
     _flags: OpenFlags,
     _lock_owner: Option<LockOwner>,
-    flush: bool,  // USE THIS
+    flush: bool,
     reply: ReplyEmpty,
 ) {
-    let result = if flush {
-        self.ops.flush_handle(fh.0, true)
-    } else {
-        self.ops.release_file(fh.0)
-    };
-    
-    match result {
+    // Best-effort non-blocking flush when the kernel requests it.
+    // Errors are swallowed — release_file writes dirty content to
+    // writeback as a safety net, and the sync processor picks it up.
+    if flush {
+        let _ = self.ops.flush_handle(fh.0, false);
+    }
+    match self.ops.release_file(fh.0) {
         Ok(()) => reply.ok(),
         Err(e) => reply.error(Self::vfs_err_to_errno(e)),
     }
@@ -206,40 +209,43 @@ fn release(
 
 ---
 
-## Issue 7: WinFsp `set_delete` emptiness check vs `cleanup` path (LOW)
+## Issue 7: WinFsp `set_delete` emptiness check vs `cleanup` path (LOW) — **Covered by Issue 2**
 
-**File:** `crates/carminedesktop-vfs/src/winfsp_fs.rs`
+**Problem:** `set_delete` checks if a directory is non-empty before allowing delete, but `cleanup`'s delete-on-close calls `rmdir` directly.
 
-**Problem:** `set_delete` checks if directory is non-empty, but `cleanup`'s delete-on-close calls `rmdir` directly without explicit emptiness check (though `rmdir` in CoreOps does check internally).
+**Status:** Non-issue. `CoreOps::rmdir` (`core_ops.rs:1610-1655`) performs its own server-side emptiness check via `graph.list_children()`. The double-check is beneficial — `set_delete` gives an early `STATUS_DIRECTORY_NOT_EMPTY` error, while `CoreOps::rmdir` catches race conditions. With Issue 2's fix, `rmdir` errors in `cleanup` are now logged and surfaced to the user instead of silently swallowed.
 
-**Fix:** Already handled by CoreOps `rmdir` (line 1626). Ensure error is logged in `cleanup` (Issue 2 fix handles this).
+**Action:** No additional code change needed.
 
 ---
 
 ## Summary of Changes
 
-| Issue | File | Change |
-|-------|------|--------|
-| 1 | `fuse_fs.rs:482` | Change `false` to `true` in `fsync` |
-| 2 | `winfsp_fs.rs:759-765` | Log errors instead of `let _ =` |
-| 3 | Both backends | Add doc: "Timestamps are server-authoritative" |
-| 4 | `core_ops.rs` | Add `invalidate(parent_ino)` after 5 mutations |
-| 5 | `winfsp_fs.rs:698-718` | Check `is_dirty` before truncate |
-| 6 | `fuse_fs.rs:458-472` | Handle `flush` parameter in `release` |
+| Issue | Sev | File | Change |
+|-------|-----|------|--------|
+| 1 | HIGH | `fuse_fs.rs:482` | `false` to `true` in `fsync` |
+| 2 | HIGH | `core_ops.rs` + `winfsp_fs.rs:759-764` | Add `VfsEvent::DeleteFailed`, log + emit in cleanup |
+| 3 | MED | Both backends | Doc comments: timestamps are server-authoritative |
+| 4 | — | **DROPPED** | Non-issue; fix AGENTS.md instead |
+| 5 | MED | `winfsp_fs.rs:698-718` | Best-effort flush before truncate |
+| 6 | MED | `fuse_fs.rs:458-472` | Non-blocking flush when `flush=true`, then `release_file` |
+| 7 | LOW | No change | Covered by Issue 2 |
 
 ---
 
 ## Testing
 
 After implementing fixes, verify:
-1. `test_vfs_fsync_blocks_until_persist()` - confirm fsync with `true` waits
-2. `test_vfs_cleanup_logs_errors()` - confirm errors are logged, not silently dropped
-3. `test_vfs_parent_cache_invalidated()` - confirm parent cache is invalidated after create/delete/rename
-4. `test_vfs_overwrite_warns_on_dirty()` - confirm warning logged when overwriting dirty file
-5. `test_vfs_release_flushes_when_requested()` - confirm release with `flush=true` flushes data
+1. `test_vfs_fsync_blocks_until_persist()` — confirm fsync with `true` waits
+2. `test_vfs_cleanup_logs_delete_errors()` — confirm errors are logged and `DeleteFailed` event emitted
+3. `test_vfs_overwrite_flushes_dirty()` — confirm best-effort flush before truncate
+4. `test_vfs_release_flushes_when_requested()` — confirm release with `flush=true` triggers non-blocking flush before release_file
 
 ---
 
 ## Decisions Made
 
-- **Issue 3 (timestamps):** Option B — document that timestamps are server-authoritative
+- **Issue 3 (timestamps):** Option B — document as server-authoritative
+- **Issue 4 (parent cache):** Dropped — `add_child`/`remove_child` are surgical and correct; `invalidate` would be destructive. AGENTS.md convention corrected.
+- **Issue 5 (overwrite):** Flush-then-truncate, not warn-then-truncate
+- **Issue 6 (release flush):** Non-blocking (`false`), not blocking (`true`); always call `release_file` after

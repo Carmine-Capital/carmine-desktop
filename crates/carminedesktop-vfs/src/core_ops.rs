@@ -355,6 +355,8 @@ pub enum VfsEvent {
     UploadFailed { file_name: String, reason: String },
     /// The file is locked on OneDrive (co-authoring or checkout).
     FileLocked { file_name: String },
+    /// A delete-on-close operation failed during cleanup.
+    DeleteFailed { file_name: String, reason: String },
 }
 
 /// Check if a filename matches known transient file patterns that should not
