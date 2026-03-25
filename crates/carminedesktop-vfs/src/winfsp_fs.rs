@@ -712,7 +712,7 @@ impl FileSystemContext for CarmineDesktopWinFsp {
         {
             tracing::warn!(
                 ino = context.ino,
-                "overwrite: best-effort flush of dirty data failed: {e}"
+                "overwrite: best-effort flush of dirty data failed: {e:?}"
             );
         }
 
@@ -779,7 +779,7 @@ impl FileSystemContext for CarmineDesktopWinFsp {
                             parent_ino,
                             name = %name,
                             is_dir = context.is_dir,
-                            "cleanup delete-on-close failed: {e}"
+                            "cleanup delete-on-close failed: {e:?}"
                         );
                         self.ops.send_event(VfsEvent::DeleteFailed {
                             file_name: name.to_string(),
