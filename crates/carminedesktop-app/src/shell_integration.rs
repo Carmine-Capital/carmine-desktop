@@ -17,6 +17,9 @@ use winreg::RegValue;
 #[cfg(target_os = "windows")]
 use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, RegType};
 
+#[cfg(target_os = "windows")]
+use base64::Engine as _;
+
 /// Office file extensions we register as handlers for.
 pub const OFFICE_EXTENSIONS: &[&str] = &[".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt"];
 
@@ -65,6 +68,12 @@ const CONTEXT_MENU_OFFLINE: &str = "CarmineDesktop.MakeOffline";
 /// Registry verb ID for the "Free up space" context menu entry.
 #[cfg(target_os = "windows")]
 const CONTEXT_MENU_FREE_SPACE: &str = "CarmineDesktop.FreeSpace";
+
+/// Static experience string used in Windows UserChoice hash computation.
+/// Reverse-engineered from Windows Shell — used by SetUserFTA, Firefox, etc.
+#[cfg(target_os = "windows")]
+const USER_CHOICE_EXPERIENCE: &str =
+    "User Choice set via Windows User Experience {D18B6DD5-6124-4341-9318-804003BAFA0B}";
 
 /// Register Carmine Desktop as the handler for Office file types.
 ///
@@ -185,6 +194,12 @@ pub fn register_file_associations() -> carminedesktop_core::Result<()> {
     let (ra_key, _) = hkcu.create_subkey(r"Software\RegisteredApplications")?;
     ra_key.set_value("CarmineDesktop", &CAPABILITIES_PATH)?;
 
+    // Set UserChoice keys with valid hashes so Windows 10/11 uses our ProgID
+    // immediately, without requiring the user to visit Settings > Default Apps.
+    if let Err(e) = set_all_user_choices() {
+        tracing::warn!("UserChoice registration failed (non-fatal): {e}");
+    }
+
     // Notify the shell that file associations have changed
     notify_shell_change();
 
@@ -244,6 +259,11 @@ pub fn unregister_file_associations() -> carminedesktop_core::Result<()> {
             if let Ok(owp_key) = ext_key.open_subkey_with_flags("OpenWithProgids", KEY_WRITE) {
                 let _ = owp_key.delete_value(&progid);
             }
+        }
+
+        // Delete our UserChoice key so Windows falls back to the restored handler
+        if let Err(e) = delete_user_choice_key(ext) {
+            tracing::debug!("failed to delete UserChoice for {ext}: {e}");
         }
 
         // Delete our ProgID key tree
@@ -401,13 +421,31 @@ pub fn are_file_associations_registered() -> bool {
 
 /// Notify Windows Shell that file associations have changed.
 ///
-/// Calls `SHChangeNotify` to refresh Explorer's cached associations.
+/// Calls `SHChangeNotify` to refresh Explorer's cached associations and
+/// broadcasts `WM_SETTINGCHANGE` so Explorer refreshes file associations
+/// immediately without requiring a reboot.
 #[cfg(target_os = "windows")]
 fn notify_shell_change() {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
     use windows::Win32::UI::Shell::{SHCNE_ASSOCCHANGED, SHCNF_IDLIST, SHChangeNotify};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
+    };
 
     unsafe {
         SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
+
+        // Broadcast WM_SETTINGCHANGE so Explorer refreshes file associations
+        // immediately without requiring a reboot.
+        let _ = SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            WPARAM(0),
+            LPARAM(0),
+            SMTO_ABORTIFHUNG,
+            5000,
+            None,
+        );
     }
 }
 
@@ -489,6 +527,556 @@ pub fn discover_office_handler(ext: &str) -> Option<String> {
 
     tracing::debug!("discover_office_handler({ext}): no handler discovered");
     None
+}
+
+// ---------------------------------------------------------------------------
+// Windows UserChoice hash computation
+// ---------------------------------------------------------------------------
+//
+// Implements the reverse-engineered UserChoice hash algorithm used by
+// Windows 10/11 to validate file association entries in the registry.
+// Based on the well-documented algorithm from SetUserFTA, Firefox, and
+// other open-source projects.
+
+/// Read a little-endian u32 from a byte slice at the given offset.
+#[cfg(target_os = "windows")]
+fn read_u32_le(data: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
+}
+
+/// First round of the CS64 hash (WordSwap variant).
+///
+/// Part of the Windows UserChoice hash algorithm. Processes the input
+/// data as u32 words with two magic constants derived from the MD5 hash.
+#[cfg(target_os = "windows")]
+fn cs64_word_swap(data: &[u8], size: usize, md5: &[u8; 16]) -> [u32; 2] {
+    // size = number of u32 words to process (already adjusted: even count)
+    if size < 2 || (size & 1) != 0 {
+        return [0, 0];
+    }
+
+    let c0 = (read_u32_le(md5, 0) | 1).wrapping_add(0x69FB0000);
+    let c1 = (read_u32_le(md5, 4) | 1).wrapping_add(0x13DB0000);
+
+    let mut o1: u32 = 0;
+    let mut o2: u32 = 0;
+    let mut ta: usize = 0;
+    let mut ts = size;
+    let ti = ((size - 2) >> 1) + 1;
+
+    for _ in 0..ti {
+        let n = read_u32_le(data, ta * 4).wrapping_add(o1);
+        ta += 2;
+        ts -= 2;
+
+        let v1_inner = n
+            .wrapping_mul(c0)
+            .wrapping_sub(0x10FA9605u32.wrapping_mul(n >> 16));
+        let v1 = 0x79F8A395u32
+            .wrapping_mul(v1_inner)
+            .wrapping_add(0x689B6B9Fu32.wrapping_mul(v1_inner >> 16));
+        let v2 = 0xEA970001u32
+            .wrapping_mul(v1)
+            .wrapping_sub(0x3C101569u32.wrapping_mul(v1 >> 16));
+
+        let v3 = read_u32_le(data, (ta - 1) * 4).wrapping_add(v2);
+        let v4 = v3
+            .wrapping_mul(c1)
+            .wrapping_sub(0x3CE8EC25u32.wrapping_mul(v3 >> 16));
+        let v5 = 0x59C3AF2Du32
+            .wrapping_mul(v4)
+            .wrapping_sub(0x2232E0F1u32.wrapping_mul(v4 >> 16));
+
+        o1 = 0x1EC90001u32
+            .wrapping_mul(v5)
+            .wrapping_add(0x35BD1EC9u32.wrapping_mul(v5 >> 16));
+        o2 = o2.wrapping_add(o1.wrapping_add(v2));
+    }
+
+    if ts == 1 {
+        let n = read_u32_le(data, ta * 4).wrapping_add(o1);
+        let v1 = n
+            .wrapping_mul(c0)
+            .wrapping_sub(0x10FA9605u32.wrapping_mul(n >> 16));
+        let v1_processed = 0x79F8A395u32
+            .wrapping_mul(v1)
+            .wrapping_add(0x689B6B9Fu32.wrapping_mul(v1 >> 16));
+        let v2 = 0xEA970001u32
+            .wrapping_mul(v1_processed)
+            .wrapping_sub(0x3C101569u32.wrapping_mul(v1_processed >> 16));
+
+        let v3 = v2
+            .wrapping_mul(c1)
+            .wrapping_sub(0x3CE8EC25u32.wrapping_mul(v2 >> 16));
+        let v5 = 0x59C3AF2Du32
+            .wrapping_mul(v3)
+            .wrapping_sub(0x2232E0F1u32.wrapping_mul(v3 >> 16));
+        o1 = 0x1EC90001u32
+            .wrapping_mul(v5)
+            .wrapping_add(0x35BD1EC9u32.wrapping_mul(v5 >> 16));
+        o2 = o2.wrapping_add(o1.wrapping_add(v2));
+    }
+
+    [o1, o2]
+}
+
+/// Second round of the CS64 hash (Reversible variant).
+///
+/// Part of the Windows UserChoice hash algorithm. Same iteration structure
+/// as [`cs64_word_swap`] but with different magic constants.
+#[cfg(target_os = "windows")]
+fn cs64_reversible(data: &[u8], size: usize, md5: &[u8; 16]) -> [u32; 2] {
+    if size < 2 || (size & 1) != 0 {
+        return [0, 0];
+    }
+
+    let c0 = read_u32_le(md5, 0) | 1;
+    let c1 = read_u32_le(md5, 4) | 1;
+
+    let mut o1: u32 = 0;
+    let mut o2: u32 = 0;
+    let mut ta: usize = 0;
+    let mut ts = size;
+    let ti = ((size - 2) >> 1) + 1;
+
+    for _ in 0..ti {
+        let n = read_u32_le(data, ta * 4).wrapping_add(o1).wrapping_mul(c0);
+        let n = 0xB1110000u32
+            .wrapping_mul(n)
+            .wrapping_sub(0x30674EEFu32.wrapping_mul(n >> 16));
+        ta += 2;
+        ts -= 2;
+
+        let v1 = 0x5B9F0000u32
+            .wrapping_mul(n)
+            .wrapping_sub(0x78F7A461u32.wrapping_mul(n >> 16));
+
+        let v1_inner = 0x12CEB96Du32
+            .wrapping_mul(v1 >> 16)
+            .wrapping_sub(0x46930000u32.wrapping_mul(v1));
+        let v2 = 0x1D830000u32
+            .wrapping_mul(v1_inner)
+            .wrapping_add(0x257E1D83u32.wrapping_mul(v1_inner >> 16));
+
+        let v3 = read_u32_le(data, (ta - 1) * 4).wrapping_add(v2);
+        let v4 = 0x16F50000u32
+            .wrapping_mul(c1.wrapping_mul(v3))
+            .wrapping_sub(0x5D8BE90Bu32.wrapping_mul(c1.wrapping_mul(v3) >> 16));
+
+        let v5_inner = 0x96FF0000u32
+            .wrapping_mul(v4)
+            .wrapping_sub(0x2C7C6901u32.wrapping_mul(v4 >> 16));
+        let v5 = 0x2B890000u32
+            .wrapping_mul(v5_inner)
+            .wrapping_add(0x7C932B89u32.wrapping_mul(v5_inner >> 16));
+
+        o1 = 0x9F690000u32
+            .wrapping_mul(v5)
+            .wrapping_sub(0x405B6097u32.wrapping_mul(v5 >> 16));
+        o2 = o2.wrapping_add(o1.wrapping_add(v2));
+    }
+
+    if ts == 1 {
+        let n = read_u32_le(data, ta * 4).wrapping_add(o1);
+        let v1 = 0xB1110000u32
+            .wrapping_mul(c0.wrapping_mul(n))
+            .wrapping_sub(0x30674EEFu32.wrapping_mul(c0.wrapping_mul(n) >> 16));
+        let v2 = 0x5B9F0000u32
+            .wrapping_mul(v1)
+            .wrapping_sub(0x78F7A461u32.wrapping_mul(v1 >> 16));
+
+        let v3_inner = 0x12CEB96Du32
+            .wrapping_mul(v2 >> 16)
+            .wrapping_sub(0x46930000u32.wrapping_mul(v2));
+        let v3 = 0x1D830000u32
+            .wrapping_mul(v3_inner)
+            .wrapping_add(0x257E1D83u32.wrapping_mul(v3_inner >> 16));
+
+        let v4 = 0x16F50000u32
+            .wrapping_mul(c1.wrapping_mul(v3))
+            .wrapping_sub(0x5D8BE90Bu32.wrapping_mul(c1.wrapping_mul(v3) >> 16));
+        let v5 = 0x96FF0000u32
+            .wrapping_mul(v4)
+            .wrapping_sub(0x2C7C6901u32.wrapping_mul(v4 >> 16));
+        let v5_processed = 0x2B890000u32
+            .wrapping_mul(v5)
+            .wrapping_add(0x7C932B89u32.wrapping_mul(v5 >> 16));
+
+        o1 = 0x9F690000u32
+            .wrapping_mul(v5_processed)
+            .wrapping_sub(0x405B6097u32.wrapping_mul(v5_processed >> 16));
+        o2 = o2.wrapping_add(o1.wrapping_add(v3));
+    }
+
+    [o1, o2]
+}
+
+/// Compute the Windows UserChoice hash for a file extension.
+///
+/// The hash is based on the reverse-engineered algorithm used by Windows 10/11
+/// to validate UserChoice registry entries. It takes the file extension, user SID,
+/// ProgID, and registry key timestamp as inputs, and produces a Base64-encoded hash.
+///
+/// Used by SetUserFTA, Firefox, and other applications to programmatically set
+/// file type associations on Windows 10/11.
+#[cfg(target_os = "windows")]
+fn compute_user_choice_hash(ext: &str, sid: &str, progid: &str, timestamp: &str) -> String {
+    use md5::{Digest, Md5};
+
+    // 1. Build input string (all lowercase)
+    let input = format!("{ext}{sid}{progid}{timestamp}{USER_CHOICE_EXPERIENCE}").to_lowercase();
+
+    // 2. Convert to UTF-16LE with null terminator
+    let utf16: Vec<u16> = input.encode_utf16().chain(std::iter::once(0)).collect();
+    let utf16_bytes: Vec<u8> = utf16.iter().flat_map(|&w| w.to_le_bytes()).collect();
+
+    // 3. Compute MD5
+    let md5_result = Md5::digest(&utf16_bytes);
+    let md5_bytes: [u8; 16] = md5_result.into();
+
+    // 4. Compute shifted size (number of u32 words, made even)
+    let mut shifted_size = utf16_bytes.len() / 4;
+    if (shifted_size & 1) != 0 {
+        shifted_size -= 1;
+    }
+
+    // 5. Two-round hash
+    let [a1, a2] = cs64_word_swap(&utf16_bytes, shifted_size, &md5_bytes);
+    let [b1, b2] = cs64_reversible(&utf16_bytes, shifted_size, &md5_bytes);
+
+    // 6. XOR results
+    let mut result = [0u8; 8];
+    result[..4].copy_from_slice(&(a1 ^ b1).to_le_bytes());
+    result[4..].copy_from_slice(&(a2 ^ b2).to_le_bytes());
+
+    // 7. Base64 encode
+    base64::engine::general_purpose::STANDARD.encode(result)
+}
+
+/// Get the current user's SID as a string (e.g., `S-1-5-21-...`).
+///
+/// Uses Win32 `GetTokenInformation` + `ConvertSidToStringSidW`.
+#[cfg(target_os = "windows")]
+fn get_current_user_sid() -> Option<String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        let mut token = windows::Win32::Foundation::HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+            tracing::warn!("get_current_user_sid: OpenProcessToken failed");
+            return None;
+        }
+
+        // First call to get buffer size
+        let mut size = 0u32;
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut size);
+
+        let mut buffer = vec![0u8; size as usize];
+        if GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buffer.as_mut_ptr().cast()),
+            size,
+            &mut size,
+        )
+        .is_err()
+        {
+            let _ = CloseHandle(token);
+            tracing::warn!("get_current_user_sid: GetTokenInformation failed");
+            return None;
+        }
+
+        let token_user = &*(buffer.as_ptr() as *const TOKEN_USER);
+        let mut sid_string = windows::core::PWSTR::null();
+        let result = ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string);
+        let _ = CloseHandle(token);
+
+        if result.is_err() {
+            tracing::warn!("get_current_user_sid: ConvertSidToStringSidW failed");
+            return None;
+        }
+
+        let sid = sid_string.to_string().ok()?;
+        // Free the SID string allocated by ConvertSidToStringSidW
+        windows::Win32::Foundation::LocalFree(Some(sid_string.as_ptr().cast()));
+        Some(sid)
+    }
+}
+
+/// Get the `LastWriteTime` of a registry key as a raw FILETIME value (u64).
+///
+/// Uses `winreg::RegKey::query_info()` to read the key metadata.
+/// The `RegKeyMetadata.last_write_time` field is a `windows_sys::Win32::Foundation::FILETIME`
+/// with `dwLowDateTime` and `dwHighDateTime` fields.
+#[cfg(target_os = "windows")]
+fn get_registry_key_write_time(key: &RegKey) -> Option<u64> {
+    let info = key.query_info().ok()?;
+    let ft = &info.last_write_time;
+    Some((ft.dwHighDateTime as u64) << 32 | ft.dwLowDateTime as u64)
+}
+
+/// Truncate a FILETIME value to the nearest minute and format as hex.
+///
+/// FILETIME is in 100-nanosecond intervals. One minute = 600,000,000 intervals.
+/// The timestamp is formatted as `{high:08x}{low:08x}` matching the format
+/// used by Windows for UserChoice hash validation.
+#[cfg(target_os = "windows")]
+fn format_filetime_truncated(filetime: u64) -> String {
+    let truncated = filetime / 600_000_000 * 600_000_000;
+    let low = truncated as u32;
+    let high = (truncated >> 32) as u32;
+    format!("{high:08x}{low:08x}")
+}
+
+/// Delete the existing UserChoice registry key for an extension.
+///
+/// The key at `HKCU\...\FileExts\{ext}\UserChoice` is ACL-protected by
+/// Windows to prevent applications from tampering with user choices.
+/// This function handles the protection by taking ownership and adjusting
+/// the DACL before deleting.
+#[cfg(target_os = "windows")]
+fn delete_user_choice_key(ext: &str) -> carminedesktop_core::Result<()> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let parent_path = format!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext}");
+
+    let parent = match hkcu.open_subkey_with_flags(&parent_path, KEY_READ | KEY_WRITE) {
+        Ok(k) => k,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+
+    // Check if UserChoice exists
+    if parent
+        .open_subkey_with_flags("UserChoice", KEY_READ)
+        .is_err()
+    {
+        return Ok(()); // doesn't exist
+    }
+
+    // Try direct delete first
+    match parent.delete_subkey_all("UserChoice") {
+        Ok(()) => {
+            tracing::debug!("deleted UserChoice key for {ext} (direct)");
+            return Ok(());
+        }
+        Err(e) => {
+            tracing::debug!(
+                "direct delete of UserChoice for {ext} failed: {e}, trying with ACL override"
+            );
+        }
+    }
+
+    // ACL override: take ownership and set a permissive DACL, then retry delete.
+    // The UserChoice key is ACL-protected on Windows 10/11 but the current user
+    // can take ownership since it's under HKCU.
+    acl_override_delete_user_choice(ext, &parent)
+}
+
+/// Take ownership of the UserChoice key, set a permissive DACL, and delete it.
+#[cfg(target_os = "windows")]
+fn acl_override_delete_user_choice(ext: &str, parent: &RegKey) -> carminedesktop_core::Result<()> {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Security::Authorization::{SE_OBJECT_TYPE, SetSecurityInfo};
+    use windows::Win32::Security::{DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION};
+
+    // WRITE_DAC | WRITE_OWNER access flags
+    const WRITE_DAC: u32 = 0x0004_0000;
+    const WRITE_OWNER: u32 = 0x0008_0000;
+
+    // SE_REGISTRY_KEY = 4
+    let se_registry_key = SE_OBJECT_TYPE(4);
+
+    // Open UserChoice with WRITE_DAC | WRITE_OWNER
+    let uc_key = match parent.open_subkey_with_flags("UserChoice", WRITE_DAC | WRITE_OWNER) {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::warn!("cannot open UserChoice for {ext} with WRITE_DAC|WRITE_OWNER: {e}");
+            return Err(e.into());
+        }
+    };
+
+    // Get current user SID for ownership
+    let Some(sid_string) = get_current_user_sid() else {
+        return Err(carminedesktop_core::Error::Config(
+            "failed to get current user SID for ACL override".into(),
+        ));
+    };
+
+    // Get the SID as a PSID from the token (re-derive it)
+    unsafe {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
+        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+        let mut token = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+            tracing::warn!("ACL override: OpenProcessToken failed");
+            return Err(carminedesktop_core::Error::Config(
+                "OpenProcessToken failed during ACL override".into(),
+            ));
+        }
+
+        let mut size = 0u32;
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut size);
+        let mut buffer = vec![0u8; size as usize];
+        if GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buffer.as_mut_ptr().cast()),
+            size,
+            &mut size,
+        )
+        .is_err()
+        {
+            let _ = CloseHandle(token);
+            return Err(carminedesktop_core::Error::Config(
+                "GetTokenInformation failed during ACL override".into(),
+            ));
+        }
+
+        let token_user = &*(buffer.as_ptr() as *const TOKEN_USER);
+        let user_sid = token_user.User.Sid;
+
+        // Convert the raw HKEY to a HANDLE for SetSecurityInfo
+        let raw_hkey = uc_key.raw_handle();
+        let handle = HANDLE(raw_hkey as *mut std::ffi::c_void);
+
+        // Take ownership
+        let result = SetSecurityInfo(
+            handle,
+            se_registry_key,
+            OWNER_SECURITY_INFORMATION,
+            Some(user_sid),
+            None,
+            None,
+            None,
+        );
+        if result.is_err() {
+            let _ = CloseHandle(token);
+            tracing::warn!("SetSecurityInfo (owner) failed for UserChoice {ext}: {result:?}");
+            return Err(carminedesktop_core::Error::Config(format!(
+                "SetSecurityInfo (owner) failed: {result:?}"
+            )));
+        }
+
+        // Set a NULL DACL (grants full access to everyone) so we can delete
+        let result = SetSecurityInfo(
+            handle,
+            se_registry_key,
+            DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            None, // NULL DACL = full access
+            None,
+        );
+        if result.is_err() {
+            let _ = CloseHandle(token);
+            tracing::warn!("SetSecurityInfo (DACL) failed for UserChoice {ext}: {result:?}");
+            return Err(carminedesktop_core::Error::Config(format!(
+                "SetSecurityInfo (DACL) failed: {result:?}"
+            )));
+        }
+
+        let _ = CloseHandle(token);
+        tracing::debug!("ACL override: took ownership of UserChoice for {ext} (SID: {sid_string})");
+    }
+
+    // Drop the key handle before deleting
+    drop(uc_key);
+
+    // Retry delete
+    match parent.delete_subkey_all("UserChoice") {
+        Ok(()) => {
+            tracing::debug!("deleted UserChoice key for {ext} (after ACL override)");
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!("delete UserChoice for {ext} failed even after ACL override: {e}");
+            Err(e.into())
+        }
+    }
+}
+
+/// Set the Windows UserChoice registry key for a file extension.
+///
+/// This is the full flow: delete existing → create new → write ProgId →
+/// compute hash → write Hash. Makes Carmine Desktop the default handler
+/// for the extension without requiring user interaction.
+#[cfg(target_os = "windows")]
+fn set_user_choice_for_extension(ext: &str, progid: &str) -> carminedesktop_core::Result<()> {
+    // Check if UserChoice already points to our ProgID — skip if so
+    if get_user_choice_progid(ext).is_some_and(|p| p == progid) {
+        tracing::debug!("UserChoice for {ext} already set to {progid}, skipping");
+        return Ok(());
+    }
+
+    let Some(sid) = get_current_user_sid() else {
+        return Err(carminedesktop_core::Error::Config(
+            "failed to get current user SID for UserChoice".into(),
+        ));
+    };
+
+    // Delete existing UserChoice key (handle ACL-protected keys gracefully)
+    if let Err(e) = delete_user_choice_key(ext) {
+        tracing::warn!("failed to delete existing UserChoice for {ext}: {e}");
+        // Continue anyway — creating a new key may still work
+    }
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let parent_path = format!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext}");
+
+    // Open or create the FileExts parent key
+    let (parent, _) = hkcu.create_subkey(&parent_path)?;
+
+    // Create UserChoice subkey
+    let (uc_key, _) = parent.create_subkey("UserChoice")?;
+
+    // Write ProgId value
+    uc_key.set_value("ProgId", &progid)?;
+
+    // Query the key's LastWriteTime (must be done right after writing ProgId)
+    let Some(write_time) = get_registry_key_write_time(&uc_key) else {
+        return Err(carminedesktop_core::Error::Config(
+            "failed to query UserChoice key write time".into(),
+        ));
+    };
+
+    // Truncate and format the timestamp
+    let timestamp = format_filetime_truncated(write_time);
+
+    // Compute hash
+    let hash = compute_user_choice_hash(ext, &sid, progid, &timestamp);
+
+    // Write Hash value
+    uc_key.set_value("Hash", &hash)?;
+
+    tracing::info!("set UserChoice for {ext}: progid={progid}, timestamp={timestamp}, hash={hash}");
+
+    Ok(())
+}
+
+/// Set UserChoice registry keys for all Office extensions.
+///
+/// Calls [`set_user_choice_for_extension`] for each extension.
+/// Errors are non-fatal — logged and continued.
+#[cfg(target_os = "windows")]
+pub fn set_all_user_choices() -> carminedesktop_core::Result<()> {
+    let mut last_error = None;
+    for ext in OFFICE_EXTENSIONS {
+        let progid = format!("{PROGID_PREFIX}{ext}");
+        if let Err(e) = set_user_choice_for_extension(ext, &progid) {
+            tracing::warn!("failed to set UserChoice for {ext}: {e}");
+            last_error = Some(e);
+        }
+    }
+    // Return Ok even if some failed — the fallback notification is still available
+    if let Some(e) = last_error {
+        tracing::warn!("some UserChoice registrations failed, last error: {e}");
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1410,6 +1998,95 @@ mod tests {
 
         // Should not error when keys don't exist
         unregister_nav_pane()?;
+
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // UserChoice hash computation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_compute_user_choice_hash_known_vector() {
+        // Known test vector from SetUserFTA documentation
+        let hash = compute_user_choice_hash(
+            ".3g2",
+            "S-1-5-21-819709642-920330688-1657285119-500",
+            "WMP11.AssocFile.3G2",
+            "01d4d98267246000",
+        );
+        assert_eq!(hash, "PCCqEmkvW2Y=");
+    }
+
+    #[test]
+    fn test_format_filetime_truncated() {
+        // 0x01d4d98267246000 = 132243528780000000 decimal
+        // Truncated to minute: 132243528780000000 / 600_000_000 = 220405881 (truncated)
+        // 220405881 * 600_000_000 = 132243528600000000 = 0x01d4d98200000000
+        let ft: u64 = 0x01d4d98267246000;
+        let formatted = format_filetime_truncated(ft);
+        assert_eq!(formatted, "01d4d98200000000");
+    }
+
+    #[test]
+    fn test_cs64_word_swap_deterministic() {
+        let data = b"test data here!!"; // 16 bytes = 4 u32 words
+        let md5 = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let result1 = cs64_word_swap(data, 4, &md5);
+        let result2 = cs64_word_swap(data, 4, &md5);
+        assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn test_cs64_reversible_deterministic() {
+        let data = b"test data here!!"; // 16 bytes = 4 u32 words
+        let md5 = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let result1 = cs64_reversible(data, 4, &md5);
+        let result2 = cs64_reversible(data, 4, &md5);
+        assert_eq!(result1, result2);
+    }
+
+    // -----------------------------------------------------------------------
+    // UserChoice key lifecycle integration test
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_user_choice_set_and_delete() -> carminedesktop_core::Result<()> {
+        let test_ext = ".carminetest";
+        let test_progid = "CarmineDesktop.Test";
+
+        // Set UserChoice
+        set_user_choice_for_extension(test_ext, test_progid)?;
+
+        // Verify ProgId was written
+        let progid = get_user_choice_progid(test_ext);
+        assert_eq!(progid.as_deref(), Some(test_progid));
+
+        // Verify Hash was written (non-empty)
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let uc_path = format!(
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{test_ext}\UserChoice"
+        );
+        let uc_key = hkcu.open_subkey_with_flags(&uc_path, KEY_READ)?;
+        let hash: String = uc_key.get_value("Hash")?;
+        assert!(!hash.is_empty(), "Hash should be non-empty");
+
+        // Delete
+        delete_user_choice_key(test_ext)?;
+
+        // Verify deleted
+        assert!(
+            hkcu.open_subkey_with_flags(&uc_path, KEY_READ).is_err(),
+            "UserChoice key should be deleted"
+        );
+
+        // Cleanup: delete the parent FileExts key for our test extension
+        if let Ok(parent) = hkcu.open_subkey_with_flags(
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts",
+            KEY_READ | KEY_WRITE,
+        ) {
+            let _ = parent.delete_subkey_all(test_ext);
+        }
 
         Ok(())
     }
