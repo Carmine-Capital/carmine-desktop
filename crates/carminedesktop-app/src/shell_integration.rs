@@ -801,7 +801,9 @@ fn get_current_user_sid() -> Option<String> {
 
         let sid = sid_string.to_string().ok()?;
         // Free the SID string allocated by ConvertSidToStringSidW
-        windows::Win32::Foundation::LocalFree(Some(sid_string.as_ptr().cast()));
+        windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(
+            sid_string.as_ptr().cast(),
+        )));
         Some(sid)
     }
 }
