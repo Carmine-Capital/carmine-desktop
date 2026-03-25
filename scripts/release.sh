@@ -198,7 +198,7 @@ fi
 
 # --- Regenerate Cargo.lock ---
 echo "Regenerating Cargo.lock..."
-cargo generate-lockfile --quiet
+toolbox run -c carminedesktop-build cargo generate-lockfile --quiet
 
 # --- Commit, tag, push ---
 git add "$CARGO_TOML" "$TAURI_CONF" "$REPO_ROOT/Cargo.lock"
