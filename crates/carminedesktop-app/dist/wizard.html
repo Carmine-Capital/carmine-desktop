@@ -20,18 +20,14 @@
       <div class="stepper-nav">
         <div class="stepper-item active" id="stepper-1">
           <div class="step-number">1</div>
-          Welcome
+          Sign In
         </div>
         <div class="stepper-item" id="stepper-2">
           <div class="step-number">2</div>
-          Sign In
+          Libraries
         </div>
         <div class="stepper-item" id="stepper-3">
           <div class="step-number">3</div>
-          Sources
-        </div>
-        <div class="stepper-item" id="stepper-4">
-          <div class="step-number">4</div>
           Done
         </div>
       </div>
@@ -42,39 +38,37 @@
     <!-- Main Content -->
     <main class="main-content">
 
-      <!-- Step 1: Welcome -->
+      <!-- Step 1: Welcome + Sign In -->
       <div id="step-welcome" class="step step-centered active">
         <h1 class="step-title-lg">Welcome to Carmine</h1>
         <p class="step-sub">Mount your OneDrive and SharePoint libraries as local folders. Sign in with your Microsoft 365 account to get started.</p>
+        <div id="fuse-warning" class="error-msg" role="alert" style="display:none"></div>
         <button id="sign-in-btn">Sign In with Microsoft</button>
+        <!-- Auth waiting state (hidden until sign-in starts) -->
+        <div id="auth-waiting" style="display:none">
+          <div class="auth-status-row">
+            <div class="spinner"></div>
+            <span id="auth-countdown" class="auth-countdown" aria-live="polite"></span>
+          </div>
+          <div class="url-row">
+            <input id="auth-url" class="url-input" type="text" readonly aria-label="Authentication URL">
+            <button id="copy-btn" class="btn-ghost btn-sm">Copy URL</button>
+          </div>
+          <p class="hint">Browser didn't open? Copy the link and paste it manually.</p>
+          <div id="auth-error" class="error-msg" role="alert" style="display:none"></div>
+          <button id="cancel-btn" class="btn-link cancel-link">Cancel</button>
+        </div>
       </div>
 
-      <!-- Step 2: Signing In -->
-      <div id="step-signing-in" class="step step-centered">
-        <h1>Signing in...</h1>
-        <p class="step-sub">Complete the sign-in in your browser.</p>
-        <div class="auth-status-row">
-          <div class="spinner"></div>
-          <span id="auth-countdown" class="auth-countdown" aria-live="polite"></span>
-        </div>
-        <div class="url-row">
-          <input id="auth-url" class="url-input" type="text" readonly aria-label="Authentication URL">
-          <button id="copy-btn" class="btn-ghost btn-sm">Copy URL</button>
-        </div>
-        <p class="hint">Browser didn't open? Copy the link and paste it manually.</p>
-        <div id="auth-error" class="error-msg" role="alert" style="display:none"></div>
-        <button id="cancel-btn" class="btn-link cancel-link">Cancel</button>
-      </div>
-
-      <!-- Step 3: Sources -->
-      <div id="step-sources" class="step step-scroll">
-        <div class="section-heading" style="margin-top:0">Add Cloud Sources</div>
+      <!-- Step 2: Library Selection -->
+      <div id="step-libraries" class="step step-scroll">
+        <div class="section-heading" style="margin-top:0">Select Libraries</div>
 
         <!-- Loading spinner -->
-        <div id="sources-loading" class="sources-spinner"><div class="spinner"></div></div>
+        <div id="libraries-loading" class="sources-spinner"><div class="spinner"></div></div>
 
         <!-- OneDrive Section -->
-        <div id="sources-onedrive-section" style="display:none">
+        <div id="libraries-onedrive-section" style="display:none">
           <div class="setting-row">
             <div class="setting-label">
               <div class="label-text" id="onedrive-drive-name">OneDrive</div>
@@ -82,44 +76,28 @@
             </div>
             <div class="setting-control">
               <label class="toggle-switch" id="onedrive-card">
-                <input type="checkbox" id="onedrive-check" checked>
+                <input type="checkbox" id="onedrive-check">
                 <span class="toggle-track"></span>
               </label>
             </div>
           </div>
         </div>
 
-        <!-- SharePoint Section -->
-        <div id="sources-sp-section" style="display:none">
+        <!-- SharePoint Libraries Section -->
+        <div id="libraries-sp-section" style="display:none">
           <div class="section-heading">SharePoint Libraries</div>
-          <div class="sp-search-row">
-            <input id="sources-sp-search" type="text" placeholder="Search sites&hellip;" aria-label="Search SharePoint sites">
-          </div>
-          <div id="sources-sp-spinner" class="spinner" style="display:none"></div>
-          <div id="sources-sp-error" class="error-msg" role="alert" style="display:none"></div>
-          <div id="sources-sp-sites"></div>
-          <div id="sources-sp-libraries" style="display:none">
-            <button id="sources-sp-back-sites" class="sp-back-link">&larr; Back to sites</button>
-            <div id="sources-sp-lib-list"></div>
-            <button id="add-selected-btn" style="display:none" disabled>Add selected (0)</button>
-          </div>
-        </div>
-
-        <!-- Added Sources Section -->
-        <div id="sources-added-section" style="display:none">
-          <div class="section-heading">Added</div>
-          <div id="sources-added-list"></div>
+          <div id="libraries-sp-list"></div>
         </div>
 
         <!-- Error and Actions -->
-        <div id="sources-error" class="error-msg" role="alert" style="display:none"></div>
+        <div id="libraries-error" class="error-msg" role="alert" style="display:none"></div>
         <div class="wizard-actions">
           <button id="get-started-btn" disabled>Get started</button>
           <button id="switch-account-btn" class="btn-link">Sign in with a different account</button>
         </div>
       </div>
 
-      <!-- Step 4: Success -->
+      <!-- Step 3: Done -->
       <div id="step-success" class="step step-centered">
         <h1>You're all set</h1>
         <p class="step-sub">Your drives are mounted and ready to use. You'll find them in your file manager.</p>

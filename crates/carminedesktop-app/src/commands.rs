@@ -981,7 +981,7 @@ pub async fn clear_cache(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn open_wizard(app: AppHandle) -> Result<(), String> {
-    crate::tray::open_or_focus_wizard(&app, true);
+    crate::tray::open_or_focus_wizard(&app);
     Ok(())
 }
 
