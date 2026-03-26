@@ -1,6 +1,6 @@
 {
   "productName": "Carmine Desktop",
-  "version": "0.1.0-rc.34",
+  "version": "0.1.0-rc.35",
   "identifier": "com.carmine-capital.desktop",
   "build": {
     "frontendDist": "./dist"
