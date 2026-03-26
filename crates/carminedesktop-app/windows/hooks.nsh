@@ -5,9 +5,11 @@
   ; install and we'll prompt for a restart at the end (Explorer needs a
   ; restart to fully pick up new file-handler registrations + COM classes).
   ; ---------------------------------------------------------------------------
-  StrCpy $R9 "0" ; $R9 = "1" when first install
+  StrCpy $R8 "0" ; $R8 = "1" on first install only (for auto-start registration)
+  StrCpy $R9 "0" ; $R9 = "1" when reboot needed (first install OR fresh WinFsp)
   ReadRegStr $R0 HKCU "Software\RegisteredApplications" "CarmineDesktop"
   ${If} $R0 == ""
+    StrCpy $R8 "1"
     StrCpy $R9 "1"
   ${EndIf}
 
@@ -96,6 +98,21 @@
   DetailPrint "File associations registered."
 
   ; ---------------------------------------------------------------------------
+  ; On first install, register auto-start (enabled by default).
+  ;
+  ; The runtime reconciliation in setup_after_launch() keeps the registry in
+  ; sync with the user's preference on every subsequent launch, but writing
+  ; the Run key at install time ensures the app starts after the first-install
+  ; reboot — before the app has ever had a chance to run.
+  ; Only on first install so updates don't override a user who disabled it.
+  ; ---------------------------------------------------------------------------
+  ${If} $R8 == "1"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" \
+      "Carmine Desktop" '"$INSTDIR\Carmine Desktop.exe"'
+    DetailPrint "Auto-start registered."
+  ${EndIf}
+
+  ; ---------------------------------------------------------------------------
   ; On first install, prompt for a restart.
   ;
   ; Explorer caches COM class registrations and file handler lists.
@@ -117,6 +134,9 @@
   ; ---------------------------------------------------------------------------
   ; Clean up file association registry keys written by POSTINSTALL and runtime.
   ; ---------------------------------------------------------------------------
+
+  ; Remove auto-start registry entry
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Carmine Desktop"
 
   ; Remove RegisteredApplications entry
   DeleteRegValue HKCU "Software\RegisteredApplications" "CarmineDesktop"
