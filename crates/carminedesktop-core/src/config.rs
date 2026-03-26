@@ -626,11 +626,7 @@ pub fn diff_configs(old: &EffectiveConfig, new: &EffectiveConfig) -> Vec<ConfigC
 
 pub mod autostart {
     pub fn set_enabled(enabled: bool, app_path: &str) -> crate::Result<()> {
-        if enabled {
-            enable(app_path)
-        } else {
-            disable()
-        }
+        if enabled { enable(app_path) } else { disable() }
     }
 
     #[cfg(target_os = "linux")]
@@ -725,8 +721,8 @@ pub mod autostart {
 
     #[cfg(target_os = "windows")]
     fn enable(app_path: &str) -> crate::Result<()> {
-        use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
         use winreg::RegKey;
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
 
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let run_key = hkcu
@@ -745,8 +741,8 @@ pub mod autostart {
 
     #[cfg(target_os = "windows")]
     fn disable() -> crate::Result<()> {
-        use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
         use winreg::RegKey;
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
 
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         if let Ok(run_key) = hkcu.open_subkey_with_flags(

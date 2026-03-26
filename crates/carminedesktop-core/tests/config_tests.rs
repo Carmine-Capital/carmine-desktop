@@ -1,6 +1,6 @@
 use carminedesktop_core::config::{
-    expand_mount_point, AccountMetadata, EffectiveConfig, MountConfig, UserConfig,
-    UserGeneralSettings,
+    AccountMetadata, EffectiveConfig, MountConfig, UserConfig, UserGeneralSettings,
+    expand_mount_point,
 };
 use std::env;
 use std::path::PathBuf;
