@@ -1,4 +1,16 @@
 !macro NSIS_HOOK_POSTINSTALL
+  ; ---------------------------------------------------------------------------
+  ; Detect first install vs. update.
+  ; If our RegisteredApplications entry doesn't exist yet, this is a first
+  ; install and we'll prompt for a restart at the end (Explorer needs a
+  ; restart to fully pick up new file-handler registrations + COM classes).
+  ; ---------------------------------------------------------------------------
+  StrCpy $R9 "0" ; $R9 = "1" when first install
+  ReadRegStr $R0 HKCU "Software\RegisteredApplications" "CarmineDesktop"
+  ${If} $R0 == ""
+    StrCpy $R9 "1"
+  ${EndIf}
+
   ; WinFsp registers under WOW6432Node (32-bit view). Tauri's NSIS template
   ; sets SetRegView 64, so we must switch to 32-bit to find it.
   SetRegView 32
@@ -22,6 +34,8 @@
         MessageBox MB_OK|MB_ICONSTOP "WinFsp installation failed (exit code: $1).$\n$\nCarmine Desktop requires WinFsp to function. Please install WinFsp manually from https://winfsp.dev."
       ${Else}
         DetailPrint "WinFsp installed successfully."
+        ; WinFsp is a kernel driver — a restart is required.
+        StrCpy $R9 "1"
       ${EndIf}
     ${EndIf}
   ${EndIf}
@@ -38,7 +52,7 @@
   ; This uses the modern Windows 10/11 model: RegisteredApplications +
   ; Capabilities + OpenWithProgids.  The runtime code in setup_after_launch()
   ; refreshes these on every launch, but writing them at install time ensures
-  ; Explorer knows about Carmine Desktop immediately (no reboot needed).
+  ; Explorer knows about Carmine Desktop immediately after a restart.
   ; ---------------------------------------------------------------------------
 
   DetailPrint "Registering file associations..."
@@ -80,6 +94,23 @@
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0x0000, p 0, p 0)'
 
   DetailPrint "File associations registered."
+
+  ; ---------------------------------------------------------------------------
+  ; On first install, prompt for a restart.
+  ;
+  ; Explorer caches COM class registrations and file handler lists.
+  ; SHChangeNotify refreshes association data but the "Open with" list and
+  ; the IApplicationAssociationRegistrationUI COM class require an Explorer
+  ; restart (logoff/logon) or a full system restart to become visible.
+  ; We only prompt on first install — updates don't need it.
+  ; ---------------------------------------------------------------------------
+  ${If} $R9 == "1"
+    MessageBox MB_YESNO|MB_ICONQUESTION \
+      "A system restart is recommended so Windows fully recognizes Carmine Desktop for opening Office files.$\n$\nRestart now?" \
+      /SD IDNO IDNO skip_reboot
+      Reboot
+    skip_reboot:
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL

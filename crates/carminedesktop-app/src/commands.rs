@@ -1254,16 +1254,24 @@ fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {
 // Open in SharePoint
 // ---------------------------------------------------------------------------
 
-/// Open the Windows "Default Apps" settings panel for Carmine Desktop.
+/// Force-register Carmine Desktop as the handler for Office file types and
+/// open the Windows "Default Apps" settings panel.
 ///
-/// Uses the `IApplicationAssociationRegistrationUI` COM interface to show a
-/// system dialog where the user can set Carmine Desktop as the default handler
-/// for Office file types.  Falls back to opening `ms-settings:defaultapps` if
-/// the COM call fails.
+/// First re-runs `register_file_associations()` (including UserChoice hash
+/// computation) to ensure our ProgIDs and defaults are up-to-date.  Then
+/// opens the system Default Apps UI via the `IApplicationAssociationRegistrationUI`
+/// COM interface.  Falls back to `ms-settings:defaultapps` if the COM call fails
+/// (e.g. on fresh installs before a reboot refreshes COM class registrations).
 #[tauri::command]
 pub fn prompt_set_default_handler() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        // Force re-register file associations + UserChoice hashes before opening
+        // the UI so that changes take effect even if the user already had another
+        // default handler set.
+        if let Err(e) = crate::shell_integration::register_file_associations() {
+            tracing::warn!("pre-prompt file association registration failed: {e}");
+        }
         launch_default_apps_ui().map_err(|e| format!("{e}"))
     }
     #[cfg(not(target_os = "windows"))]
@@ -1284,20 +1292,27 @@ fn launch_default_apps_ui() -> carminedesktop_core::Result<()> {
 
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        let ui: IApplicationAssociationRegistrationUI = CoCreateInstance(
-            &ApplicationAssociationRegistrationUI,
-            None,
-            CLSCTX_INPROC_SERVER,
-        )
-        .map_err(|e| {
-            carminedesktop_core::Error::Config(format!("failed to create association UI: {e}"))
-        })?;
-        ui.LaunchAdvancedAssociationUI(&HSTRING::from("CarmineDesktop"))
-            .map_err(|e| {
+
+        let com_result: Result<(), windows::core::Error> = (|| {
+            let ui: IApplicationAssociationRegistrationUI = CoCreateInstance(
+                &ApplicationAssociationRegistrationUI,
+                None,
+                CLSCTX_INPROC_SERVER,
+            )?;
+            ui.LaunchAdvancedAssociationUI(&HSTRING::from("CarmineDesktop"))?;
+            Ok(())
+        })();
+
+        if let Err(e) = com_result {
+            tracing::warn!(
+                "COM Default Apps UI failed ({e}), falling back to ms-settings:defaultapps"
+            );
+            crate::open_with_clean_env("ms-settings:defaultapps").map_err(|e2| {
                 carminedesktop_core::Error::Config(format!(
-                    "failed to open Default Apps panel: {e}"
+                    "failed to open Default Apps panel: {e} (fallback also failed: {e2})"
                 ))
             })?;
+        }
     }
     Ok(())
 }

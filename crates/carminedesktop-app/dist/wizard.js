@@ -11,6 +11,8 @@ const state = {
   onedriveDriveId: null,
   defaultMountRoot: '~/Cloud',
   libraries: [],
+  primarySiteId: null,
+  primarySiteName: null,
   authUnlisteners: [],
   finalMounts: [],
 };
@@ -205,12 +207,18 @@ async function loadLibraries() {
   document.getElementById('libraries-sp-section').style.display = 'none';
   document.getElementById('libraries-error').style.display = 'none';
 
-  const [driveResult, librariesResult] = await Promise.allSettled([
+  const [driveResult, librariesResult, siteInfoResult] = await Promise.allSettled([
     invoke('get_drive_info'),
     invoke('list_primary_site_libraries'),
+    invoke('get_primary_site_info'),
   ]);
 
   document.getElementById('libraries-loading').style.display = 'none';
+
+  if (siteInfoResult.status === 'fulfilled') {
+    state.primarySiteId = siteInfoResult.value.site_id;
+    state.primarySiteName = siteInfoResult.value.site_name;
+  }
 
   if (driveResult.status === 'fulfilled') {
     const drive = driveResult.value;
@@ -349,6 +357,8 @@ async function getStarted() {
         mountType: 'sharepoint',
         mountPoint,
         driveId: lib.id,
+        siteId: state.primarySiteId || null,
+        siteName: state.primarySiteName || null,
         libraryName: lib.name,
       });
       totalMounted++;
