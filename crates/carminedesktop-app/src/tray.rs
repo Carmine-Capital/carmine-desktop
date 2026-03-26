@@ -78,10 +78,7 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
 
     match id {
         "sign_in" => {
-            open_or_focus_wizard(app, false);
-        }
-        "add_mount" => {
-            open_or_focus_wizard(app, true);
+            open_or_focus_wizard(app);
         }
         "settings" => {
             open_or_focus_window(app, "settings", "Settings", "settings.html");
@@ -99,7 +96,7 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             });
         }
         "re_authenticate" => {
-            open_or_focus_wizard(app, false);
+            open_or_focus_wizard(app);
         }
         "sign_out" => {
             let app = app.clone();
@@ -135,11 +132,8 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
     }
 }
 
-pub fn open_or_focus_wizard(app: &AppHandle, add_mount: bool) {
+pub fn open_or_focus_wizard(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("wizard") {
-        if add_mount {
-            let _ = win.emit("navigate-add-mount", ());
-        }
         let _ = win.unminimize();
         let _ = win.show();
         let _ = win.set_focus();
@@ -250,10 +244,6 @@ pub fn update_tray_menu(app: &AppHandle) {
 
             let sep1 = PredefinedMenuItem::separator(app)?;
             builder = builder.item(&sep1);
-
-            let add_mount =
-                MenuItemBuilder::with_id("add_mount", "Add Mount\u{2026}").build(app)?;
-            builder = builder.item(&add_mount);
         }
 
         let settings = MenuItemBuilder::with_id("settings", "Settings\u{2026}").build(app)?;

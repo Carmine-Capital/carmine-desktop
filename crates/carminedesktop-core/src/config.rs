@@ -82,6 +82,21 @@ impl UserConfig {
         }
     }
 
+    /// Returns true if any mount already uses the given `drive_id`.
+    pub fn has_mount_for_drive(&self, drive_id: &str) -> bool {
+        self.mounts
+            .iter()
+            .any(|m| m.drive_id.as_deref() == Some(drive_id))
+    }
+
+    /// Returns the mount id for a mount with the given `drive_id`, if any.
+    pub fn mount_id_for_drive(&self, drive_id: &str) -> Option<&str> {
+        self.mounts
+            .iter()
+            .find(|m| m.drive_id.as_deref() == Some(drive_id))
+            .map(|m| m.id.as_str())
+    }
+
     pub fn add_sharepoint_mount(
         &mut self,
         site_id: &str,
@@ -91,6 +106,11 @@ impl UserConfig {
         mount_point: &str,
         account_id: Option<String>,
     ) -> crate::Result<()> {
+        if self.has_mount_for_drive(drive_id) {
+            return Err(crate::Error::Config(format!(
+                "library is already mounted (drive {drive_id})"
+            )));
+        }
         validate_mount_point(mount_point, &self.mounts)?;
 
         let id = format!("sp-{}", uuid::Uuid::new_v4());
@@ -116,6 +136,11 @@ impl UserConfig {
         mount_point: &str,
         account_id: Option<String>,
     ) -> crate::Result<()> {
+        if self.has_mount_for_drive(drive_id) {
+            return Err(crate::Error::Config(format!(
+                "drive is already mounted (drive {drive_id})"
+            )));
+        }
         validate_mount_point(mount_point, &self.mounts)?;
 
         let id = format!("od-{}", uuid::Uuid::new_v4());

@@ -736,3 +736,137 @@ async fn handle_error_maps_423_to_locked() {
         "expected Error::Locked, got: {err:?}"
     );
 }
+
+// --- list_primary_site_libraries tests ---
+
+#[tokio::test]
+async fn list_primary_site_libraries_returns_document_libraries() {
+    let server = MockServer::start().await;
+
+    let expected_path = format!(
+        "/sites/{}/drives",
+        carminedesktop_core::primary_site::SITE_ID
+    );
+
+    Mock::given(method("GET"))
+        .and(path(&expected_path))
+        .and(header("Authorization", "Bearer test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "id": "lib-1",
+                    "name": "Documents",
+                    "driveType": "documentLibrary",
+                },
+                {
+                    "id": "lib-2",
+                    "name": "Shared Assets",
+                    "driveType": "documentLibrary",
+                },
+                {
+                    "id": "lib-other",
+                    "name": "Site Pages",
+                    "driveType": "sitePage",
+                },
+            ],
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let libraries = client.list_primary_site_libraries().await.unwrap();
+
+    // Should filter to documentLibrary only (same as list_site_drives)
+    assert_eq!(libraries.len(), 2);
+    assert_eq!(libraries[0].id, "lib-1");
+    assert_eq!(libraries[0].name, "Documents");
+    assert_eq!(libraries[1].id, "lib-2");
+    assert_eq!(libraries[1].name, "Shared Assets");
+}
+
+#[tokio::test]
+async fn list_primary_site_libraries_returns_empty_vec_when_no_libraries() {
+    let server = MockServer::start().await;
+
+    let expected_path = format!(
+        "/sites/{}/drives",
+        carminedesktop_core::primary_site::SITE_ID
+    );
+
+    Mock::given(method("GET"))
+        .and(path(&expected_path))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [],
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let libraries = client.list_primary_site_libraries().await.unwrap();
+
+    assert!(libraries.is_empty());
+}
+
+#[tokio::test]
+async fn list_primary_site_libraries_returns_error_when_site_not_found() {
+    let server = MockServer::start().await;
+
+    let expected_path = format!(
+        "/sites/{}/drives",
+        carminedesktop_core::primary_site::SITE_ID
+    );
+
+    Mock::given(method("GET"))
+        .and(path(&expected_path))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "error": {
+                "code": "itemNotFound",
+                "message": "The provided site ID does not correspond to an existing site.",
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let err = client.list_primary_site_libraries().await.unwrap_err();
+
+    match err {
+        carminedesktop_core::Error::GraphApi { status, message } => {
+            assert_eq!(status, 404);
+            assert!(message.contains("itemNotFound"));
+        }
+        other => panic!("expected GraphApi 404 error, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn list_primary_site_libraries_returns_error_when_auth_expired() {
+    let server = MockServer::start().await;
+
+    let expected_path = format!(
+        "/sites/{}/drives",
+        carminedesktop_core::primary_site::SITE_ID
+    );
+
+    Mock::given(method("GET"))
+        .and(path(&expected_path))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+            "error": {
+                "code": "InvalidAuthenticationToken",
+                "message": "Access token has expired or is not yet valid.",
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server.uri());
+    let err = client.list_primary_site_libraries().await.unwrap_err();
+
+    match err {
+        carminedesktop_core::Error::GraphApi { status, message } => {
+            assert_eq!(status, 401);
+            assert!(message.contains("InvalidAuthenticationToken"));
+        }
+        other => panic!("expected GraphApi 401 error, got: {other:?}"),
+    }
+}

@@ -669,6 +669,8 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::complete_wizard,
             commands::search_sites,
             commands::list_drives,
+            commands::list_primary_site_libraries,
+            commands::get_primary_site_info,
             commands::refresh_mount,
             commands::clear_cache,
             commands::open_wizard,
