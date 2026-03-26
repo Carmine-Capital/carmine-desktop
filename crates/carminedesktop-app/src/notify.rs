@@ -67,6 +67,15 @@ pub fn auto_start_failed(app: &AppHandle, reason: &str) {
     );
 }
 
+#[cfg(target_os = "windows")]
+pub fn file_assoc_user_choice_failed(app: &AppHandle) {
+    send(
+        app,
+        "File Associations",
+        "Could not set Carmine Desktop as the default handler. Please set it manually in Settings \u{2192} Default Apps.",
+    );
+}
+
 pub fn sign_out_failed(app: &AppHandle, reason: &str) {
     send(
         app,

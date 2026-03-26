@@ -133,6 +133,9 @@
 !macro NSIS_HOOK_PREUNINSTALL
   ; ---------------------------------------------------------------------------
   ; Clean up file association registry keys written by POSTINSTALL and runtime.
+  ;
+  ; Order matters: we must restore previous handlers BEFORE deleting ProgIDs,
+  ; otherwise the extension defaults are left pointing to deleted keys.
   ; ---------------------------------------------------------------------------
 
   ; Remove auto-start registry entry
@@ -145,29 +148,52 @@
   DeleteRegKey HKCU "Software\CarmineDesktop\Capabilities"
   DeleteRegKey HKCU "Software\CarmineDesktop"
 
-  ; Remove ProgID entries
+  ; ---------------------------------------------------------------------------
+  ; Restore previous handlers for each extension.
+  ;
+  ; Read CarmineDesktop.PreviousHandler BEFORE deleting it, and write the value
+  ; back as the extension's default ProgID.  If no previous handler was saved,
+  ; clear the default so Windows can fall back naturally.
+  ;
+  ; Also attempt to delete UserChoice keys — these contain stale ProgId +
+  ; invalid hash after our ProgIDs are removed.  Deletion may fail due to ACL
+  ; protection; that's OK — Explorer will fall back gracefully.
+  ; ---------------------------------------------------------------------------
+  !macro _RestoreExtension EXT PROGID
+    ; Read saved previous handler (into $R0)
+    ReadRegStr $R0 HKCU "Software\Classes\${EXT}" "CarmineDesktop.PreviousHandler"
+    ${If} $R0 != ""
+      ; Restore previous handler as extension default
+      WriteRegStr HKCU "Software\Classes\${EXT}" "" "$R0"
+    ${Else}
+      ; No saved handler — clear the default (currently points to our ProgID)
+      DeleteRegValue HKCU "Software\Classes\${EXT}" ""
+    ${EndIf}
+
+    ; Delete saved previous handler value
+    DeleteRegValue HKCU "Software\Classes\${EXT}" "CarmineDesktop.PreviousHandler"
+
+    ; Remove from OpenWithProgids (delete value, not the key itself)
+    DeleteRegValue HKCU "Software\Classes\${EXT}\OpenWithProgids" "${PROGID}"
+
+    ; Attempt to delete UserChoice key (may fail due to ACL — non-fatal)
+    DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\${EXT}\UserChoice"
+  !macroend
+
+  !insertmacro _RestoreExtension ".docx" "CarmineDesktop.OfficeFile.docx"
+  !insertmacro _RestoreExtension ".xlsx" "CarmineDesktop.OfficeFile.xlsx"
+  !insertmacro _RestoreExtension ".pptx" "CarmineDesktop.OfficeFile.pptx"
+  !insertmacro _RestoreExtension ".doc"  "CarmineDesktop.OfficeFile.doc"
+  !insertmacro _RestoreExtension ".xls"  "CarmineDesktop.OfficeFile.xls"
+  !insertmacro _RestoreExtension ".ppt"  "CarmineDesktop.OfficeFile.ppt"
+
+  ; Remove ProgID entries (AFTER restoring defaults, so defaults don't point to deleted keys)
   DeleteRegKey HKCU "Software\Classes\CarmineDesktop.OfficeFile.docx"
   DeleteRegKey HKCU "Software\Classes\CarmineDesktop.OfficeFile.xlsx"
   DeleteRegKey HKCU "Software\Classes\CarmineDesktop.OfficeFile.pptx"
   DeleteRegKey HKCU "Software\Classes\CarmineDesktop.OfficeFile.doc"
   DeleteRegKey HKCU "Software\Classes\CarmineDesktop.OfficeFile.xls"
   DeleteRegKey HKCU "Software\Classes\CarmineDesktop.OfficeFile.ppt"
-
-  ; Remove OpenWithProgids values (delete value, not the key itself)
-  DeleteRegValue HKCU "Software\Classes\.docx\OpenWithProgids" "CarmineDesktop.OfficeFile.docx"
-  DeleteRegValue HKCU "Software\Classes\.xlsx\OpenWithProgids" "CarmineDesktop.OfficeFile.xlsx"
-  DeleteRegValue HKCU "Software\Classes\.pptx\OpenWithProgids" "CarmineDesktop.OfficeFile.pptx"
-  DeleteRegValue HKCU "Software\Classes\.doc\OpenWithProgids" "CarmineDesktop.OfficeFile.doc"
-  DeleteRegValue HKCU "Software\Classes\.xls\OpenWithProgids" "CarmineDesktop.OfficeFile.xls"
-  DeleteRegValue HKCU "Software\Classes\.ppt\OpenWithProgids" "CarmineDesktop.OfficeFile.ppt"
-
-  ; Remove saved previous handler values
-  DeleteRegValue HKCU "Software\Classes\.docx" "CarmineDesktop.PreviousHandler"
-  DeleteRegValue HKCU "Software\Classes\.xlsx" "CarmineDesktop.PreviousHandler"
-  DeleteRegValue HKCU "Software\Classes\.pptx" "CarmineDesktop.PreviousHandler"
-  DeleteRegValue HKCU "Software\Classes\.doc" "CarmineDesktop.PreviousHandler"
-  DeleteRegValue HKCU "Software\Classes\.xls" "CarmineDesktop.PreviousHandler"
-  DeleteRegValue HKCU "Software\Classes\.ppt" "CarmineDesktop.PreviousHandler"
 
   ; Notify Explorer
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0x0000, p 0, p 0)'

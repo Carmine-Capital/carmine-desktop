@@ -1257,11 +1257,12 @@ fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {
 /// Force-register Carmine Desktop as the handler for Office file types and
 /// open the Windows "Default Apps" settings panel.
 ///
-/// First re-runs `register_file_associations()` (including UserChoice hash
-/// computation) to ensure our ProgIDs and defaults are up-to-date.  Then
-/// opens the system Default Apps UI via the `IApplicationAssociationRegistrationUI`
-/// COM interface.  Falls back to `ms-settings:defaultapps` if the COM call fails
-/// (e.g. on fresh installs before a reboot refreshes COM class registrations).
+/// First re-runs `register_file_associations()` and `set_all_user_choices()`
+/// to ensure our ProgIDs, defaults, and UserChoice hashes are up-to-date.
+/// Then opens the system Default Apps UI via the
+/// `IApplicationAssociationRegistrationUI` COM interface.  Falls back to
+/// `ms-settings:defaultapps` if the COM call fails (e.g. on fresh installs
+/// before a reboot refreshes COM class registrations).
 #[tauri::command]
 pub fn prompt_set_default_handler() -> Result<(), String> {
     #[cfg(target_os = "windows")]
@@ -1271,6 +1272,9 @@ pub fn prompt_set_default_handler() -> Result<(), String> {
         // default handler set.
         if let Err(e) = crate::shell_integration::register_file_associations() {
             tracing::warn!("pre-prompt file association registration failed: {e}");
+        }
+        if let Err(e) = crate::shell_integration::set_all_user_choices() {
+            tracing::warn!("pre-prompt UserChoice registration failed: {e}");
         }
         launch_default_apps_ui().map_err(|e| format!("{e}"))
     }

@@ -102,31 +102,7 @@ pub fn register_file_associations() -> carminedesktop_core::Result<()> {
         let (ext_key, _) = classes.create_subkey(ext)?;
 
         // Save the previous handler if one exists and we haven't already saved it.
-        // Check both the extension's default ProgID and the UserChoice key
-        // (where Windows stores the user's explicit choice, e.g. after "always open with").
-        // Only save ProgIDs that have a valid shell\open\command to avoid fallback failures.
-        if ext_key
-            .get_value::<String, _>(PREVIOUS_HANDLER_VALUE)
-            .is_err()
-        {
-            // Try 1: extension's default ProgID (HKCU\Software\Classes\{ext} default value)
-            let from_ext_default = ext_key
-                .get_value::<String, _>("")
-                .ok()
-                .filter(|prev| !prev.is_empty() && !prev.starts_with(PROGID_PREFIX))
-                .filter(|prev| get_progid_command(prev).is_some());
-
-            // Try 2: UserChoice ProgId (HKCU\...\FileExts\{ext}\UserChoice\ProgId)
-            let from_user_choice = get_user_choice_progid(ext)
-                .filter(|prev| !prev.starts_with(PROGID_PREFIX))
-                .filter(|prev| get_progid_command(prev).is_some());
-
-            // Prefer UserChoice (the user's explicit selection) over the extension default
-            if let Some(prev) = from_user_choice.or(from_ext_default) {
-                ext_key.set_value(PREVIOUS_HANDLER_VALUE, &prev)?;
-                tracing::debug!("saved previous handler for {ext}: {prev}");
-            }
-        }
+        save_previous_handler_for_ext(&ext_key, ext)?;
 
         // Set our ProgID as the default handler
         ext_key.set_value("", &progid)?;
@@ -194,13 +170,9 @@ pub fn register_file_associations() -> carminedesktop_core::Result<()> {
     let (ra_key, _) = hkcu.create_subkey(r"Software\RegisteredApplications")?;
     ra_key.set_value("CarmineDesktop", &CAPABILITIES_PATH)?;
 
-    // Set UserChoice keys with valid hashes so Windows 10/11 uses our ProgID
-    // immediately, without requiring the user to visit Settings > Default Apps.
-    if let Err(e) = set_all_user_choices() {
-        tracing::warn!("UserChoice registration failed (non-fatal): {e}");
-    }
-
-    // Notify the shell that file associations have changed
+    // Notify the shell that file associations have changed.
+    // Note: UserChoice registration is handled separately by the caller
+    // (set_all_user_choices) so it can surface failures to the user.
     notify_shell_change();
 
     Ok(())
@@ -379,6 +351,57 @@ pub(crate) fn get_user_choice_progid(ext: &str) -> Option<String> {
     } else {
         Some(progid)
     }
+}
+
+/// Save the previous handler for a file extension, with discover fallback.
+///
+/// Checks three sources (in order) for a valid non-Carmine-Desktop handler:
+/// 1. Extension's default ProgID (`HKCU\Software\Classes\{ext}` default)
+/// 2. UserChoice ProgId (`HKCU\...\FileExts\{ext}\UserChoice\ProgId`)
+/// 3. `discover_office_handler(ext)` — well-known ProgIDs, HKLM default, OpenWithProgids
+///
+/// Only saves ProgIDs that have a valid `shell\open\command` (tries 1 & 2 verify this;
+/// try 3 inherits the check from [`discover_office_handler`]).
+///
+/// Does nothing if a previous handler is already saved.
+#[cfg(target_os = "windows")]
+fn save_previous_handler_for_ext(ext_key: &RegKey, ext: &str) -> carminedesktop_core::Result<()> {
+    // Already saved — don't overwrite (user may have changed handler since first registration)
+    if ext_key
+        .get_value::<String, _>(PREVIOUS_HANDLER_VALUE)
+        .is_ok()
+    {
+        return Ok(());
+    }
+
+    // Try 1: extension's default ProgID (HKCU\Software\Classes\{ext} default value)
+    let from_ext_default = ext_key
+        .get_value::<String, _>("")
+        .ok()
+        .filter(|prev| !prev.is_empty() && !prev.starts_with(PROGID_PREFIX))
+        .filter(|prev| get_progid_command(prev).is_some());
+
+    // Try 2: UserChoice ProgId (HKCU\...\FileExts\{ext}\UserChoice\ProgId)
+    let from_user_choice = get_user_choice_progid(ext)
+        .filter(|prev| !prev.starts_with(PROGID_PREFIX))
+        .filter(|prev| get_progid_command(prev).is_some());
+
+    // Try 3: discover via well-known ProgIDs, HKLM default, or OpenWithProgids.
+    // This handles the stale-state scenario: after an incomplete uninstall, both
+    // extension default and UserChoice point to our own (deleted) ProgID, so tries
+    // 1 & 2 yield nothing.  discover_office_handler() looks at system-level data
+    // that survives uninstall.
+    let from_discover = || discover_office_handler(ext);
+
+    // Prefer UserChoice (user's explicit selection) > ext default > discover
+    if let Some(prev) = from_user_choice.or(from_ext_default).or_else(from_discover) {
+        ext_key.set_value(PREVIOUS_HANDLER_VALUE, &prev)?;
+        tracing::debug!("saved previous handler for {ext}: {prev}");
+    } else {
+        tracing::debug!("no previous handler found for {ext}");
+    }
+
+    Ok(())
 }
 
 /// Check if Carmine Desktop file associations are currently registered.
@@ -1060,25 +1083,45 @@ fn set_user_choice_for_extension(ext: &str, progid: &str) -> carminedesktop_core
     Ok(())
 }
 
+/// Result of attempting to set UserChoice registry keys for all Office extensions.
+#[cfg(target_os = "windows")]
+pub struct UserChoiceResult {
+    /// Number of extensions where UserChoice was successfully set.
+    pub succeeded: usize,
+    /// Number of extensions where UserChoice failed (ACL, hash, etc.).
+    pub failed: usize,
+}
+
+#[cfg(target_os = "windows")]
+impl UserChoiceResult {
+    /// Returns `true` if every extension failed — the user should be notified.
+    pub fn all_failed(&self) -> bool {
+        self.succeeded == 0 && self.failed > 0
+    }
+}
+
 /// Set UserChoice registry keys for all Office extensions.
 ///
-/// Calls [`set_user_choice_for_extension`] for each extension.
-/// Errors are non-fatal — logged and continued.
+/// Calls [`set_user_choice_for_extension`] for each extension and returns
+/// a [`UserChoiceResult`] with success/failure counts so the caller can
+/// decide whether to notify the user.
 #[cfg(target_os = "windows")]
-pub fn set_all_user_choices() -> carminedesktop_core::Result<()> {
-    let mut last_error = None;
+pub fn set_all_user_choices() -> carminedesktop_core::Result<UserChoiceResult> {
+    let mut succeeded = 0;
+    let mut failed = 0;
     for ext in OFFICE_EXTENSIONS {
         let progid = format!("{PROGID_PREFIX}{ext}");
         if let Err(e) = set_user_choice_for_extension(ext, &progid) {
             tracing::warn!("failed to set UserChoice for {ext}: {e}");
-            last_error = Some(e);
+            failed += 1;
+        } else {
+            succeeded += 1;
         }
     }
-    // Return Ok even if some failed — the fallback notification is still available
-    if let Some(e) = last_error {
-        tracing::warn!("some UserChoice registrations failed, last error: {e}");
+    if failed > 0 {
+        tracing::warn!("UserChoice registration: {succeeded} succeeded, {failed} failed");
     }
-    Ok(())
+    Ok(UserChoiceResult { succeeded, failed })
 }
 
 // ---------------------------------------------------------------------------
@@ -2089,6 +2132,120 @@ mod tests {
         ) {
             let _ = parent.delete_subkey_all(test_ext);
         }
+
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Cycle 2: discover_office_handler fallback in save_previous_handler
+    // -----------------------------------------------------------------------
+
+    /// When both the extension default and UserChoice point to stale Carmine
+    /// Desktop ProgIDs, `save_previous_handler_for_ext` should fall back to
+    /// `discover_office_handler` and save the discovered handler.
+    #[test]
+    fn test_save_previous_handler_falls_back_to_discover() -> carminedesktop_core::Result<()> {
+        let test_ext = ".carminetest_stale";
+        let stale_progid = format!("{PROGID_PREFIX}{test_ext}");
+        let discoverable_progid = "CarmineTestDiscover.Handler";
+        let fake_command = r#""C:\fake\handler.exe" "%1""#;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let classes = hkcu.open_subkey_with_flags(r"Software\Classes", KEY_READ | KEY_WRITE)?;
+
+        // Setup: create extension key with stale default (our own ProgID)
+        let (ext_key, _) = classes.create_subkey(test_ext)?;
+        ext_key.set_value("", &stale_progid)?;
+
+        // Setup: add a discoverable handler via OpenWithProgids
+        let (owp_key, _) = ext_key.create_subkey("OpenWithProgids")?;
+        owp_key.set_raw_value(
+            discoverable_progid,
+            &RegValue {
+                bytes: vec![],
+                vtype: RegType::REG_NONE,
+            },
+        )?;
+
+        // Setup: create the discoverable ProgID with a valid shell\open\command
+        let (progid_key, _) = classes.create_subkey(discoverable_progid)?;
+        let (shell_key, _) = progid_key.create_subkey(r"shell\open\command")?;
+        shell_key.set_value("", &fake_command)?;
+
+        // Act: save_previous_handler_for_ext should find the discoverable handler
+        // via try 3 (discover) since try 1 (ext default = our ProgID) and
+        // try 2 (no UserChoice set) both yield nothing.
+        save_previous_handler_for_ext(&ext_key, test_ext)?;
+
+        // Assert: PreviousHandler should be set to the discovered handler
+        let saved: String = ext_key.get_value(PREVIOUS_HANDLER_VALUE)?;
+        assert_eq!(
+            saved, discoverable_progid,
+            "should fall back to discover_office_handler when ext default is stale"
+        );
+
+        // Cleanup
+        let _ = ext_key.delete_value(PREVIOUS_HANDLER_VALUE);
+        let _ = ext_key.delete_value("");
+        let _ = classes.delete_subkey_all(test_ext);
+        let _ = classes.delete_subkey_all(discoverable_progid);
+
+        Ok(())
+    }
+
+    /// When an existing PreviousHandler is already saved, `save_previous_handler_for_ext`
+    /// should not overwrite it (even if the saved handler is stale).
+    #[test]
+    fn test_save_previous_handler_preserves_existing() -> carminedesktop_core::Result<()> {
+        let test_ext = ".carminetest_preserve";
+        let existing_handler = "ExistingHandler.Preserve";
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let classes = hkcu.open_subkey_with_flags(r"Software\Classes", KEY_READ | KEY_WRITE)?;
+
+        // Setup: create extension key with PreviousHandler already saved
+        let (ext_key, _) = classes.create_subkey(test_ext)?;
+        ext_key.set_value(PREVIOUS_HANDLER_VALUE, &existing_handler)?;
+
+        // Act
+        save_previous_handler_for_ext(&ext_key, test_ext)?;
+
+        // Assert: PreviousHandler should be unchanged
+        let saved: String = ext_key.get_value(PREVIOUS_HANDLER_VALUE)?;
+        assert_eq!(
+            saved, existing_handler,
+            "should not overwrite existing PreviousHandler"
+        );
+
+        // Cleanup
+        let _ = classes.delete_subkey_all(test_ext);
+
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Cycle 3: set_all_user_choices returns success/failure counts
+    // -----------------------------------------------------------------------
+
+    /// `set_all_user_choices` should return a `UserChoiceResult` with counts
+    /// of succeeded and failed extensions.
+    #[test]
+    fn test_set_all_user_choices_returns_result_counts() -> carminedesktop_core::Result<()> {
+        let result = set_all_user_choices()?;
+
+        // On any Windows machine, the total should equal OFFICE_EXTENSIONS count
+        assert_eq!(
+            result.succeeded + result.failed,
+            OFFICE_EXTENSIONS.len(),
+            "total should equal number of Office extensions"
+        );
+
+        // At least verify the struct fields are accessible and the sum is correct
+        // (actual success/failure depends on system state and ACLs)
+        assert!(
+            result.succeeded + result.failed > 0,
+            "should have processed at least one extension"
+        );
 
         Ok(())
     }
