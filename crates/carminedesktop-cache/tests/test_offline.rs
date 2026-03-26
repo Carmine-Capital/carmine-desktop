@@ -1,17 +1,19 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use carminedesktop_cache::{CacheManager, OfflineManager, PinResult};
 use carminedesktop_core::types::{DriveItem, FileFacet, FolderFacet, ParentReference};
 use wiremock::MockServer;
 
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 /// Create a test CacheManager with unique temp paths.
 fn test_cache() -> (Arc<CacheManager>, std::path::PathBuf) {
+    let seq = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
     let base = std::env::temp_dir().join(format!(
-        "carminedesktop-offline-test-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        "carminedesktop-offline-test-{}-{}",
+        std::process::id(),
+        seq,
     ));
     let cache_dir = base.join("cache");
     let db_path = base.join("metadata.db");
