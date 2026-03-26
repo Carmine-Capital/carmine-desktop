@@ -8,6 +8,9 @@ const { listen } = window.__TAURI__.event;
 const state = {
   settings: {},
   mounts: [],
+  libraries: [],
+  librariesLoading: false,
+  librariesError: null,
   handlers: [],
   offlinePins: [],
   activePanel: 'dashboard',
@@ -124,54 +127,119 @@ function renderSettings() {
 }
 
 function renderMounts() {
-  const list = document.getElementById('mount-list');
+  const list = document.getElementById('library-list');
+  if (!list) return;
   list.innerHTML = '';
-  state.mounts.forEach(m => {
+
+  // Build a lookup: drive_id -> mount for currently mounted items
+  const mountByDrive = {};
+  state.mounts.forEach(function(m) {
+    if (m.drive_id) mountByDrive[m.drive_id] = m;
+  });
+
+  // OneDrive toggle (always shown if user has a drive)
+  const odMount = state.mounts.find(function(m) { return m.mount_type === 'drive'; });
+  const driveInfo = state.settings.driveInfo;
+  if (driveInfo || odMount) {
     const li = document.createElement('li');
-    li.className = 'setting-row' + (m.enabled ? '' : ' mount-disabled');
+    li.className = 'setting-row';
 
     const info = document.createElement('div');
     info.className = 'mount-info';
     const nameEl = document.createElement('div');
     nameEl.className = 'mount-name';
-    nameEl.textContent = m.name;
+    nameEl.textContent = 'OneDrive';
     const pathEl = document.createElement('div');
     pathEl.className = 'mount-path';
-    pathEl.textContent = m.mount_point;
+    pathEl.textContent = odMount ? odMount.mount_point : 'Not mounted';
     info.appendChild(nameEl);
     info.appendChild(pathEl);
 
     const actions = document.createElement('div');
     actions.className = 'mount-actions';
-
     const toggleLabel = document.createElement('label');
     toggleLabel.className = 'toggle-switch';
     const toggleInput = document.createElement('input');
     toggleInput.type = 'checkbox';
-    toggleInput.checked = m.enabled;
-    toggleInput.dataset.action = 'toggle-mount';
-    toggleInput.dataset.id = m.id;
+    toggleInput.checked = !!odMount;
+    toggleInput.dataset.action = 'toggle-library';
+    toggleInput.dataset.libraryType = 'onedrive';
+    toggleInput.dataset.driveId = driveInfo ? driveInfo.id : (odMount ? odMount.drive_id : '');
+    toggleInput.dataset.driveName = 'OneDrive';
+    if (odMount) toggleInput.dataset.mountId = odMount.id;
     const toggleTrack = document.createElement('span');
     toggleTrack.className = 'toggle-track';
     toggleLabel.appendChild(toggleInput);
     toggleLabel.appendChild(toggleTrack);
-
-    const removeBtn = document.createElement('button');
-    removeBtn.className = 'btn-icon btn-icon-danger';
-    removeBtn.dataset.action = 'remove-mount';
-    removeBtn.dataset.id = m.id;
-    removeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
-
     actions.appendChild(toggleLabel);
-    actions.appendChild(removeBtn);
+
+    li.appendChild(info);
+    li.appendChild(actions);
+    list.appendChild(li);
+  }
+
+  // Loading state
+  if (state.librariesLoading) {
+    const loading = document.createElement('li');
+    loading.className = 'mount-empty';
+    loading.innerHTML = '<span class="spinner"></span> Loading libraries\u2026';
+    list.appendChild(loading);
+    return;
+  }
+
+  // Error state
+  if (state.librariesError) {
+    const err = document.createElement('li');
+    err.className = 'mount-empty';
+    err.textContent = 'Could not load libraries';
+    list.appendChild(err);
+    return;
+  }
+
+  // SharePoint libraries
+  state.libraries.forEach(function(lib) {
+    const existingMount = mountByDrive[lib.id];
+    const li = document.createElement('li');
+    li.className = 'setting-row';
+
+    const info = document.createElement('div');
+    info.className = 'mount-info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'mount-name';
+    nameEl.textContent = lib.name;
+    const pathEl = document.createElement('div');
+    pathEl.className = 'mount-path';
+    pathEl.textContent = existingMount ? existingMount.mount_point : 'Not mounted';
+    info.appendChild(nameEl);
+    info.appendChild(pathEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'mount-actions';
+    const toggleLabel = document.createElement('label');
+    toggleLabel.className = 'toggle-switch';
+    const toggleInput = document.createElement('input');
+    toggleInput.type = 'checkbox';
+    toggleInput.checked = !!existingMount;
+    toggleInput.dataset.action = 'toggle-library';
+    toggleInput.dataset.libraryType = 'sharepoint';
+    toggleInput.dataset.driveId = lib.id;
+    toggleInput.dataset.driveName = lib.name;
+    if (existingMount) toggleInput.dataset.mountId = existingMount.id;
+    const toggleTrack = document.createElement('span');
+    toggleTrack.className = 'toggle-track';
+    toggleLabel.appendChild(toggleInput);
+    toggleLabel.appendChild(toggleTrack);
+    actions.appendChild(toggleLabel);
+
     li.appendChild(info);
     li.appendChild(actions);
     list.appendChild(li);
   });
-  if (state.mounts.length === 0) {
+
+  if (state.libraries.length === 0 && !odMount && !driveInfo) {
     const empty = document.createElement('li');
     empty.className = 'mount-empty';
-    empty.textContent = 'No mounts configured';
+    empty.textContent = 'No libraries available';
     list.appendChild(empty);
   }
 }
@@ -664,39 +732,75 @@ function debouncedSave() {
   _saveTimer = setTimeout(saveSettings, 500);
 }
 
-async function toggleMount(id) {
+async function toggleLibraryOn(libraryType, driveId, driveName) {
   try {
-    await invoke('toggle_mount', { id });
-    showStatus('Mount updated', 'success');
+    const mountRoot = await invoke('get_default_mount_root');
+    let mountPoint, siteId, siteName, libraryName;
+
+    if (libraryType === 'sharepoint') {
+      // Derive mount point from settings root dir and library name
+      const siteParts = state.settings.primarySiteName || 'SharePoint';
+      siteName = siteParts;
+      libraryName = driveName;
+      mountPoint = mountRoot + '/' + siteName + '/' + libraryName;
+      siteId = state.settings.primarySiteId || null;
+    } else {
+      mountPoint = mountRoot + '/OneDrive';
+    }
+
+    await invoke('add_mount', {
+      mountType: libraryType === 'sharepoint' ? 'sharepoint' : 'drive',
+      mountPoint: mountPoint,
+      driveId: driveId,
+      siteId: siteId || null,
+      siteName: siteName || null,
+      libraryName: libraryName || null,
+    });
+    showStatus(driveName + ' enabled', 'success');
+    const mounts = await invoke('list_mounts');
+    setState({ mounts: mounts });
   } catch (e) {
     showStatus(formatError(e), 'error');
-  }
-  try {
-    const mounts = await invoke('list_mounts');
-    setState({ mounts });
-  } catch (_) {
-    renderMounts();
+    // Re-fetch to revert toggle visual state
+    try {
+      const mounts = await invoke('list_mounts');
+      setState({ mounts: mounts });
+    } catch (_) { render(); }
   }
 }
 
-async function removeMount(id) {
-  const ok = await window.__TAURI__.dialog.confirm('Remove this mount? This cannot be undone.', { title: 'Remove Mount', kind: 'warning' });
-  if (!ok) return;
+async function toggleLibraryOff(mountId, driveName) {
   try {
-    await invoke('remove_mount', { id });
-    showStatus('Mount removed', 'success');
+    await invoke('remove_mount', { id: mountId });
+    showStatus(driveName + ' disabled', 'success');
     const mounts = await invoke('list_mounts');
-    setState({ mounts });
+    setState({ mounts: mounts });
   } catch (e) {
     showStatus(formatError(e), 'error');
+    try {
+      const mounts = await invoke('list_mounts');
+      setState({ mounts: mounts });
+    } catch (_) { render(); }
   }
 }
 
-async function addMount() {
+async function loadLibraries() {
+  setState({ librariesLoading: true, librariesError: null });
   try {
-    await invoke('open_wizard');
+    const [libraries, driveInfo, siteInfo] = await Promise.all([
+      invoke('list_primary_site_libraries').catch(function() { return []; }),
+      invoke('get_drive_info').catch(function() { return null; }),
+      invoke('get_primary_site_info').catch(function() { return null; }),
+    ]);
+    const s = Object.assign({}, state.settings);
+    if (driveInfo) s.driveInfo = driveInfo;
+    if (siteInfo) {
+      s.primarySiteId = siteInfo.site_id;
+      s.primarySiteName = siteInfo.site_name;
+    }
+    setState({ libraries: libraries, librariesLoading: false, settings: s });
   } catch (e) {
-    showStatus(formatError(e), 'error');
+    setState({ librariesLoading: false, librariesError: formatError(e) });
   }
 }
 
@@ -868,6 +972,7 @@ async function refreshOfflineData() {
 function refreshPanelData(panel) {
   if (panel === 'dashboard') refreshDashboardData();
   else if (panel === 'offline') refreshOfflineData();
+  else if (panel === 'mounts') loadLibraries();
 }
 
 // ---------------------------------------------------------------------------
@@ -891,6 +996,8 @@ async function init() {
     setState({ settings, mounts, handlers, offlinePins, dashboardStatus, recentErrors, recentActivity, cacheStats });
     document.title = settings.app_name + ' Settings';
     document.getElementById('app-version').textContent = settings.app_version;
+    // Load libraries in background (non-blocking for initial render)
+    loadLibraries();
   } catch (e) {
     showStatus(formatError(e), 'error');
   }
@@ -924,7 +1031,6 @@ async function init() {
 
   // Static buttons (direct listeners — not delegated)
   document.getElementById('sign-out-btn').addEventListener('click', signOut);
-  document.getElementById('btn-add-mount').addEventListener('click', addMount);
   document.getElementById('btn-clear-cache').addEventListener('click', clearCache);
   document.getElementById('btn-redetect').addEventListener('click', redetectHandlers);
   document.getElementById('btn-set-default').addEventListener('click', async () => {
@@ -941,8 +1047,7 @@ async function init() {
     const target = e.target.closest('[data-action]');
     if (!target) return;
     const action = target.dataset.action;
-    if (action === 'remove-mount') await removeMount(target.dataset.id);
-    else if (action === 'override-handler') showOverrideInput(target);
+    if (action === 'override-handler') showOverrideInput(target);
     else if (action === 'set-override') await setOverride(target);
     else if (action === 'clear-override') await clearOverride(target);
     else if (action === 'remove-pin') await removeOfflinePin(target.dataset.driveId, target.dataset.itemId, target.dataset.name);
@@ -965,7 +1070,14 @@ async function init() {
   document.querySelector('.main-content').addEventListener('change', async (e) => {
     const target = e.target.closest('[data-action]');
     if (!target) return;
-    if (target.dataset.action === 'toggle-mount') await toggleMount(target.dataset.id);
+    if (target.dataset.action === 'toggle-library') {
+      const isOn = target.checked;
+      if (isOn) {
+        await toggleLibraryOn(target.dataset.libraryType, target.dataset.driveId, target.dataset.driveName);
+      } else {
+        await toggleLibraryOff(target.dataset.mountId, target.dataset.driveName);
+      }
+    }
   });
 
   // Backend-triggered refresh (tray icon re-opens window)

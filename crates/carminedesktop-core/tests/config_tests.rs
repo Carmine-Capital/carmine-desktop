@@ -1,6 +1,6 @@
 use carminedesktop_core::config::{
-    AccountMetadata, EffectiveConfig, MountConfig, UserConfig, UserGeneralSettings,
-    expand_mount_point,
+    expand_mount_point, AccountMetadata, EffectiveConfig, MountConfig, UserConfig,
+    UserGeneralSettings,
 };
 use std::env;
 use std::path::PathBuf;
@@ -454,6 +454,161 @@ fn test_config_explorer_nav_pane_roundtrip() -> carminedesktop_core::Result<()> 
     );
 
     let _ = std::fs::remove_file(&config_path);
+
+    Ok(())
+}
+
+// --- Issue #4: Library toggle config tests ---
+
+#[test]
+fn test_config_add_sharepoint_mount_creates_correct_config() -> carminedesktop_core::Result<()> {
+    let mut user = UserConfig::load("")?;
+    user.accounts.push(AccountMetadata {
+        id: "acc-1".to_string(),
+        email: Some("user@contoso.com".to_string()),
+        display_name: None,
+        tenant_id: None,
+    });
+
+    user.add_sharepoint_mount(
+        "site-contoso-123",
+        "drive-lib-456",
+        "Contoso Team",
+        "Documents",
+        "/mnt/contoso/Documents",
+        Some("acc-1".to_string()),
+    )?;
+
+    assert_eq!(user.mounts.len(), 1);
+    let m = &user.mounts[0];
+    assert!(
+        m.id.starts_with("sp-"),
+        "sharepoint mount id should start with sp-"
+    );
+    assert_eq!(m.name, "Contoso Team - Documents");
+    assert_eq!(m.mount_type, "sharepoint");
+    assert_eq!(m.mount_point, "/mnt/contoso/Documents");
+    assert!(m.enabled);
+    assert_eq!(m.account_id, Some("acc-1".to_string()));
+    assert_eq!(m.drive_id, Some("drive-lib-456".to_string()));
+    assert_eq!(m.site_id, Some("site-contoso-123".to_string()));
+    assert_eq!(m.site_name, Some("Contoso Team".to_string()));
+    assert_eq!(m.library_name, Some("Documents".to_string()));
+
+    // Persist and reload
+    let config_path = create_temp_config_file();
+    user.save_to_file(&config_path)?;
+    let loaded = UserConfig::load_from_file(&config_path)?;
+    assert_eq!(loaded.mounts.len(), 1);
+    assert_eq!(loaded.mounts[0].name, "Contoso Team - Documents");
+    assert_eq!(loaded.mounts[0].drive_id, Some("drive-lib-456".to_string()));
+    assert_eq!(
+        loaded.mounts[0].site_id,
+        Some("site-contoso-123".to_string())
+    );
+
+    let _ = std::fs::remove_file(&config_path);
+    Ok(())
+}
+
+#[test]
+fn test_config_remove_mount_persists() -> carminedesktop_core::Result<()> {
+    let mut user = UserConfig::load("")?;
+
+    user.add_sharepoint_mount(
+        "site-1",
+        "drive-1",
+        "Site A",
+        "Docs",
+        "/mnt/a/Docs",
+        Some("acc-1".to_string()),
+    )?;
+    user.add_onedrive_mount("drive-od", "/mnt/onedrive", Some("acc-1".to_string()))?;
+    assert_eq!(user.mounts.len(), 2);
+
+    let mount_id = user.mounts[0].id.clone();
+    let removed = user.remove_mount(&mount_id);
+    assert!(removed);
+    assert_eq!(user.mounts.len(), 1);
+    assert_eq!(user.mounts[0].mount_type, "drive"); // only OneDrive remains
+
+    // Persist and reload
+    let config_path = create_temp_config_file();
+    user.save_to_file(&config_path)?;
+    let loaded = UserConfig::load_from_file(&config_path)?;
+    assert_eq!(loaded.mounts.len(), 1);
+    assert_eq!(loaded.mounts[0].mount_type, "drive");
+
+    let _ = std::fs::remove_file(&config_path);
+    Ok(())
+}
+
+#[test]
+fn test_config_has_mount_for_drive() -> carminedesktop_core::Result<()> {
+    let mut user = UserConfig::load("")?;
+
+    // No mounts yet
+    assert!(!user.has_mount_for_drive("drive-1"));
+
+    user.add_sharepoint_mount("site-1", "drive-1", "Site A", "Docs", "/mnt/a/Docs", None)?;
+
+    assert!(user.has_mount_for_drive("drive-1"));
+    assert!(!user.has_mount_for_drive("drive-2"));
+
+    Ok(())
+}
+
+#[test]
+fn test_config_add_duplicate_drive_returns_error() -> carminedesktop_core::Result<()> {
+    let mut user = UserConfig::load("")?;
+
+    user.add_sharepoint_mount("site-1", "drive-1", "Site A", "Docs", "/mnt/a/Docs", None)?;
+
+    // Adding same drive_id again should fail
+    let result =
+        user.add_sharepoint_mount("site-1", "drive-1", "Site A", "Docs", "/mnt/b/Docs", None);
+    assert!(
+        result.is_err(),
+        "adding a duplicate drive_id should return an error"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("already mounted"),
+        "error should mention 'already mounted', got: {err}"
+    );
+
+    // Config should still have only one mount
+    assert_eq!(user.mounts.len(), 1);
+
+    Ok(())
+}
+
+#[test]
+fn test_config_add_onedrive_duplicate_drive_returns_error() -> carminedesktop_core::Result<()> {
+    let mut user = UserConfig::load("")?;
+
+    user.add_onedrive_mount("drive-od", "/mnt/onedrive", None)?;
+
+    let result = user.add_onedrive_mount("drive-od", "/mnt/onedrive2", None);
+    assert!(
+        result.is_err(),
+        "adding duplicate OneDrive drive_id should return an error"
+    );
+
+    assert_eq!(user.mounts.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn test_config_add_mount_no_account() -> carminedesktop_core::Result<()> {
+    // When no account is configured, account_id is None — this should still work
+    let mut user = UserConfig::load("")?;
+    assert!(user.accounts.is_empty());
+
+    user.add_sharepoint_mount("site-1", "drive-1", "Site A", "Docs", "/mnt/a/Docs", None)?;
+
+    assert_eq!(user.mounts.len(), 1);
+    assert_eq!(user.mounts[0].account_id, None);
 
     Ok(())
 }

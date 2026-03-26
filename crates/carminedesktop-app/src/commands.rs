@@ -896,6 +896,20 @@ pub async fn list_drives(app: AppHandle, site_id: String) -> Result<Vec<DriveInf
         .collect())
 }
 
+#[derive(Serialize)]
+pub struct PrimarySiteInfo {
+    pub site_id: String,
+    pub site_name: String,
+}
+
+#[tauri::command]
+pub fn get_primary_site_info() -> PrimarySiteInfo {
+    PrimarySiteInfo {
+        site_id: carminedesktop_core::primary_site::SITE_ID.to_string(),
+        site_name: carminedesktop_core::primary_site::SITE_NAME.to_string(),
+    }
+}
+
 #[tauri::command]
 pub async fn list_primary_site_libraries(app: AppHandle) -> Result<Vec<DriveInfo>, String> {
     let state = app.state::<AppState>();
