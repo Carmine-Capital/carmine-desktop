@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use carminedesktop_cache::{CacheManager, OfflineManager, PinResult};
 use carminedesktop_core::types::{DriveItem, FileFacet, FolderFacet, ParentReference};
