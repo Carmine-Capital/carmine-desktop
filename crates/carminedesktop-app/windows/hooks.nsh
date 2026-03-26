@@ -130,6 +130,39 @@
   ${EndIf}
 !macroend
 
+; ---------------------------------------------------------------------------
+; Helper: restore a single extension's previous handler during uninstall.
+;
+; Must be defined at top level (NSIS forbids macros inside macros).
+; Read CarmineDesktop.PreviousHandler BEFORE deleting it, and write the value
+; back as the extension's default ProgID.  If no previous handler was saved,
+; clear the default so Windows can fall back naturally.
+;
+; Also attempt to delete UserChoice keys — these contain stale ProgId +
+; invalid hash after our ProgIDs are removed.  Deletion may fail due to ACL
+; protection; that's OK — Explorer will fall back gracefully.
+; ---------------------------------------------------------------------------
+!macro _RestoreExtension EXT PROGID
+  ; Read saved previous handler (into $R0)
+  ReadRegStr $R0 HKCU "Software\Classes\${EXT}" "CarmineDesktop.PreviousHandler"
+  ${If} $R0 != ""
+    ; Restore previous handler as extension default
+    WriteRegStr HKCU "Software\Classes\${EXT}" "" "$R0"
+  ${Else}
+    ; No saved handler — clear the default (currently points to our ProgID)
+    DeleteRegValue HKCU "Software\Classes\${EXT}" ""
+  ${EndIf}
+
+  ; Delete saved previous handler value
+  DeleteRegValue HKCU "Software\Classes\${EXT}" "CarmineDesktop.PreviousHandler"
+
+  ; Remove from OpenWithProgids (delete value, not the key itself)
+  DeleteRegValue HKCU "Software\Classes\${EXT}\OpenWithProgids" "${PROGID}"
+
+  ; Attempt to delete UserChoice key (may fail due to ACL — non-fatal)
+  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\${EXT}\UserChoice"
+!macroend
+
 !macro NSIS_HOOK_PREUNINSTALL
   ; ---------------------------------------------------------------------------
   ; Clean up file association registry keys written by POSTINSTALL and runtime.
@@ -148,38 +181,7 @@
   DeleteRegKey HKCU "Software\CarmineDesktop\Capabilities"
   DeleteRegKey HKCU "Software\CarmineDesktop"
 
-  ; ---------------------------------------------------------------------------
-  ; Restore previous handlers for each extension.
-  ;
-  ; Read CarmineDesktop.PreviousHandler BEFORE deleting it, and write the value
-  ; back as the extension's default ProgID.  If no previous handler was saved,
-  ; clear the default so Windows can fall back naturally.
-  ;
-  ; Also attempt to delete UserChoice keys — these contain stale ProgId +
-  ; invalid hash after our ProgIDs are removed.  Deletion may fail due to ACL
-  ; protection; that's OK — Explorer will fall back gracefully.
-  ; ---------------------------------------------------------------------------
-  !macro _RestoreExtension EXT PROGID
-    ; Read saved previous handler (into $R0)
-    ReadRegStr $R0 HKCU "Software\Classes\${EXT}" "CarmineDesktop.PreviousHandler"
-    ${If} $R0 != ""
-      ; Restore previous handler as extension default
-      WriteRegStr HKCU "Software\Classes\${EXT}" "" "$R0"
-    ${Else}
-      ; No saved handler — clear the default (currently points to our ProgID)
-      DeleteRegValue HKCU "Software\Classes\${EXT}" ""
-    ${EndIf}
-
-    ; Delete saved previous handler value
-    DeleteRegValue HKCU "Software\Classes\${EXT}" "CarmineDesktop.PreviousHandler"
-
-    ; Remove from OpenWithProgids (delete value, not the key itself)
-    DeleteRegValue HKCU "Software\Classes\${EXT}\OpenWithProgids" "${PROGID}"
-
-    ; Attempt to delete UserChoice key (may fail due to ACL — non-fatal)
-    DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\${EXT}\UserChoice"
-  !macroend
-
+  ; Restore previous handlers for each extension
   !insertmacro _RestoreExtension ".docx" "CarmineDesktop.OfficeFile.docx"
   !insertmacro _RestoreExtension ".xlsx" "CarmineDesktop.OfficeFile.xlsx"
   !insertmacro _RestoreExtension ".pptx" "CarmineDesktop.OfficeFile.pptx"
