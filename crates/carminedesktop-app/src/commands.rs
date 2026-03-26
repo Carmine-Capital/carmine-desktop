@@ -897,6 +897,23 @@ pub async fn list_drives(app: AppHandle, site_id: String) -> Result<Vec<DriveInf
 }
 
 #[tauri::command]
+pub async fn list_primary_site_libraries(app: AppHandle) -> Result<Vec<DriveInfo>, String> {
+    let state = app.state::<AppState>();
+    let drives = state
+        .graph
+        .list_primary_site_libraries()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(drives
+        .into_iter()
+        .map(|d| DriveInfo {
+            id: d.id,
+            name: d.name,
+        })
+        .collect())
+}
+
+#[tauri::command]
 pub async fn refresh_mount(app: AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
 

@@ -700,6 +700,15 @@ impl GraphClient {
         }
     }
 
+    /// List document libraries for the hardcoded primary SharePoint site.
+    ///
+    /// Uses the compile-time `SITE_ID` from `carminedesktop_core::primary_site`
+    /// so the caller (e.g. a Tauri command) doesn't need to know the site ID.
+    pub async fn list_primary_site_libraries(&self) -> carminedesktop_core::Result<Vec<Drive>> {
+        self.list_site_drives(carminedesktop_core::primary_site::SITE_ID)
+            .await
+    }
+
     pub async fn list_site_drives(&self, site_id: &str) -> carminedesktop_core::Result<Vec<Drive>> {
         let base_url = &self.base_url;
         let collection: GraphCollection<Drive> = self
