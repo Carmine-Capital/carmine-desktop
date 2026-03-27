@@ -108,7 +108,7 @@
   ; ---------------------------------------------------------------------------
   ${If} $R8 == "1"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" \
-      "Carmine Desktop" '"$INSTDIR\Carmine Desktop.exe"'
+      "Carmine Desktop" '$INSTDIR\Carmine Desktop.exe'
     DetailPrint "Auto-start registered."
   ${EndIf}
 

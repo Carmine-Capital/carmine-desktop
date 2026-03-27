@@ -175,6 +175,27 @@ async fn complete_sign_in(app: &AppHandle) -> Result<(), String> {
 
     *state.account_id.lock().map_err(|e| e.to_string())? = Some(drive.id.clone());
     rebuild_effective_config(app)?;
+
+    // Reconcile OS auto-start after sign-in so the registry/service/plist
+    // is correct even if the app is never restarted after onboarding.
+    {
+        let auto_start_enabled = {
+            let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+            config.auto_start
+        };
+        match std::env::current_exe() {
+            Ok(exe) => {
+                let exe_path = exe.to_string_lossy();
+                if let Err(e) = autostart::set_enabled(auto_start_enabled, &exe_path) {
+                    tracing::warn!("auto-start reconciliation after sign-in failed: {e}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("failed to resolve exe path for auto-start after sign-in: {e}");
+            }
+        }
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     if !crate::fuse_available() {
         crate::notify::fuse_unavailable(app);

@@ -795,11 +795,11 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
         }
     }
 
-    if restored {
-        *state.account_id.lock().unwrap() = Some(account.as_ref().unwrap().id.clone());
-        state.authenticated.store(true, Ordering::Relaxed);
-
-        // Reconcile OS auto-start state with the persisted config value.
+    // Reconcile OS auto-start state with the persisted config value.
+    // Runs unconditionally (not just when tokens are restored) so that the
+    // first manual launch after install overwrites the NSIS-written registry
+    // value with the correct exe path from std::env::current_exe().
+    {
         let auto_start = {
             let config = state.effective_config.lock().unwrap();
             config.auto_start
@@ -817,6 +817,11 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
                 tracing::warn!("failed to resolve exe path for auto-start sync: {e}");
             }
         }
+    }
+
+    if restored {
+        *state.account_id.lock().unwrap() = Some(account.as_ref().unwrap().id.clone());
+        state.authenticated.store(true, Ordering::Relaxed);
 
         // Reconcile file association registration with config.
         {
