@@ -329,4 +329,3 @@ async fn test_try_restore_keeps_tokens_when_refresh_fails() -> carminedesktop_co
     let _ = carminedesktop_auth::storage::delete_tokens(account_id);
     Ok(())
 }
-
