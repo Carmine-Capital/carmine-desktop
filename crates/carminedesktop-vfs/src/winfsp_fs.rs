@@ -22,7 +22,7 @@ use winfsp::filesystem::{
 };
 use winfsp::host::{FileSystemHost, VolumeParams};
 
-use crate::core_ops::{CoreOps, OpenFileTable, VfsError, VfsEvent};
+use crate::core_ops::{CoreOps, OpenFileTable, VfsError, VfsEvent, is_transient_file};
 use crate::inode::{InodeTable, ROOT_INODE};
 use carminedesktop_cache::CacheManager;
 use carminedesktop_core::DeltaSyncObserver;
@@ -744,7 +744,7 @@ impl FileSystemContext for CarmineDesktopWinFsp {
                 .lookup_item(context.ino)
                 .map(|i| i.name)
                 .unwrap_or_default();
-            if !file_name_str.is_empty() {
+            if !file_name_str.is_empty() && !is_transient_file(&file_name_str) {
                 self.ops.send_event(VfsEvent::UploadFailed {
                     file_name: file_name_str,
                     reason: format!("{e:?}"),
@@ -780,10 +780,12 @@ impl FileSystemContext for CarmineDesktopWinFsp {
                             is_dir = context.is_dir,
                             "cleanup delete-on-close failed: {e:?}"
                         );
-                        self.ops.send_event(VfsEvent::DeleteFailed {
-                            file_name: name.to_string(),
-                            reason: format!("{e:?}"),
-                        });
+                        if !is_transient_file(name) {
+                            self.ops.send_event(VfsEvent::DeleteFailed {
+                                file_name: name.to_string(),
+                                reason: format!("{e:?}"),
+                            });
+                        }
                     }
                 }
             }
@@ -825,7 +827,7 @@ impl FileSystemContext for CarmineDesktopWinFsp {
                     .lookup_item(context.ino)
                     .map(|i| i.name)
                     .unwrap_or_default();
-                if !file_name.is_empty() {
+                if !file_name.is_empty() && !is_transient_file(&file_name) {
                     self.ops.send_event(VfsEvent::UploadFailed {
                         file_name,
                         reason: format!("{e:?}"),
