@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'">
-  <title>Carmine Desktop Settings</title>
+  <title>Paramètres Carmine</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,62 +15,61 @@
         <span class="sidebar-title">Carmine</span>
       </div>
       <nav class="sidebar-nav" role="tablist">
-        <button class="nav-item active" data-panel="dashboard" role="tab" tabindex="0" aria-selected="true" aria-controls="panel-dashboard" id="tab-dashboard">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="7" height="7" rx="1"/>
-            <rect x="14" y="3" width="7" height="7" rx="1"/>
-            <rect x="3" y="14" width="7" height="7" rx="1"/>
-            <rect x="14" y="14" width="7" height="7" rx="1"/>
-          </svg>
-          Dashboard
+        <button class="nav-item active" data-panel="dashboard" role="tab" id="tab-dashboard">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          Tableau de bord
         </button>
-        <button class="nav-item" data-panel="general" role="tab" tabindex="-1" aria-selected="false" aria-controls="panel-general" id="tab-general">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          General
+        <button class="nav-item" data-panel="general" role="tab" id="tab-general">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Général
         </button>
-        <button class="nav-item" data-panel="mounts" role="tab" tabindex="-1" aria-selected="false" aria-controls="panel-mounts" id="tab-mounts">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
-          Mounts
+        <button class="nav-item" data-panel="mounts" role="tab" id="tab-mounts">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Lecteurs
         </button>
-        <button class="nav-item" data-panel="offline" role="tab" tabindex="-1" aria-selected="false" aria-controls="panel-offline" id="tab-offline">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Offline
+        <button class="nav-item" data-panel="offline" role="tab" id="tab-offline">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
+          Hors-ligne
         </button>
-        <button class="nav-item" data-panel="about" role="tab" tabindex="-1" aria-selected="false" aria-controls="panel-about" id="tab-about">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-          About
+        <button class="nav-item" data-panel="about" role="tab" id="tab-about">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          À propos
         </button>
       </nav>
       <div class="sidebar-footer">
-        <p class="account-email" id="account-email">Not signed in</p>
-        <button id="sign-out-btn" class="btn-danger">Sign Out</button>
+        <p class="account-email" id="account-email">Non connecté</p>
+        <button id="sign-out-btn" class="btn-danger">Déconnexion</button>
       </div>
     </aside>
+
     <main class="main-content">
       <!-- Dashboard panel -->
-      <div class="panel active" id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard">
+      <div class="panel active" id="panel-dashboard">
         <div id="auth-banner" class="auth-banner" role="alert" style="display: none;"></div>
-        <p class="section-heading">Drives</p>
+        
+        <p class="section-heading">Vos Lecteurs</p>
         <div id="drive-cards" class="drive-cards"></div>
+        
         <div id="upload-summary" class="upload-summary" style="display: none;"></div>
         <div id="upload-detail" class="upload-detail" style="display: none;"></div>
-        <p class="section-heading">Recent Activity</p>
+        
+        <p class="section-heading">Activité récente</p>
         <ul id="activity-list" class="activity-list"></ul>
-        <p class="section-heading" id="errors-heading">Errors</p>
+        
+        <p class="section-heading" id="errors-heading">Erreurs</p>
         <div id="error-list" class="error-list"></div>
-        <p class="section-heading">Cache &amp; Offline</p>
+        
+        <p class="section-heading">Cache & Hors-ligne</p>
         <div id="cache-section"></div>
       </div>
 
       <!-- General panel -->
-      <div class="panel" id="panel-general" role="tabpanel" aria-labelledby="tab-general">
-
-        <p class="section-heading">General</p>
-
+      <div class="panel" id="panel-general">
+        <p class="section-heading">Système</p>
         <div class="setting-row">
           <div class="setting-label">
-            <div class="label-text">Start on login</div>
-            <div class="label-sub">Launch Carmine when you sign in</div>
+            <div class="label-text">Lancer au démarrage</div>
+            <div class="label-sub">Ouvrir Carmine lors de l'ouverture de session</div>
           </div>
           <div class="setting-control">
             <label class="toggle-switch">
@@ -83,7 +82,7 @@
         <div class="setting-row">
           <div class="setting-label">
             <div class="label-text">Notifications</div>
-            <div class="label-sub">Show sync and error alerts</div>
+            <div class="label-sub">Afficher les alertes de synchronisation</div>
           </div>
           <div class="setting-control">
             <label class="toggle-switch">
@@ -93,27 +92,15 @@
           </div>
         </div>
 
-        <div class="setting-row" id="nav-pane-field" style="display:none">
-          <div class="setting-label">
-            <div class="label-text">Show in Explorer nav pane</div>
-            <div class="label-sub">Pin Carmine drives to the Windows Explorer sidebar</div>
-          </div>
-          <div class="setting-control">
-            <label class="toggle-switch">
-              <input type="checkbox" id="explorer-nav-pane">
-              <span class="toggle-track"></span>
-            </label>
-          </div>
-        </div>
-
+        <p class="section-heading">Synchronisation</p>
         <div class="setting-row">
           <div class="setting-label">
-            <div class="label-text">Sync interval</div>
-            <div class="label-sub">How often to check for remote changes</div>
+            <div class="label-text">Intervalle de synchro</div>
+            <div class="label-sub">Fréquence de vérification des changements</div>
           </div>
           <div class="setting-control">
             <select id="sync-interval">
-              <option value="30">30 seconds</option>
+              <option value="30">30 secondes</option>
               <option value="60">1 minute</option>
               <option value="300">5 minutes</option>
               <option value="900">15 minutes</option>
@@ -121,120 +108,58 @@
           </div>
         </div>
 
-        <p class="section-heading">File Associations</p>
-
-        <p class="setting-help">Carmine Desktop is registered as a candidate handler for Office files (.docx, .xlsx, .pptx). Pick it as your default in Windows Settings to open mounted Office files in SharePoint co-authoring on double-click.</p>
-        <ul class="handler-list" id="handler-list"></ul>
-        <button id="btn-set-default" class="btn-ghost btn-sm" style="display:none">Open Default Apps Settings&hellip;</button>
-
-        <p class="section-heading">Advanced</p>
-
+        <p class="section-heading">Stockage local</p>
         <div class="setting-row">
           <div class="setting-label">
-            <div class="label-text">Cache directory</div>
-            <div class="label-sub">Where downloaded files are stored</div>
+            <div class="label-text">Dossier de cache</div>
+            <div class="label-sub">Emplacement des fichiers temporaires</div>
           </div>
           <div class="setting-control">
-            <input type="text" id="cache-dir" placeholder="Default">
+            <input type="text" id="cache-dir" placeholder="Par défaut">
           </div>
         </div>
 
         <div class="setting-row">
           <div class="setting-label">
-            <div class="label-text">Cache size limit</div>
-            <div class="label-sub">Maximum disk space for cached files</div>
+            <div class="label-text">Limite du cache</div>
+            <div class="label-sub">Espace disque maximal alloué</div>
           </div>
           <div class="setting-control">
             <input type="text" id="cache-max-size" placeholder="5GB">
-            <button id="btn-clear-cache" class="btn-danger">Clear</button>
+            <button id="btn-clear-cache" class="btn-danger">Vider</button>
           </div>
         </div>
-
-        <div class="setting-row">
-          <div class="setting-label">
-            <div class="label-text">Metadata TTL</div>
-            <div class="label-sub">Seconds before re-fetching folder listings</div>
-          </div>
-          <div class="setting-control">
-            <input type="number" id="metadata-ttl" placeholder="60">
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-label">
-            <div class="label-text">Log level</div>
-            <div class="label-sub">Verbosity of diagnostic output</div>
-          </div>
-          <div class="setting-control">
-            <select id="log-level">
-              <option value="error">Error</option>
-              <option value="warn">Warning</option>
-              <option value="info">Info</option>
-              <option value="debug">Debug</option>
-              <option value="trace">Trace</option>
-            </select>
-          </div>
-        </div>
-
       </div>
 
       <!-- Mounts panel -->
-      <div class="panel" id="panel-mounts" role="tabpanel" aria-labelledby="tab-mounts">
-        <p class="section-heading">Libraries</p>
+      <div class="panel" id="panel-mounts">
+        <p class="section-heading">Bibliothèques actives</p>
         <ul class="mount-list" id="library-list"></ul>
       </div>
 
       <!-- Offline panel -->
-      <div class="panel" id="panel-offline" role="tabpanel" aria-labelledby="tab-offline">
-        <p class="section-heading">Pinned Folders</p>
+      <div class="panel" id="panel-offline">
+        <p class="section-heading">Dossiers épinglés</p>
         <ul class="pin-list" id="pin-list"></ul>
-
-        <p class="section-heading">Settings</p>
-
-        <div class="setting-row">
-          <div class="setting-label">
-            <div class="label-text">Auto-removal</div>
-            <div class="label-sub">How long pinned folders stay available offline</div>
-          </div>
-          <div class="setting-control">
-            <select id="offline-ttl">
-              <option value="3600">1 hour</option>
-              <option value="86400">1 day</option>
-              <option value="259200">3 days</option>
-              <option value="604800">7 days</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-label">
-            <div class="label-text">Max folder size</div>
-            <div class="label-sub">Largest folder allowed for offline pinning</div>
-          </div>
-          <div class="setting-control">
-            <input type="text" id="offline-max-size" placeholder="5GB">
-          </div>
-        </div>
       </div>
 
       <!-- About panel -->
-      <div class="panel" id="panel-about" role="tabpanel" aria-labelledby="tab-about">
-        <p class="section-heading">About</p>
+      <div class="panel" id="panel-about">
+        <p class="section-heading">À propos</p>
         <div class="setting-row">
           <div class="setting-label">
             <div class="label-text">Carmine Desktop</div>
-            <p id="app-version"></p>
+            <p id="app-version" class="label-sub"></p>
           </div>
         </div>
-        <p class="section-heading">Third-party</p>
+        <p class="section-heading">Informations légales</p>
         <div class="setting-row">
           <div class="setting-label">
-            <p class="attribution">WinFsp — Windows File System Proxy, Copyright (C) Bill Zissimopoulos. Licensed under GPLv3.<br>
+            <p class="attribution">WinFsp — Windows File System Proxy, Copyright (C) Bill Zissimopoulos. Sous licence GPLv3.<br>
               <a href="https://github.com/winfsp/winfsp" target="_blank" rel="noopener noreferrer">github.com/winfsp/winfsp</a></p>
           </div>
         </div>
       </div>
-
     </main>
   </div>
 

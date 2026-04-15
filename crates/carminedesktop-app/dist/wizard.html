@@ -9,64 +9,59 @@
 </head>
 <body>
   <div class="app-layout">
-    <!-- Sidebar -->
     <aside class="sidebar">
       <div class="sidebar-header">
         <div class="sidebar-logo">C</div>
         <span class="sidebar-title">Carmine</span>
       </div>
 
-      <div class="stepper-label">Setup</div>
-      <div class="stepper-nav">
-        <div class="stepper-item active" id="stepper-1">
-          <div class="step-number">1</div>
-          Sign In
+      <div class="section-heading">Configuration</div>
+      <div class="sidebar-nav">
+        <div class="nav-item active" id="stepper-1">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+          Connexion
         </div>
-        <div class="stepper-item" id="stepper-2">
-          <div class="step-number">2</div>
-          Libraries
+        <div class="nav-item" id="stepper-2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+          Bibliothèques
         </div>
-        <div class="stepper-item" id="stepper-3">
-          <div class="step-number">3</div>
-          Done
+        <div class="nav-item" id="stepper-3">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          Terminé
         </div>
       </div>
 
       <div class="sidebar-footer" id="wizard-footer" style="display:none"></div>
     </aside>
 
-    <!-- Main Content -->
     <main class="main-content">
-
-      <!-- Step 1: Welcome + Sign In -->
+      <!-- Step 1: Welcome -->
       <div id="step-welcome" class="step step-centered active">
-        <h1 class="step-title-lg">Welcome to Carmine</h1>
-        <p class="step-sub">Mount your OneDrive and SharePoint libraries as local folders. Sign in with your Microsoft 365 account to get started.</p>
-        <button id="sign-in-btn">Sign In with Microsoft</button>
-        <!-- Auth waiting state (hidden until sign-in starts) -->
+        <h1>Bienvenue sur Carmine</h1>
+        <p class="step-sub">Accédez à vos documents OneDrive et SharePoint directement depuis votre explorateur de fichiers, avec une synchronisation ultra-rapide.</p>
+        <button id="sign-in-btn" class="btn-primary">Se connecter avec Microsoft</button>
+        
         <div id="auth-waiting" style="display:none">
           <div class="auth-status-row">
             <div class="spinner"></div>
             <span id="auth-countdown" class="auth-countdown" aria-live="polite"></span>
           </div>
           <div class="url-row">
-            <input id="auth-url" class="url-input" type="text" readonly aria-label="Authentication URL">
-            <button id="copy-btn" class="btn-ghost btn-sm">Copy URL</button>
+            <input id="auth-url" class="url-input" type="text" readonly>
+            <button id="copy-btn" class="btn-ghost btn-sm">Copier</button>
           </div>
-          <p class="hint">Browser didn't open? Copy the link and paste it manually.</p>
-          <div id="auth-error" class="error-msg" role="alert" style="display:none"></div>
-          <button id="cancel-btn" class="btn-link cancel-link">Cancel</button>
+          <p class="hint">Le navigateur ne s'est pas ouvert ? Copiez le lien manuellement.</p>
+          <div id="auth-error" class="error-msg" style="display:none"></div>
+          <button id="cancel-btn" class="btn-link cancel-link">Annuler</button>
         </div>
       </div>
 
-      <!-- Step 2: Library Selection -->
+      <!-- Step 2: Libraries -->
       <div id="step-libraries" class="step step-scroll">
-        <div class="section-heading" style="margin-top:0">Select Libraries</div>
+        <h1 class="section-heading" style="margin-top:0">Sélectionnez vos lecteurs</h1>
 
-        <!-- Loading spinner -->
         <div id="libraries-loading" class="sources-spinner"><div class="spinner"></div></div>
 
-        <!-- OneDrive Section -->
         <div id="libraries-onedrive-section" style="display:none">
           <div class="setting-row">
             <div class="setting-label">
@@ -82,29 +77,26 @@
           </div>
         </div>
 
-        <!-- SharePoint Libraries Section -->
         <div id="libraries-sp-section" style="display:none">
-          <div class="section-heading">SharePoint Libraries</div>
+          <div class="section-heading">Sites SharePoint</div>
           <div id="libraries-sp-list"></div>
         </div>
 
-        <!-- Error and Actions -->
-        <div id="libraries-error" class="error-msg" role="alert" style="display:none"></div>
-        <div class="wizard-actions">
-          <button id="get-started-btn" disabled>Get started</button>
-          <button id="switch-account-btn" class="btn-link">Sign in with a different account</button>
+        <div id="libraries-error" class="error-msg" style="display:none"></div>
+        <div class="wizard-actions" style="margin-top: 40px;">
+          <button id="get-started-btn" class="btn-primary" disabled>Continuer</button>
+          <button id="switch-account-btn" class="btn-ghost">Changer de compte</button>
         </div>
       </div>
 
-      <!-- Step 3: Done -->
+      <!-- Step 3: Success -->
       <div id="step-success" class="step step-centered">
-        <h1>You're all set</h1>
-        <p class="step-sub">Your drives are mounted and ready to use. You'll find them in your file manager.</p>
+        <h1>Configuration terminée</h1>
+        <p class="step-sub">Vos lecteurs sont maintenant montés. Vous les retrouverez dans votre barre latérale Windows.</p>
         <ul id="done-mount-list" class="done-mount-list"></ul>
-        <button id="wizard-close-btn">Get Started</button>
-        <p class="hint">Carmine will continue running in the system tray.</p>
+        <button id="wizard-close-btn" class="btn-primary">Accéder à mes fichiers</button>
+        <p class="hint">Carmine restera actif dans votre barre des tâches.</p>
       </div>
-
     </main>
   </div>
 

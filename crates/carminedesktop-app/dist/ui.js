@@ -1,16 +1,20 @@
-// Carmine Desktop shared UI utilities
+// Utilitaires UI partagés pour Carmine Desktop
 
 let _statusTimer = null;
 
 const _errorPatterns = [
-  [/GraphApi\s*\{?\s*status:\s*401/i, 'Sign-in expired. Please re-authenticate.'],
-  [/GraphApi\s*\{?\s*status:\s*403/i, 'Access denied. Check your permissions.'],
-  [/GraphApi\s*\{?\s*status:\s*404/i, 'Resource not found. It may have been deleted.'],
-  [/GraphApi\s*\{?\s*status:\s*429/i, 'Too many requests. Please wait a moment.'],
-  [/GraphApi\s*\{?\s*status:\s*5\d\d/i, 'Server error. Please try again later.'],
-  [/network|fetch|connect|timeout/i, 'Network error. Check your internet connection.'],
-  [/token|auth|credential/i, 'Authentication error. Try signing in again.'],
+  [/GraphApi\s*\{?\s*status:\s*401/i, 'Session expirée. Veuillez vous reconnecter.'],
+  [/GraphApi\s*\{?\s*status:\s*403/i, 'Accès refusé. Vérifiez vos permissions.'],
+  [/GraphApi\s*\{?\s*status:\s*404/i, 'Ressource non trouvée. Elle a peut-être été supprimée.'],
+  [/GraphApi\s*\{?\s*status:\s*429/i, 'Trop de requêtes. Veuillez patienter un instant.'],
+  [/GraphApi\s*\{?\s*status:\s*5\d\d/i, 'Erreur serveur. Veuillez réessayer plus tard.'],
+  [/network|fetch|connect|timeout/i, 'Erreur réseau. Vérifiez votre connexion internet.'],
+  [/token|auth|credential/i, 'Erreur d\'authentification. Essayez de vous reconnecter.'],
 ];
+
+function sanitizePath(name) {
+  return name.replace(/[/\\:*?"<>|]/g, '_').trim() || '_';
+}
 
 function formatError(e) {
   const msg = (e instanceof Error) ? e.message : String(e);
@@ -34,13 +38,13 @@ function showStatus(message, type) {
     const dismiss = document.createElement('button');
     dismiss.className = 'status-dismiss';
     dismiss.textContent = '\u00d7';
-    dismiss.setAttribute('aria-label', 'Dismiss');
+    dismiss.setAttribute('aria-label', 'Fermer');
     dismiss.addEventListener('click', () => { bar.className = ''; });
     bar.appendChild(dismiss);
   }
 
   bar.className = 'visible ' + type;
   if (type === 'success' || type === 'info') {
-    _statusTimer = setTimeout(() => { bar.className = ''; }, 3000);
+    _statusTimer = setTimeout(() => { bar.className = ''; }, 4000);
   }
 }

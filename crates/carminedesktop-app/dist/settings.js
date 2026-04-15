@@ -32,22 +32,22 @@ function setState(patch) {
 // ---------------------------------------------------------------------------
 
 function formatRelativeTime(isoString) {
-  if (!isoString) return 'Never';
+  if (!isoString) return 'Jamais';
   const now = Date.now();
   const then = new Date(isoString).getTime();
   const diffSec = Math.floor((now - then) / 1000);
-  if (diffSec < 60) return 'Just now';
+  if (diffSec < 60) return 'À l\'instant';
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return diffMin + 'm ago';
+  if (diffMin < 60) return 'Il y a ' + diffMin + 'm';
   const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return diffHr + 'h ago';
+  if (diffHr < 24) return 'Il y a ' + diffHr + 'h';
   const diffDay = Math.floor(diffHr / 24);
-  return diffDay + 'd ago';
+  return 'Il y a ' + diffDay + 'j';
 }
 
 function formatBytes(bytes) {
   if (bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const units = ['B', 'Ko', 'Mo', 'Go', 'To'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   const val = bytes / Math.pow(1024, i);
   return (i === 0 ? val : val.toFixed(1)) + ' ' + units[i];
@@ -63,13 +63,13 @@ function truncatePath(fullPath, maxLen) {
 }
 
 function formatSyncStatus(drive) {
-  if (!drive.online) return 'Offline';
-  if (drive.syncState === 'error') return 'Error';
+  if (!drive.online) return 'Hors-ligne';
+  if (drive.syncState === 'error') return 'Erreur';
   if (drive.syncState === 'syncing') {
     const total = (drive.uploadQueue ? drive.uploadQueue.inFlight + drive.uploadQueue.queueDepth : 0);
-    return total > 0 ? 'Syncing ' + total + ' files' : 'Syncing';
+    return total > 0 ? 'Synchro ' + total + ' fichiers' : 'Synchro en cours';
   }
-  return 'Up to date';
+  return 'À jour';
 }
 
 function aggregateUploadQueue(drives) {
@@ -93,7 +93,6 @@ function renderNav() {
     const panel = item.dataset.panel;
     item.classList.toggle('active', panel === state.activePanel);
     item.setAttribute('aria-selected', panel === state.activePanel ? 'true' : 'false');
-    item.setAttribute('tabindex', panel === state.activePanel ? '0' : '-1');
   });
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   const panel = document.getElementById('panel-' + state.activePanel);
@@ -108,22 +107,10 @@ function renderSettings() {
   document.getElementById('sync-interval').value = String(s.sync_interval_secs);
   document.getElementById('cache-dir').value = s.cache_dir || '';
   document.getElementById('cache-max-size').value = s.cache_max_size;
-  document.getElementById('metadata-ttl').value = String(s.metadata_ttl_secs);
-  document.getElementById('log-level').value = s.log_level;
-  document.getElementById('account-email').textContent = s.account_display || 'Not signed in';
-  const navPaneField = document.getElementById('nav-pane-field');
-  if (navPaneField && s.platform === 'windows') {
-    navPaneField.style.display = '';
-    document.getElementById('explorer-nav-pane').checked = s.explorer_nav_pane;
-  }
-  const setDefaultBtn = document.getElementById('btn-set-default');
-  if (setDefaultBtn && s.platform === 'windows') {
-    setDefaultBtn.style.display = '';
-  }
+  document.getElementById('account-email').textContent = s.account_display || 'Non connecté';
+  
   const offlineTtl = document.getElementById('offline-ttl');
   if (offlineTtl) offlineTtl.value = String(s.offline_ttl_secs);
-  const offlineMaxSize = document.getElementById('offline-max-size');
-  if (offlineMaxSize) offlineMaxSize.value = s.offline_max_folder_size;
 }
 
 function renderMounts() {
@@ -131,13 +118,11 @@ function renderMounts() {
   if (!list) return;
   list.innerHTML = '';
 
-  // Build a lookup: drive_id -> mount for currently mounted items
   const mountByDrive = {};
   state.mounts.forEach(function(m) {
     if (m.drive_id) mountByDrive[m.drive_id] = m;
   });
 
-  // OneDrive toggle (always shown if user has a drive)
   const odMount = state.mounts.find(function(m) { return m.mount_type === 'drive'; });
   const driveInfo = state.settings.driveInfo;
   if (driveInfo || odMount) {
@@ -151,7 +136,7 @@ function renderMounts() {
     nameEl.textContent = 'OneDrive';
     const pathEl = document.createElement('div');
     pathEl.className = 'mount-path';
-    pathEl.textContent = odMount ? odMount.mount_point : 'Not mounted';
+    pathEl.textContent = odMount ? odMount.mount_point : 'Non monté';
     info.appendChild(nameEl);
     info.appendChild(pathEl);
 
@@ -178,25 +163,22 @@ function renderMounts() {
     list.appendChild(li);
   }
 
-  // Loading state
   if (state.librariesLoading) {
     const loading = document.createElement('li');
     loading.className = 'mount-empty';
-    loading.innerHTML = '<span class="spinner"></span> Loading libraries\u2026';
+    loading.innerHTML = '<span class="spinner"></span> Chargement des bibliothèques\u2026';
     list.appendChild(loading);
     return;
   }
 
-  // Error state
   if (state.librariesError) {
     const err = document.createElement('li');
     err.className = 'mount-empty';
-    err.textContent = 'Could not load libraries';
+    err.textContent = 'Impossible de charger les bibliothèques';
     list.appendChild(err);
     return;
   }
 
-  // SharePoint libraries
   state.libraries.forEach(function(lib) {
     const existingMount = mountByDrive[lib.id];
     const li = document.createElement('li');
@@ -209,7 +191,7 @@ function renderMounts() {
     nameEl.textContent = lib.name;
     const pathEl = document.createElement('div');
     pathEl.className = 'mount-path';
-    pathEl.textContent = existingMount ? existingMount.mount_point : 'Not mounted';
+    pathEl.textContent = existingMount ? existingMount.mount_point : 'Non monté';
     info.appendChild(nameEl);
     info.appendChild(pathEl);
 
@@ -239,51 +221,7 @@ function renderMounts() {
   if (state.libraries.length === 0 && !odMount && !driveInfo) {
     const empty = document.createElement('li');
     empty.className = 'mount-empty';
-    empty.textContent = 'No libraries available';
-    list.appendChild(empty);
-  }
-}
-
-function renderHandlers() {
-  const list = document.getElementById('handler-list');
-  list.innerHTML = '';
-  state.handlers.forEach(h => {
-    const li = document.createElement('li');
-    li.className = 'setting-row';
-
-    const info = document.createElement('div');
-    info.className = 'handler-info';
-
-    const extEl = document.createElement('span');
-    extEl.className = 'handler-ext';
-    extEl.textContent = h.extension;
-    info.appendChild(extEl);
-
-    const nameEl = document.createElement('span');
-    nameEl.className = 'handler-name';
-    nameEl.textContent = h.handler_name || 'None';
-    info.appendChild(nameEl);
-
-    const actions = document.createElement('div');
-    actions.className = 'setting-control';
-
-    const overrideBtn = document.createElement('button');
-    overrideBtn.className = 'btn-ghost btn-sm';
-    overrideBtn.textContent = h.source === 'override' ? 'Change' : 'Override';
-    overrideBtn.dataset.action = 'override-handler';
-    overrideBtn.dataset.ext = h.extension;
-    overrideBtn.dataset.source = h.source;
-    overrideBtn.dataset.handlerId = h.handler_id || '';
-
-    actions.appendChild(overrideBtn);
-    li.appendChild(info);
-    li.appendChild(actions);
-    list.appendChild(li);
-  });
-  if (state.handlers.length === 0) {
-    const empty = document.createElement('li');
-    empty.className = 'handler-empty';
-    empty.textContent = 'No file handlers found';
+    empty.textContent = 'Aucune bibliothèque disponible';
     list.appendChild(empty);
   }
 }
@@ -292,13 +230,13 @@ function formatTimeRemaining(expiresAt) {
   const now = new Date();
   const expires = new Date(expiresAt + 'Z');
   const diffMs = expires - now;
-  if (diffMs <= 0) return { text: 'Expired', expired: true };
+  if (diffMs <= 0) return { text: 'Expiré', expired: true };
   const hours = Math.floor(diffMs / 3600000);
   const days = Math.floor(hours / 24);
-  if (days > 0) return { text: days + 'd ' + (hours % 24) + 'h remaining', expired: false };
+  if (days > 0) return { text: 'Reste ' + days + 'j ' + (hours % 24) + 'h', expired: false };
   const mins = Math.floor((diffMs % 3600000) / 60000);
-  if (hours > 0) return { text: hours + 'h ' + mins + 'm remaining', expired: false };
-  return { text: mins + 'm remaining', expired: false };
+  if (hours > 0) return { text: 'Reste ' + hours + 'h ' + mins + 'm', expired: false };
+  return { text: 'Reste ' + mins + 'm', expired: false };
 }
 
 function renderOfflinePins() {
@@ -324,7 +262,7 @@ function renderOfflinePins() {
     expirySpan.textContent = remaining.text;
     metaEl.appendChild(document.createTextNode(pin.mount_name + ' \u00B7 '));
     metaEl.appendChild(expirySpan);
-    // Health badge from cacheStats
+
     const cs = state.cacheStats;
     if (cs && cs.pinnedItems) {
       const health = cs.pinnedItems.find(function(h) {
@@ -334,17 +272,18 @@ function renderOfflinePins() {
         const badge = document.createElement('span');
         if (health.totalFiles === 0) {
           badge.className = 'health-badge partial';
-          badge.textContent = 'scanning';
+          badge.textContent = 'analyse\u2026';
         } else {
+          const statusMap = { 'downloaded': 'disponible', 'partial': 'partiel', 'stale': 'obsolète' };
           badge.className = 'health-badge ' + health.status;
-          badge.textContent = health.status;
+          badge.textContent = statusMap[health.status] || health.status;
         }
         metaEl.appendChild(document.createTextNode(' '));
         metaEl.appendChild(badge);
         if (health.totalFiles > 0) {
           const fileCount = document.createElement('span');
           fileCount.className = 'pin-file-count';
-          fileCount.textContent = health.cachedFiles + '/' + health.totalFiles + ' files';
+          fileCount.textContent = ' \u00B7 ' + health.cachedFiles + '/' + health.totalFiles + ' fichiers';
           metaEl.appendChild(fileCount);
         }
       }
@@ -360,8 +299,8 @@ function renderOfflinePins() {
     removeBtn.dataset.driveId = pin.drive_id;
     removeBtn.dataset.itemId = pin.item_id;
     removeBtn.dataset.name = pin.folder_name;
-    removeBtn.title = 'Remove offline pin';
-    removeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
+    removeBtn.title = 'Supprimer l\'accès hors-ligne';
+    removeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>';
 
     actions.appendChild(removeBtn);
     li.appendChild(info);
@@ -372,58 +311,35 @@ function renderOfflinePins() {
   if (state.offlinePins.length === 0) {
     const empty = document.createElement('li');
     empty.className = 'pin-empty';
-    empty.textContent = 'No folders pinned for offline use';
+    empty.textContent = 'Aucun dossier épinglé pour le mode hors-ligne';
     list.appendChild(empty);
   }
 }
 
 function renderDashboard() {
-  // Auth banner
   const banner = document.getElementById('auth-banner');
   if (banner) {
     const ds = state.dashboardStatus;
     if (ds && ds.authDegraded) {
-      banner.style.display = '';
+      banner.style.display = 'flex';
       banner.innerHTML = '';
       const left = document.createElement('div');
       left.className = 'auth-banner-left';
-      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      icon.setAttribute('width', '16');
-      icon.setAttribute('height', '16');
-      icon.setAttribute('viewBox', '0 0 24 24');
-      icon.setAttribute('fill', 'none');
-      icon.setAttribute('stroke', 'currentColor');
-      icon.setAttribute('stroke-width', '2');
-      icon.setAttribute('stroke-linecap', 'round');
-      icon.setAttribute('stroke-linejoin', 'round');
-      icon.classList.add('auth-banner-icon');
-      const path1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path1.setAttribute('d', 'M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z');
-      const line1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      line1.setAttribute('x1', '12'); line1.setAttribute('y1', '9');
-      line1.setAttribute('x2', '12'); line1.setAttribute('y2', '13');
-      const line2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      line2.setAttribute('x1', '12'); line2.setAttribute('y1', '17');
-      line2.setAttribute('x2', '12.01'); line2.setAttribute('y2', '17');
-      icon.appendChild(path1);
-      icon.appendChild(line1);
-      icon.appendChild(line2);
-      left.appendChild(icon);
+      left.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="auth-banner-icon"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
       const msg = document.createElement('span');
-      msg.textContent = 'Authentication needs attention. Token refresh is failing.';
+      msg.textContent = 'L\'authentification nécessite votre attention.';
       left.appendChild(msg);
       banner.appendChild(left);
       const btn = document.createElement('button');
       btn.className = 'btn-ghost btn-sm';
       btn.dataset.action = 'dashboard-sign-in';
-      btn.textContent = 'Sign In';
+      btn.textContent = 'Se connecter';
       banner.appendChild(btn);
     } else {
       banner.style.display = 'none';
     }
   }
 
-  // Drive cards
   const cardsContainer = document.getElementById('drive-cards');
   if (cardsContainer) {
     cardsContainer.innerHTML = '';
@@ -437,19 +353,10 @@ function renderDashboard() {
         header.className = 'drive-card-header';
         const dot = document.createElement('span');
         dot.className = 'status-dot';
-        if (!drive.online) {
-          dot.classList.add('offline');
-          dot.setAttribute('aria-label', 'Offline');
-        } else if (drive.syncState === 'error') {
-          dot.classList.add('error');
-          dot.setAttribute('aria-label', 'Error');
-        } else if (drive.syncState === 'syncing') {
-          dot.classList.add('syncing');
-          dot.setAttribute('aria-label', 'Syncing');
-        } else {
-          dot.classList.add('ok');
-          dot.setAttribute('aria-label', 'Online, up to date');
-        }
+        if (!drive.online) { dot.classList.add('offline'); }
+        else if (drive.syncState === 'error') { dot.classList.add('error'); }
+        else if (drive.syncState === 'syncing') { dot.classList.add('syncing'); }
+        else { dot.classList.add('ok'); }
         header.appendChild(dot);
         const name = document.createElement('div');
         name.className = 'drive-card-name';
@@ -462,7 +369,7 @@ function renderDashboard() {
 
         const lastSync = document.createElement('div');
         lastSync.className = 'drive-card-last-sync';
-        lastSync.textContent = 'Last: ' + formatRelativeTime(drive.lastSynced);
+        lastSync.textContent = 'Dernière synchro : ' + formatRelativeTime(drive.lastSynced);
 
         card.appendChild(header);
         card.appendChild(status);
@@ -472,12 +379,11 @@ function renderDashboard() {
     } else {
       const empty = document.createElement('div');
       empty.className = 'mount-empty';
-      empty.textContent = 'No drives mounted';
+      empty.textContent = 'Aucun lecteur monté';
       cardsContainer.appendChild(empty);
     }
   }
 
-  // Upload queue summary
   const uploadSummary = document.getElementById('upload-summary');
   const uploadDetail = document.getElementById('upload-detail');
   if (uploadSummary) {
@@ -485,7 +391,7 @@ function renderDashboard() {
     const agg = aggregateUploadQueue(ds ? ds.drives : []);
     const total = agg.inFlight + agg.queued;
     if (total > 0) {
-      uploadSummary.style.display = '';
+      uploadSummary.style.display = 'flex';
       uploadSummary.innerHTML = '';
       const arrow = document.createElement('span');
       arrow.className = 'disclosure-arrow' + (state.writebackExpanded ? ' expanded' : '');
@@ -493,12 +399,11 @@ function renderDashboard() {
       uploadSummary.appendChild(arrow);
       const text = document.createElement('span');
       const parts = [];
-      if (agg.inFlight > 0) parts.push(agg.inFlight + ' uploading');
-      if (agg.queued > 0) parts.push(agg.queued + ' queued');
+      if (agg.inFlight > 0) parts.push(agg.inFlight + ' en envoi');
+      if (agg.queued > 0) parts.push(agg.queued + ' en attente');
       text.textContent = parts.join(', ');
       uploadSummary.appendChild(text);
       uploadSummary.dataset.action = 'toggle-writeback-expanded';
-      uploadSummary.setAttribute('aria-expanded', state.writebackExpanded ? 'true' : 'false');
     } else {
       uploadSummary.style.display = 'none';
     }
@@ -506,7 +411,7 @@ function renderDashboard() {
     if (uploadDetail) {
       const cs = state.cacheStats;
       if (state.writebackExpanded && cs && cs.writebackQueue && cs.writebackQueue.length > 0) {
-        uploadDetail.style.display = '';
+        uploadDetail.style.display = 'block';
         uploadDetail.innerHTML = '';
         cs.writebackQueue.forEach(function(entry) {
           const row = document.createElement('div');
@@ -520,7 +425,6 @@ function renderDashboard() {
     }
   }
 
-  // Activity feed
   const activityList = document.getElementById('activity-list');
   if (activityList) {
     activityList.innerHTML = '';
@@ -532,9 +436,10 @@ function renderDashboard() {
         const li = document.createElement('li');
         li.className = 'activity-row';
 
+        const typeMap = { 'synced': 'synchronisé', 'uploaded': 'envoyé', 'deleted': 'supprimé', 'conflict': 'conflit' };
         const tag = document.createElement('span');
         tag.className = 'activity-tag ' + entry.activityType;
-        tag.textContent = entry.activityType;
+        tag.textContent = typeMap[entry.activityType] || entry.activityType;
 
         const name = document.createElement('span');
         name.className = 'activity-name';
@@ -555,24 +460,23 @@ function renderDashboard() {
         const link = document.createElement('button');
         link.className = 'btn-link';
         link.dataset.action = 'toggle-activity-expanded';
-        link.textContent = state.activityExpanded ? 'Show less' : 'Show all (' + entries.length + ')';
+        link.textContent = state.activityExpanded ? 'Voir moins' : 'Tout voir (' + entries.length + ')';
         showMore.appendChild(link);
         activityList.appendChild(showMore);
       }
     } else {
       const empty = document.createElement('li');
       empty.className = 'activity-empty';
-      empty.textContent = 'No recent activity';
+      empty.textContent = 'Aucune activité récente';
       activityList.appendChild(empty);
     }
   }
 
-  // Error log
   const errorsHeading = document.getElementById('errors-heading');
   const errorList = document.getElementById('error-list');
   if (errorsHeading) {
     const count = state.recentErrors ? state.recentErrors.length : 0;
-    errorsHeading.textContent = count > 0 ? 'Errors (' + count + ')' : 'Errors';
+    errorsHeading.textContent = count > 0 ? 'Erreurs (' + count + ')' : 'Erreurs';
   }
   if (errorList) {
     errorList.innerHTML = '';
@@ -586,17 +490,17 @@ function renderDashboard() {
         header.className = 'error-header';
         const fileEl = document.createElement('span');
         fileEl.className = 'error-file';
-        fileEl.textContent = err.fileName || 'Unknown file';
+        fileEl.textContent = err.fileName || 'Fichier inconnu';
         const typeEl = document.createElement('span');
         typeEl.className = 'error-type';
-        typeEl.textContent = ' \u2013 ' + (err.errorType || 'error');
+        const errorTypeMap = { 'conflict': 'conflit', 'writeback_failed': 'échec écriture', 'upload_failed': 'échec envoi' };
+        typeEl.textContent = ' \u2013 ' + (errorTypeMap[err.errorType] || err.errorType || 'erreur');
         const timeEl = document.createElement('span');
         timeEl.className = 'error-time';
         timeEl.textContent = formatRelativeTime(err.timestamp);
         header.appendChild(fileEl);
         header.appendChild(typeEl);
         header.appendChild(timeEl);
-
         entry.appendChild(header);
 
         if (err.message) {
@@ -605,30 +509,20 @@ function renderDashboard() {
           msgEl.textContent = err.message;
           entry.appendChild(msgEl);
         }
-        if (err.actionHint) {
-          const hintEl = document.createElement('div');
-          hintEl.className = 'error-hint';
-          hintEl.textContent = err.actionHint;
-          entry.appendChild(hintEl);
-        }
-
         errorList.appendChild(entry);
       });
     } else {
       const empty = document.createElement('div');
       empty.className = 'error-empty';
-      empty.textContent = 'No errors';
+      empty.textContent = 'Aucune erreur';
       errorList.appendChild(empty);
     }
   }
 
-  // Cache & Offline
   const cacheSection = document.getElementById('cache-section');
   if (cacheSection) {
     cacheSection.innerHTML = '';
     const cs = state.cacheStats;
-
-    // Cache bar (always visible)
     const usedBytes = cs ? cs.diskUsedBytes : 0;
     const maxBytes = cs ? cs.diskMaxBytes : 0;
     const pct = maxBytes > 0 ? Math.min((usedBytes / maxBytes) * 100, 100) : 0;
@@ -636,11 +530,6 @@ function renderDashboard() {
 
     const bar = document.createElement('div');
     bar.className = 'cache-bar';
-    bar.setAttribute('role', 'progressbar');
-    bar.setAttribute('aria-valuenow', String(usedBytes));
-    bar.setAttribute('aria-valuemin', '0');
-    bar.setAttribute('aria-valuemax', String(maxBytes));
-    bar.setAttribute('aria-label', 'Cache disk usage');
     const fill = document.createElement('div');
     fill.className = 'cache-bar-fill ' + barColor;
     fill.style.width = pct + '%';
@@ -652,24 +541,22 @@ function renderDashboard() {
     text.textContent = formatBytes(usedBytes) + ' / ' + formatBytes(maxBytes);
     cacheSection.appendChild(text);
 
-    // Pin health summary
     const pins = cs ? cs.pinnedItems : [];
     if (pins && pins.length > 0) {
       const summary = document.createElement('div');
       summary.className = 'pin-summary';
       const counts = { downloaded: 0, partial: 0, stale: 0 };
       pins.forEach(function(p) { counts[p.status] = (counts[p.status] || 0) + 1; });
-      const parts = [pins.length + ' pins'];
       const statusParts = [];
-      if (counts.downloaded > 0) statusParts.push(counts.downloaded + ' Downloaded');
-      if (counts.partial > 0) statusParts.push(counts.partial + ' Partial');
-      if (counts.stale > 0) statusParts.push(counts.stale + ' Stale');
-      summary.textContent = parts[0] + ' \u00B7 ' + statusParts.join(', ');
+      if (counts.downloaded > 0) statusParts.push(counts.downloaded + ' Disponibles');
+      if (counts.partial > 0) statusParts.push(counts.partial + ' Partiels');
+      if (counts.stale > 0) statusParts.push(counts.stale + ' Obsolètes');
+      summary.textContent = pins.length + ' dossiers épinglés \u00B7 ' + statusParts.join(', ');
       cacheSection.appendChild(summary);
     } else {
       const empty = document.createElement('div');
       empty.className = 'pin-summary-empty';
-      empty.textContent = 'No offline pins';
+      empty.textContent = 'Aucun dossier hors-ligne';
       cacheSection.appendChild(empty);
     }
   }
@@ -679,7 +566,6 @@ function render() {
   renderNav();
   renderSettings();
   renderMounts();
-  renderHandlers();
   renderOfflinePins();
   renderDashboard();
 }
@@ -698,28 +584,18 @@ function scheduleRender() {
 // ---------------------------------------------------------------------------
 
 async function saveSettings() {
-  const syncInterval = parseInt(document.getElementById('sync-interval').value);
-  if (isNaN(syncInterval) || syncInterval <= 0) {
-    showStatus('Sync interval must be a positive number', 'error');
-    return;
-  }
-  const metadataTtl = parseInt(document.getElementById('metadata-ttl').value);
-  if (isNaN(metadataTtl) || metadataTtl <= 0) {
-    showStatus('Metadata TTL must be a positive number', 'error');
-    return;
-  }
   try {
     await invoke('save_settings', {
       autoStart: document.getElementById('auto-start').checked,
       notifications: document.getElementById('notifications').checked,
-      syncIntervalSecs: syncInterval,
-      explorerNavPane: document.getElementById('explorer-nav-pane').checked,
+      syncIntervalSecs: parseInt(document.getElementById('sync-interval').value),
+      explorerNavPane: true,
       cacheDir: document.getElementById('cache-dir').value || null,
       cacheMaxSize: document.getElementById('cache-max-size').value,
-      metadataTtlSecs: metadataTtl,
-      logLevel: document.getElementById('log-level').value,
+      metadataTtlSecs: 60,
+      logLevel: 'info',
       offlineTtlSecs: parseInt(document.getElementById('offline-ttl').value) || null,
-      offlineMaxFolderSize: document.getElementById('offline-max-size').value || null,
+      offlineMaxFolderSize: '5GB',
     });
   } catch (e) {
     showStatus(formatError(e), 'error');
@@ -738,11 +614,9 @@ async function toggleLibraryOn(libraryType, driveId, driveName) {
     let mountPoint, siteId, siteName, libraryName;
 
     if (libraryType === 'sharepoint') {
-      // Derive mount point from settings root dir and library name
-      const siteParts = state.settings.primarySiteName || 'SharePoint';
-      siteName = siteParts;
+      siteName = state.settings.primarySiteName || null;
       libraryName = driveName;
-      mountPoint = mountRoot + '/' + siteName + '/' + libraryName;
+      mountPoint = mountRoot + '/' + sanitizePath(driveName);
       siteId = state.settings.primarySiteId || null;
     } else {
       mountPoint = mountRoot + '/OneDrive';
@@ -756,12 +630,11 @@ async function toggleLibraryOn(libraryType, driveId, driveName) {
       siteName: siteName || null,
       libraryName: libraryName || null,
     });
-    showStatus(driveName + ' enabled', 'success');
+    showStatus(driveName + ' activé', 'success');
     const mounts = await invoke('list_mounts');
     setState({ mounts: mounts });
   } catch (e) {
     showStatus(formatError(e), 'error');
-    // Re-fetch to revert toggle visual state
     try {
       const mounts = await invoke('list_mounts');
       setState({ mounts: mounts });
@@ -772,7 +645,7 @@ async function toggleLibraryOn(libraryType, driveId, driveName) {
 async function toggleLibraryOff(mountId, driveName) {
   try {
     await invoke('remove_mount', { id: mountId });
-    showStatus(driveName + ' disabled', 'success');
+    showStatus(driveName + ' désactivé', 'success');
     const mounts = await invoke('list_mounts');
     setState({ mounts: mounts });
   } catch (e) {
@@ -805,19 +678,19 @@ async function loadLibraries() {
 }
 
 async function signOut() {
-  const ok = await window.__TAURI__.dialog.confirm('Sign out? All mounts will stop.', { title: 'Sign Out', kind: 'warning' });
+  const ok = await window.__TAURI__.dialog.confirm('Voulez-vous vous déconnecter ? Tous les lecteurs seront démontés.', { title: 'Déconnexion', kind: 'warning' });
   if (!ok) return;
   const btn = document.getElementById('sign-out-btn');
   btn.disabled = true;
-  btn.textContent = 'Signing out\u2026';
+  btn.textContent = 'Déconnexion en cours\u2026';
   try {
     await invoke('sign_out');
     btn.disabled = false;
-    btn.textContent = 'Sign Out';
-    showStatus('Signed out', 'success');
+    btn.textContent = 'Déconnexion';
+    showStatus('Déconnecté', 'success');
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = 'Sign Out';
+    btn.textContent = 'Déconnexion';
     showStatus(formatError(e), 'error');
   }
 }
@@ -826,109 +699,29 @@ async function clearCache() {
   const btn = document.getElementById('btn-clear-cache');
   const origText = btn.textContent;
   btn.disabled = true;
-  btn.textContent = 'Clearing\u2026';
+  btn.textContent = 'Vidage\u2026';
   try {
     await invoke('clear_cache');
     btn.disabled = false;
     btn.textContent = origText;
-    showStatus('Cache cleared', 'success');
+    showStatus('Cache vidé', 'success');
   } catch (e) {
     btn.disabled = false;
     btn.textContent = origText;
-    showStatus('Failed to clear cache: ' + formatError(e), 'error');
+    showStatus('Échec du vidage du cache : ' + formatError(e), 'error');
   }
 }
 
 async function removeOfflinePin(driveId, itemId, name) {
   try {
     await invoke('remove_offline_pin', { driveId, itemId });
-    showStatus('Unpinned ' + name, 'success');
+    showStatus('Épinglage supprimé pour ' + name, 'success');
     const offlinePins = await invoke('list_offline_pins');
     setState({ offlinePins });
   } catch (e) {
     showStatus(formatError(e), 'error');
   }
 }
-
-// ---------------------------------------------------------------------------
-// File Associations
-// ---------------------------------------------------------------------------
-
-async function saveHandlerOverride(extension, handlerId) {
-  if (!handlerId.trim()) {
-    showStatus('Please enter a handler identifier', 'error');
-    return;
-  }
-  try {
-    await invoke('save_file_handler_override', { extension, handlerId: handlerId.trim() });
-    showStatus('Handler override saved for ' + extension, 'success');
-    const handlers = await invoke('get_file_handlers');
-    setState({ handlers });
-  } catch (e) {
-    showStatus(formatError(e), 'error');
-  }
-}
-
-async function clearHandlerOverride(extension) {
-  try {
-    await invoke('clear_file_handler_override', { extension });
-    showStatus('Handler override cleared for ' + extension, 'success');
-    const handlers = await invoke('get_file_handlers');
-    setState({ handlers });
-  } catch (e) {
-    showStatus(formatError(e), 'error');
-  }
-}
-
-// -- Delegation helpers for handler override expand/collapse --
-
-function showOverrideInput(target) {
-  const row = target.closest('.setting-row');
-  const actions = row.querySelector('.setting-control');
-  const ext = target.dataset.ext;
-  const isOverride = target.dataset.source === 'override';
-
-  actions.innerHTML = '';
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'handler-override-input';
-  input.placeholder = 'Handler ID';
-  input.value = isOverride ? target.dataset.handlerId : '';
-
-  const setBtn = document.createElement('button');
-  setBtn.className = 'btn-ghost btn-sm';
-  setBtn.textContent = 'Set';
-  setBtn.dataset.action = 'set-override';
-  setBtn.dataset.ext = ext;
-
-  actions.appendChild(input);
-  actions.appendChild(setBtn);
-
-  if (isOverride) {
-    const clearBtn = document.createElement('button');
-    clearBtn.className = 'btn-link btn-sm';
-    clearBtn.textContent = 'Clear';
-    clearBtn.dataset.action = 'clear-override';
-    clearBtn.dataset.ext = ext;
-    actions.appendChild(clearBtn);
-  }
-
-  input.focus();
-}
-
-async function setOverride(target) {
-  const row = target.closest('.setting-row');
-  const input = row.querySelector('.handler-override-input');
-  if (input) await saveHandlerOverride(target.dataset.ext, input.value);
-}
-
-async function clearOverride(target) {
-  await clearHandlerOverride(target.dataset.ext);
-}
-
-// ---------------------------------------------------------------------------
-// Data refresh helpers
-// ---------------------------------------------------------------------------
 
 async function refreshDashboardData() {
   try {
@@ -938,7 +731,7 @@ async function refreshDashboardData() {
     ]);
     Object.assign(state, { dashboardStatus, cacheStats });
     render();
-  } catch (_) { /* silent — dashboard data is best-effort */ }
+  } catch (_) { }
 }
 
 async function refreshOfflineData() {
@@ -949,7 +742,7 @@ async function refreshOfflineData() {
     ]);
     Object.assign(state, { offlinePins, cacheStats });
     render();
-  } catch (_) { /* silent */ }
+  } catch (_) { }
 }
 
 function refreshPanelData(panel) {
@@ -958,16 +751,11 @@ function refreshPanelData(panel) {
   else if (panel === 'mounts') loadLibraries();
 }
 
-// ---------------------------------------------------------------------------
-// Init
-// ---------------------------------------------------------------------------
-
 async function init() {
   try {
-    const [settings, mounts, handlers, offlinePins, dashboardStatus, recentErrors, recentActivity, cacheStats] = await Promise.all([
+    const [settings, mounts, offlinePins, dashboardStatus, recentErrors, recentActivity, cacheStats] = await Promise.all([
       invoke('get_settings'),
       invoke('list_mounts'),
-      invoke('get_file_handlers'),
       invoke('list_offline_pins'),
       invoke('get_dashboard_status'),
       invoke('get_recent_errors'),
@@ -976,63 +764,36 @@ async function init() {
     ]);
     recentActivity.reverse();
     recentErrors.reverse();
-    setState({ settings, mounts, handlers, offlinePins, dashboardStatus, recentErrors, recentActivity, cacheStats });
-    document.title = settings.app_name + ' Settings';
-    document.getElementById('app-version').textContent = settings.app_version;
-    // Load libraries in background (non-blocking for initial render)
+    setState({ settings, mounts, offlinePins, dashboardStatus, recentErrors, recentActivity, cacheStats });
+    document.title = 'Paramètres Carmine';
+    document.getElementById('app-version').textContent = 'Version ' + settings.app_version;
     loadLibraries();
   } catch (e) {
     showStatus(formatError(e), 'error');
   }
 
-  // Nav click + keyboard
   const navItems = Array.from(document.querySelectorAll('.nav-item'));
-  function handleNavKeydown(e) {
-    const idx = navItems.indexOf(e.currentTarget);
-    let target = null;
-    if (e.key === 'ArrowDown') target = navItems[(idx + 1) % navItems.length];
-    else if (e.key === 'ArrowUp') target = navItems[(idx - 1 + navItems.length) % navItems.length];
-    else if (e.key === 'Home') target = navItems[0];
-    else if (e.key === 'End') target = navItems[navItems.length - 1];
-    else if (e.key === 'Enter' || e.key === ' ') target = e.currentTarget;
-    if (target) { e.preventDefault(); setState({ activePanel: target.dataset.panel }); target.focus(); }
-  }
   navItems.forEach(item => {
     item.addEventListener('click', () => {
       const panel = item.dataset.panel;
       setState({ activePanel: panel });
       refreshPanelData(panel);
     });
-    item.addEventListener('keydown', handleNavKeydown);
   });
 
-  // Auto-save listeners
-  ['auto-start', 'notifications', 'explorer-nav-pane', 'sync-interval', 'log-level', 'offline-ttl'].forEach(id =>
+  ['auto-start', 'notifications', 'sync-interval', 'offline-ttl'].forEach(id =>
     document.getElementById(id).addEventListener('change', saveSettings));
-  ['cache-dir', 'cache-max-size', 'metadata-ttl', 'offline-max-size'].forEach(id =>
+  ['cache-dir', 'cache-max-size'].forEach(id =>
     document.getElementById(id).addEventListener('input', debouncedSave));
 
-  // Static buttons (direct listeners — not delegated)
   document.getElementById('sign-out-btn').addEventListener('click', signOut);
   document.getElementById('btn-clear-cache').addEventListener('click', clearCache);
-  document.getElementById('btn-set-default').addEventListener('click', async () => {
-    try {
-      await invoke('prompt_set_default_handler');
-      showStatus('Pick Carmine Desktop in the Default Apps panel that just opened.', 'info');
-    } catch (e) {
-      showStatus(formatError(e), 'error');
-    }
-  });
 
-  // Delegation for dynamically rendered mount and handler rows
   document.querySelector('.main-content').addEventListener('click', async (e) => {
     const target = e.target.closest('[data-action]');
     if (!target) return;
     const action = target.dataset.action;
-    if (action === 'override-handler') showOverrideInput(target);
-    else if (action === 'set-override') await setOverride(target);
-    else if (action === 'clear-override') await clearOverride(target);
-    else if (action === 'remove-pin') await removeOfflinePin(target.dataset.driveId, target.dataset.itemId, target.dataset.name);
+    if (action === 'remove-pin') await removeOfflinePin(target.dataset.driveId, target.dataset.itemId, target.dataset.name);
     else if (action === 'toggle-activity-expanded') {
       setState({ activityExpanded: !state.activityExpanded });
     }
@@ -1042,7 +803,7 @@ async function init() {
     else if (action === 'dashboard-sign-in') {
       try {
         await invoke('sign_out');
-        showStatus('Please sign in again', 'info');
+        showStatus('Veuillez vous reconnecter', 'info');
       } catch (e) {
         showStatus(formatError(e), 'error');
       }
@@ -1062,37 +823,14 @@ async function init() {
     }
   });
 
-  // Backend-triggered refresh (tray icon re-opens window)
-  listen('refresh-settings', async () => {
-    try {
-      const [settings, mounts, offlinePins, dashboardStatus, cacheStats] = await Promise.all([
-        invoke('get_settings'),
-        invoke('list_mounts'),
-        invoke('list_offline_pins'),
-        invoke('get_dashboard_status'),
-        invoke('get_cache_stats'),
-      ]);
-      setState({ settings, mounts, offlinePins, dashboardStatus, cacheStats });
-    } catch (_) { /* silent */ }
-  });
-
-  // Real-time dashboard events
   listen('obs-event', function(event) {
     const p = event.payload;
     const ds = state.dashboardStatus;
     if (!ds) return;
-
     switch (p.type) {
       case 'syncStateChanged': {
         const drive = ds.drives.find(function(d) { return d.driveId === p.driveId; });
-        if (drive) {
-          const wasSyncing = drive.syncState === 'syncing';
-          drive.syncState = p.state;
-          if (wasSyncing && p.state !== 'syncing') {
-            drive.lastSynced = new Date().toISOString();
-            refreshDashboardData();
-          }
-        }
+        if (drive) { drive.syncState = p.state; if (p.state !== 'syncing') refreshDashboardData(); }
         break;
       }
       case 'onlineStateChanged': {
@@ -1100,30 +838,14 @@ async function init() {
         if (drive) drive.online = p.online;
         break;
       }
-      case 'authStateChanged': {
-        ds.authDegraded = p.degraded;
-        break;
-      }
+      case 'authStateChanged': { ds.authDegraded = p.degraded; break; }
       case 'error': {
-        state.recentErrors.unshift({
-          driveId: p.driveId,
-          fileName: p.fileName,
-          remotePath: p.remotePath,
-          errorType: p.errorType,
-          message: p.message,
-          actionHint: p.actionHint,
-          timestamp: p.timestamp,
-        });
+        state.recentErrors.unshift({ fileName: p.fileName, errorType: p.errorType, message: p.message, timestamp: p.timestamp });
         if (state.recentErrors.length > 100) state.recentErrors.length = 100;
         break;
       }
       case 'activity': {
-        state.recentActivity.unshift({
-          driveId: p.driveId,
-          filePath: p.filePath,
-          activityType: p.activityType,
-          timestamp: p.timestamp,
-        });
+        state.recentActivity.unshift({ filePath: p.filePath, activityType: p.activityType, timestamp: p.timestamp });
         if (state.recentActivity.length > 500) state.recentActivity.length = 500;
         break;
       }
@@ -1131,10 +853,7 @@ async function init() {
     scheduleRender();
   });
 
-  // Periodic data refresh: re-fetch dashboard/offline data every 30 seconds
-  setInterval(function() {
-    refreshPanelData(state.activePanel);
-  }, 30000);
+  setInterval(function() { refreshPanelData(state.activePanel); }, 30000);
 }
 
 init();

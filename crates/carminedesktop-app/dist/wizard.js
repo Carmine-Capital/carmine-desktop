@@ -2,7 +2,7 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 // ---------------------------------------------------------------------------
-// State
+// État
 // ---------------------------------------------------------------------------
 
 const state = {
@@ -18,12 +18,8 @@ const state = {
 };
 
 // ---------------------------------------------------------------------------
-// Utilities
+// Utilitaires
 // ---------------------------------------------------------------------------
-
-function sanitizePath(name) {
-  return name.replace(/[/\\:*?"<>|]/g, '_').trim() || '_';
-}
 
 const AUTH_TIMEOUT_SECS = 120;
 let countdownTimer = null;
@@ -32,7 +28,7 @@ function startCountdown() {
   stopCountdown();
   let remaining = AUTH_TIMEOUT_SECS;
   const el = document.getElementById('auth-countdown');
-  el.textContent = 'Time remaining: ' + remaining + 's';
+  el.textContent = 'Temps restant : ' + remaining + 's';
   el.className = 'auth-countdown';
 
   countdownTimer = setInterval(() => {
@@ -42,7 +38,7 @@ function startCountdown() {
       el.textContent = '';
       return;
     }
-    el.textContent = 'Time remaining: ' + remaining + 's';
+    el.textContent = 'Temps restant : ' + remaining + 's';
     if (remaining <= 30) {
       el.className = 'auth-countdown warning';
     }
@@ -66,9 +62,9 @@ function stopCountdown() {
 // ---------------------------------------------------------------------------
 
 const _stepTitles = {
-  'step-welcome': 'Carmine Desktop Setup',
-  'step-libraries': 'Select Libraries \u2014 Carmine Desktop Setup',
-  'step-success': 'All Set \u2014 Carmine Desktop Setup',
+  'step-welcome': 'Configuration Carmine',
+  'step-libraries': 'Sélection des bibliothèques \u2014 Carmine',
+  'step-success': 'Terminé \u2014 Carmine',
 };
 
 const STEP_MAP = {
@@ -86,11 +82,6 @@ function updateStepper(stepId) {
     if (i < currentStep) el.classList.add('done');
     else if (i === currentStep) el.classList.add('active');
   }
-  const footer = document.getElementById('wizard-footer');
-  if (footer) {
-    footer.textContent = '';
-    footer.style.display = 'none';
-  }
 }
 
 function goToStep(stepId) {
@@ -102,7 +93,7 @@ function goToStep(stepId) {
 }
 
 // ---------------------------------------------------------------------------
-// Auth
+// Authentification
 // ---------------------------------------------------------------------------
 
 function cleanupAuthListeners() {
@@ -132,7 +123,7 @@ async function startSignIn() {
     stopCountdown();
     cleanupAuthListeners();
     const errEl = document.getElementById('auth-error');
-    errEl.textContent = 'Sign-in failed: ' + (event.payload || 'unknown error');
+    errEl.textContent = 'Échec de connexion : ' + (event.payload || 'erreur inconnue');
     errEl.style.display = 'block';
   }));
 
@@ -143,8 +134,7 @@ async function startSignIn() {
     state.signingIn = false;
     stopCountdown();
     cleanupAuthListeners();
-    console.error('start_sign_in failed:', e);
-    showStatus('Sign-in failed', 'error');
+    showStatus('Échec de la connexion', 'error');
     document.getElementById('sign-in-btn').style.display = '';
     document.getElementById('auth-waiting').style.display = 'none';
   }
@@ -153,7 +143,7 @@ async function startSignIn() {
 async function cancelSignIn() {
   state.signingIn = false;
   stopCountdown();
-  try { await invoke('cancel_sign_in'); } catch (e) { console.warn('cancel failed:', e); }
+  try { await invoke('cancel_sign_in'); } catch (e) { }
   cleanupAuthListeners();
   document.getElementById('sign-in-btn').style.display = '';
   document.getElementById('auth-waiting').style.display = 'none';
@@ -169,11 +159,10 @@ async function copyAuthUrl() {
   try {
     await navigator.clipboard.writeText(url);
     const btn = document.getElementById('copy-btn');
-    btn.textContent = 'Copied!';
-    setTimeout(() => { btn.textContent = 'Copy URL'; }, 2000);
+    btn.textContent = 'Copié !';
+    setTimeout(() => { btn.textContent = 'Copier'; }, 2000);
   } catch (e) {
-    console.error('clipboard write failed:', e);
-    showStatus('Could not copy URL', 'error');
+    showStatus('Impossible de copier l\'URL', 'error');
   }
 }
 
@@ -183,7 +172,7 @@ async function onSignInComplete() {
 }
 
 // ---------------------------------------------------------------------------
-// Libraries — loading
+// Bibliothèques
 // ---------------------------------------------------------------------------
 
 async function loadLibraries() {
@@ -221,20 +210,16 @@ async function loadLibraries() {
 
   if (driveResult.status === 'rejected' && librariesResult.status === 'rejected') {
     const errEl = document.getElementById('libraries-error');
-    errEl.textContent = 'Could not load account data \u2014 please try signing in again.';
+    errEl.textContent = 'Impossible de charger les données du compte. Veuillez vous reconnecter.';
     errEl.style.display = 'block';
   } else if (driveResult.status === 'rejected') {
-    showStatus('OneDrive info unavailable \u2014 SharePoint libraries loaded', 'info');
+    showStatus('OneDrive indisponible \u2014 Bibliothèques SharePoint chargées', 'info');
   } else if (librariesResult.status === 'rejected') {
-    showStatus('SharePoint libraries unavailable \u2014 OneDrive loaded', 'info');
+    showStatus('Bibliothèques SharePoint indisponibles \u2014 OneDrive chargé', 'info');
   }
 
   updateGetStartedBtn();
 }
-
-// ---------------------------------------------------------------------------
-// Libraries — rendering
-// ---------------------------------------------------------------------------
 
 function renderLibraries(libraries) {
   const listEl = document.getElementById('libraries-sp-list');
@@ -243,7 +228,7 @@ function renderLibraries(libraries) {
   if (libraries.length === 0) {
     const hint = document.createElement('p');
     hint.className = 'hint';
-    hint.textContent = 'No SharePoint libraries found for your organization.';
+    hint.textContent = 'Aucune bibliothèque SharePoint trouvée pour votre organisation.';
     listEl.appendChild(hint);
     return;
   }
@@ -253,14 +238,10 @@ function renderLibraries(libraries) {
     row.className = 'lib-row';
     row.dataset.action = 'toggle-lib';
     row.dataset.driveId = lib.id;
-    row.setAttribute('role', 'checkbox');
-    row.setAttribute('aria-checked', 'false');
-    row.setAttribute('tabindex', '0');
 
     const check = document.createElement('div');
     check.className = 'lib-check';
     check.textContent = '\u2713';
-    check.setAttribute('aria-hidden', 'true');
 
     const info = document.createElement('div');
     info.className = 'lib-info';
@@ -278,13 +259,12 @@ function renderLibraries(libraries) {
 function toggleLibrary(driveId) {
   const row = document.querySelector('.lib-row[data-drive-id="' + CSS.escape(driveId) + '"]');
   if (!row) return;
-  const isSelected = row.classList.toggle('selected');
-  row.setAttribute('aria-checked', isSelected ? 'true' : 'false');
+  row.classList.toggle('selected');
   updateGetStartedBtn();
 }
 
 // ---------------------------------------------------------------------------
-// Get Started / Complete
+// Finalisation
 // ---------------------------------------------------------------------------
 
 function updateGetStartedBtn() {
@@ -303,14 +283,12 @@ async function getStarted() {
   const btn = document.getElementById('get-started-btn');
   const origLabel = btn.textContent;
   btn.disabled = true;
-  btn.textContent = 'Setting up\u2026';
+  btn.textContent = 'Configuration\u2026';
 
-  const onedriveSection = document.getElementById('libraries-onedrive-section');
   const onedriveChecked = document.getElementById('onedrive-check') &&
     document.getElementById('onedrive-check').checked &&
-    onedriveSection.style.display !== 'none';
+    document.getElementById('libraries-onedrive-section').style.display !== 'none';
 
-  // Collect selected SharePoint libraries
   const selectedRows = document.querySelectorAll('#libraries-sp-list .lib-row.selected');
   const selectedLibraryIds = new Set();
   selectedRows.forEach(row => selectedLibraryIds.add(row.dataset.driveId));
@@ -318,7 +296,6 @@ async function getStarted() {
   const errors = [];
   let totalMounted = 0;
 
-  // Mount OneDrive if checked
   if (onedriveChecked && state.onedriveDriveId) {
     try {
       await invoke('add_mount', {
@@ -328,11 +305,10 @@ async function getStarted() {
       });
       totalMounted++;
     } catch (e) {
-      errors.push('OneDrive: ' + formatError(e));
+      errors.push('OneDrive : ' + formatError(e));
     }
   }
 
-  // Mount selected SharePoint libraries
   for (const lib of state.libraries) {
     if (!selectedLibraryIds.has(lib.id)) continue;
     const safeName = sanitizePath(lib.name);
@@ -348,33 +324,28 @@ async function getStarted() {
       });
       totalMounted++;
     } catch (e) {
-      errors.push(lib.name + ': ' + formatError(e));
+      errors.push(lib.name + ' : ' + formatError(e));
     }
   }
 
   if (errors.length > 0 && totalMounted === 0) {
-    errEl.textContent = 'Failed to add mounts: ' + errors.join('; ');
+    errEl.textContent = 'Échec de l\'ajout des lecteurs : ' + errors.join('; ');
     errEl.style.display = 'block';
-    showStatus('Failed to set up mounts', 'error');
+    showStatus('Échec de la configuration', 'error');
     btn.disabled = false;
     btn.textContent = origLabel;
     return;
-  }
-
-  if (errors.length > 0) {
-    showStatus(totalMounted + ' mounted, ' + errors.length + ' failed', 'info');
   }
 
   try {
     await invoke('complete_wizard');
   } catch (e) {
-    showStatus('Failed to complete setup', 'error');
+    showStatus('Échec de finalisation', 'error');
     btn.disabled = false;
     btn.textContent = origLabel;
     return;
   }
 
-  // Show done step with mount summary
   try {
     const mounts = await invoke('list_mounts');
     state.finalMounts = mounts;
@@ -383,33 +354,25 @@ async function getStarted() {
     mounts.forEach(m => {
       const li = document.createElement('li');
       li.className = 'mount-item';
+      li.style.fontSize = '13px';
+      li.style.color = 'var(--text-secondary)';
+      li.style.marginBottom = '4px';
       li.textContent = m.name + ' \u2192 ' + m.mount_point;
       list.appendChild(li);
     });
-  } catch (e) {
-    console.error('list_mounts failed:', e);
-  }
+  } catch (e) { }
   goToStep('step-success');
 }
-
-// ---------------------------------------------------------------------------
-// Switch Account
-// ---------------------------------------------------------------------------
 
 async function switchAccount() {
   const btn = document.getElementById('switch-account-btn');
   btn.disabled = true;
-  btn.textContent = 'Signing out\u2026';
-  try {
-    await invoke('sign_out');
-  } catch (e) {
-    console.warn('sign_out during switch failed:', e);
-  }
+  btn.textContent = 'Déconnexion\u2026';
+  try { await invoke('sign_out'); } catch (e) { }
   btn.disabled = false;
-  btn.textContent = 'Sign in with a different account';
+  btn.textContent = 'Changer de compte';
   state.onedriveDriveId = null;
   state.libraries = [];
-  // Reset auth UI on welcome step
   document.getElementById('sign-in-btn').style.display = '';
   document.getElementById('auth-waiting').style.display = 'none';
   document.getElementById('auth-url').value = '';
@@ -417,19 +380,12 @@ async function switchAccount() {
   goToStep('step-welcome');
 }
 
-// ---------------------------------------------------------------------------
-// Init
-// ---------------------------------------------------------------------------
-
 async function init() {
   try {
     state.defaultMountRoot = await invoke('get_default_mount_root');
     state.defaultMountRoot = state.defaultMountRoot.replace(/[/\\]+$/, '');
-  } catch (e) {
-    console.warn('get_default_mount_root failed, using fallback:', e);
-  }
+  } catch (e) { }
 
-  // Static button listeners
   document.getElementById('sign-in-btn').addEventListener('click', startSignIn);
   document.getElementById('copy-btn').addEventListener('click', copyAuthUrl);
   document.getElementById('cancel-btn').addEventListener('click', cancelSignIn);
@@ -440,17 +396,10 @@ async function init() {
   });
   document.getElementById('switch-account-btn').addEventListener('click', switchAccount);
 
-  // Delegation for dynamic library rows
   document.querySelector('.main-content').addEventListener('click', (e) => {
     const target = e.target.closest('[data-action]');
     if (!target) return;
     if (target.dataset.action === 'toggle-lib') toggleLibrary(target.dataset.driveId);
-  });
-  // Keyboard support for delegated rows
-  document.querySelector('.main-content').addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const target = e.target.closest('[data-action]');
-    if (target) { e.preventDefault(); target.click(); }
   });
 }
 init();
