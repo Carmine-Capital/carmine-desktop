@@ -329,26 +329,3 @@ async fn test_try_restore_keeps_tokens_when_refresh_fails() -> carminedesktop_co
     let _ = carminedesktop_auth::storage::delete_tokens(account_id);
     Ok(())
 }
-
-#[test]
-fn test_display_detection() {
-    use carminedesktop_auth::oauth::has_display;
-
-    let result = has_display();
-
-    // On non-Linux platforms, always true
-    #[cfg(not(target_os = "linux"))]
-    assert!(result, "non-Linux platforms should always detect display");
-
-    // On Linux, result depends on $DISPLAY / $WAYLAND_DISPLAY
-    #[cfg(target_os = "linux")]
-    {
-        let has_x11 = std::env::var("DISPLAY").is_ok();
-        let has_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
-        assert_eq!(
-            result,
-            has_x11 || has_wayland,
-            "has_display should reflect DISPLAY/WAYLAND_DISPLAY env vars"
-        );
-    }
-}

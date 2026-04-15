@@ -65,7 +65,6 @@ fn test_effective_config_defaults() -> carminedesktop_core::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 #[test]
 fn test_expand_mount_point_home() {
     let home = env::var("HOME")
@@ -77,7 +76,7 @@ fn test_expand_mount_point_home() {
 
     assert!(expanded.starts_with(&home));
     assert!(!expanded.contains("{home}"));
-    assert!(expanded.ends_with("/OneDrive"));
+    assert!(expanded.ends_with("\\OneDrive"));
 }
 
 #[test]
@@ -88,17 +87,8 @@ fn test_expand_mount_point_tilde() {
 
     let expanded = expand_mount_point("~/Cloud/OneDrive");
     assert!(!expanded.contains('~'));
-    assert!(std::path::Path::new(&expanded).ends_with("Cloud/OneDrive"));
+    assert!(std::path::Path::new(&expanded).ends_with("Cloud\\OneDrive"));
     assert!(expanded.starts_with(&home));
-}
-
-#[test]
-#[cfg(not(target_os = "windows"))]
-fn test_expand_mount_point_no_placeholder() {
-    let path = "/mnt/carminedesktop";
-    let expanded = expand_mount_point(path);
-
-    assert_eq!(expanded, path);
 }
 
 #[test]
@@ -318,24 +308,6 @@ fn test_expand_mount_point_no_trailing_sep_unchanged() {
 }
 
 #[test]
-#[cfg(not(target_os = "windows"))]
-fn test_expand_mount_point_literal_path_strips_trailing_slash() {
-    // Literal path (no ~ or {home}) — still normalized
-    let expanded = expand_mount_point("/mnt/carminedesktop/");
-    assert_eq!(
-        expanded, "/mnt/carminedesktop",
-        "trailing / on literal path should be stripped"
-    );
-}
-
-#[test]
-#[cfg(not(target_os = "windows"))]
-fn test_expand_mount_point_literal_path_no_trailing_unchanged() {
-    let expanded = expand_mount_point("/mnt/carminedesktop");
-    assert_eq!(expanded, "/mnt/carminedesktop");
-}
-
-#[test]
 fn test_expand_mount_point_home_placeholder_strips_trailing_slash() {
     let expanded = expand_mount_point("{home}/Cloud/");
     assert!(
@@ -388,11 +360,8 @@ fn test_config_explorer_nav_pane_default() -> carminedesktop_core::Result<()> {
     let user = UserConfig::load("")?;
     let effective = EffectiveConfig::build(&user);
 
-    // Default: true on Windows, false elsewhere
-    #[cfg(target_os = "windows")]
+    // Default: true (Windows-only build)
     assert!(effective.explorer_nav_pane);
-    #[cfg(not(target_os = "windows"))]
-    assert!(!effective.explorer_nav_pane);
 
     Ok(())
 }
@@ -423,12 +392,9 @@ fn test_config_explorer_nav_pane_reset() -> carminedesktop_core::Result<()> {
     user.reset_setting("explorer_nav_pane");
     assert!(user.general.as_ref().unwrap().explorer_nav_pane.is_none());
 
-    // After reset, effective config should use platform default
+    // After reset, effective config should use platform default (true on Windows)
     let effective = EffectiveConfig::build(&user);
-    #[cfg(target_os = "windows")]
     assert!(effective.explorer_nav_pane);
-    #[cfg(not(target_os = "windows"))]
-    assert!(!effective.explorer_nav_pane);
 
     Ok(())
 }

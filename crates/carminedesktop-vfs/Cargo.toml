@@ -15,12 +15,6 @@ chrono = { workspace = true }
 bytes = { workspace = true }
 futures-util = { workspace = true }
 dashmap = { workspace = true }
-
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-fuser = { workspace = true }
-libc = { workspace = true }
-
-[target.'cfg(target_os = "windows")'.dependencies]
 winfsp = { workspace = true }
 winfsp-sys = { workspace = true }
 nt-time = { workspace = true }

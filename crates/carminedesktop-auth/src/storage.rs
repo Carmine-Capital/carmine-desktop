@@ -170,35 +170,6 @@ fn derive_key(password: &[u8], salt: &[u8]) -> carminedesktop_core::Result<Zeroi
 }
 
 /// Read platform-specific machine ID for use as key derivation entropy.
-#[cfg(target_os = "linux")]
-fn machine_id() -> Option<String> {
-    std::fs::read_to_string("/etc/machine-id")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
-#[cfg(target_os = "macos")]
-fn machine_id() -> Option<String> {
-    std::process::Command::new("ioreg")
-        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
-        .output()
-        .ok()
-        .and_then(|out| {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            for line in stdout.lines() {
-                if let Some(rest) = line.trim().strip_prefix("\"IOPlatformUUID\"")
-                    && let Some(value) = rest.split('"').nth(1)
-                    && !value.is_empty()
-                {
-                    return Some(value.to_string());
-                }
-            }
-            None
-        })
-}
-
-#[cfg(target_os = "windows")]
 fn machine_id() -> Option<String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -222,11 +193,6 @@ fn machine_id() -> Option<String> {
             }
             None
         })
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn machine_id() -> Option<String> {
-    None
 }
 
 fn machine_password() -> Vec<u8> {
@@ -263,31 +229,9 @@ fn store_tokens_encrypted(account_id: &str, serialized: &str) -> carminedesktop_
     output.extend_from_slice(&nonce);
     output.extend_from_slice(&ciphertext);
 
-    // Write with restrictive permissions: 0600 on Unix (owner read/write only).
     // On Windows, %APPDATA% default ACL is already user-only.
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(|e| {
-                carminedesktop_core::Error::Auth(format!("write token file failed: {e}"))
-            })?;
-        file.write_all(&output).map_err(|e| {
-            carminedesktop_core::Error::Auth(format!("write token file failed: {e}"))
-        })?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(&path, &output).map_err(|e| {
-            carminedesktop_core::Error::Auth(format!("write token file failed: {e}"))
-        })?;
-    }
+    std::fs::write(&path, &output)
+        .map_err(|e| carminedesktop_core::Error::Auth(format!("write token file failed: {e}")))?;
 
     tracing::warn!("tokens stored in encrypted file (less secure than OS keychain)");
     Ok(())

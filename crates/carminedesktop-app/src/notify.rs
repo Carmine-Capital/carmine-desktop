@@ -1,15 +1,6 @@
 use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-pub fn fuse_unavailable(app: &AppHandle) {
-    #[cfg(target_os = "linux")]
-    let body = "Filesystem mounts require FUSE. Run: sudo apt install fuse3 (Debian/Ubuntu) or equivalent for your distribution.";
-    #[cfg(target_os = "macos")]
-    let body = "Filesystem mounts require macFUSE. Install it from https://github.com/osxfuse/osxfuse/releases.";
-    send(app, "FUSE Not Available", body);
-}
-
 pub fn mount_failed(app: &AppHandle, name: &str, reason: &str) {
     send(app, "Mount Failed", &format!("{name}: {reason}"));
 }
@@ -67,7 +58,6 @@ pub fn auto_start_failed(app: &AppHandle, reason: &str) {
     );
 }
 
-#[cfg(target_os = "windows")]
 pub fn file_assoc_user_choice_failed(app: &AppHandle) {
     send(
         app,

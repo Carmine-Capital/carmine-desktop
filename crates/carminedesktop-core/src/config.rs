@@ -319,29 +319,17 @@ impl EffectiveConfig {
             .unwrap_or_else(|| "info".to_string());
         let notifications = user_general.and_then(|g| g.notifications).unwrap_or(true);
 
-        // Default: true on Windows and macOS, false on other platforms
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
-        let default_file_assoc = true;
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-        let default_file_assoc = false;
-
         let register_file_associations = user_general
             .and_then(|g| g.register_file_associations)
-            .unwrap_or(default_file_assoc);
+            .unwrap_or(true);
 
         let file_handler_overrides = user_general
             .and_then(|g| g.file_handler_overrides.clone())
             .unwrap_or_default();
 
-        // Default: true on Windows, false on other platforms
-        #[cfg(target_os = "windows")]
-        let default_nav_pane = true;
-        #[cfg(not(target_os = "windows"))]
-        let default_nav_pane = false;
-
         let explorer_nav_pane = user_general
             .and_then(|g| g.explorer_nav_pane)
-            .unwrap_or(default_nav_pane);
+            .unwrap_or(true);
 
         let offline_ttl_secs = user_general
             .and_then(|g| g.offline_ttl_secs)
@@ -380,20 +368,12 @@ fn validate_mount_point(mount_point: &str, existing_mounts: &[MountConfig]) -> c
     let expanded = expand_mount_point(mount_point);
     let path = std::path::Path::new(&expanded);
 
-    #[cfg(unix)]
-    let system_dirs: &[&str] = &[
-        "/", "/bin", "/sbin", "/usr", "/etc", "/var", "/dev", "/proc", "/sys", "/boot", "/lib",
-        "/lib64", "/tmp",
-    ];
-    #[cfg(windows)]
     let system_dirs: &[&str] = &[
         "C:\\",
         "C:\\Windows",
         "C:\\Program Files",
         "C:\\Program Files (x86)",
     ];
-    #[cfg(not(any(unix, windows)))]
-    let system_dirs: &[&str] = &[];
     if system_dirs.iter().any(|d| path == std::path::Path::new(d)) {
         return Err(crate::Error::Config(format!(
             "cannot use system directory as mount point: {expanded}"
@@ -446,7 +426,6 @@ pub fn derive_mount_point(
 /// - On all platforms: strips trailing `/` or `\`, but preserves bare Windows
 ///   drive roots like `C:\` (only strips when path length > 3).
 fn normalize_mountpoint(path: String) -> String {
-    #[cfg(target_os = "windows")]
     let path = path.replace('/', "\\");
 
     let trimmed = path.trim_end_matches(['/', '\\']);
@@ -629,97 +608,6 @@ pub mod autostart {
         if enabled { enable(app_path) } else { disable() }
     }
 
-    #[cfg(target_os = "linux")]
-    fn enable(app_path: &str) -> crate::Result<()> {
-        // Probe for systemd availability before writing any files.
-        // On non-systemd distributions (Alpine/OpenRC, Void/runit, etc.) `systemctl`
-        // is absent; writing the .service file first would leave a stale artifact.
-        let systemd_available = std::process::Command::new("systemctl")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-
-        if !systemd_available {
-            return Err(crate::Error::Config(
-                "systemd is not available on this system".into(),
-            ));
-        }
-
-        let service_dir = dirs::config_dir()
-            .map(|d| d.join("systemd/user"))
-            .ok_or_else(|| crate::Error::Config("no config dir".into()))?;
-        std::fs::create_dir_all(&service_dir)?;
-
-        let unit = format!(
-            "[Unit]\nDescription=Carmine Desktop\n\n[Service]\nExecStart={app_path}\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n"
-        );
-        std::fs::write(service_dir.join("carminedesktop.service"), unit)?;
-
-        std::process::Command::new("systemctl")
-            .args(["--user", "enable", "carminedesktop.service"])
-            .output()
-            .map_err(|e| crate::Error::Config(format!("systemctl enable failed: {e}")))?;
-        Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
-    fn disable() -> crate::Result<()> {
-        let _ = std::process::Command::new("systemctl")
-            .args(["--user", "disable", "carminedesktop.service"])
-            .output();
-
-        let service_path =
-            dirs::config_dir().map(|d| d.join("systemd/user/carminedesktop.service"));
-        if let Some(path) = service_path {
-            let _ = std::fs::remove_file(path);
-        }
-        Ok(())
-    }
-
-    #[cfg(target_os = "macos")]
-    fn enable(app_path: &str) -> crate::Result<()> {
-        let plist_dir = dirs::home_dir()
-            .map(|d| d.join("Library/LaunchAgents"))
-            .ok_or_else(|| crate::Error::Config("no home dir".into()))?;
-        std::fs::create_dir_all(&plist_dir)?;
-
-        let plist = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.carmine-capital.desktop.agent</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{app_path}</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <false/>
-</dict>
-</plist>"#
-        );
-        std::fs::write(
-            plist_dir.join("com.carmine-capital.desktop.agent.plist"),
-            plist,
-        )?;
-        Ok(())
-    }
-
-    #[cfg(target_os = "macos")]
-    fn disable() -> crate::Result<()> {
-        let plist_path = dirs::home_dir()
-            .map(|d| d.join("Library/LaunchAgents/com.carmine-capital.desktop.agent.plist"));
-        if let Some(path) = plist_path {
-            let _ = std::fs::remove_file(path);
-        }
-        Ok(())
-    }
-
-    #[cfg(target_os = "windows")]
     fn enable(app_path: &str) -> crate::Result<()> {
         use winreg::RegKey;
         use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
@@ -739,7 +627,6 @@ pub mod autostart {
         Ok(())
     }
 
-    #[cfg(target_os = "windows")]
     fn disable() -> crate::Result<()> {
         use winreg::RegKey;
         use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
@@ -751,18 +638,6 @@ pub mod autostart {
         ) {
             let _ = run_key.delete_value("Carmine Desktop");
         }
-        Ok(())
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    fn enable(_app_path: &str) -> crate::Result<()> {
-        Err(crate::Error::Config(
-            "auto-start not supported on this platform".into(),
-        ))
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    fn disable() -> crate::Result<()> {
         Ok(())
     }
 }

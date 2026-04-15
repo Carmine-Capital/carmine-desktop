@@ -43,10 +43,6 @@ tracing-appender = "0.2"
 # SQLite
 rusqlite = { version = "0.32", features = ["bundled"] }
 
-# FUSE filesystem (Linux/macOS)
-fuser = "0.17"
-libc = "0.2"
-
 # OS integration
 keyring = "3.6"
 open = "5.3"

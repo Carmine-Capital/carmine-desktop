@@ -38,8 +38,6 @@ tauri-plugin-opener = { workspace = true, optional = true }
 tauri-plugin-deep-link = { workspace = true, optional = true }
 tauri-plugin-single-instance = { workspace = true, optional = true, features = ["deep-link"] }
 url = { workspace = true }
-
-[target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
 winreg = { workspace = true }
 md-5 = { workspace = true }
