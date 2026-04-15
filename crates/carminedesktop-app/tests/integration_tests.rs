@@ -404,122 +404,6 @@ async fn test_crash_recovery_pending_writes() -> carminedesktop_core::Result<()>
 // 11.10 — UPDATE SCENARIO also removed (packaged mount override/dismiss logic gone).
 
 // ============================================================================
-// 11.7 — CROSS-PLATFORM SMOKE TEST: macOS (FUSE)
-// ============================================================================
-
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires macOS with macFUSE installed"]
-#[cfg(target_os = "macos")]
-async fn test_smoke_macos_fuse_mount_list_read_write_unmount() -> carminedesktop_core::Result<()> {
-    use carminedesktop_vfs::MountHandle;
-    use carminedesktop_vfs::inode::InodeTable;
-
-    let server = MockServer::start().await;
-    let test_id = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-
-    let base = std::env::temp_dir().join(format!("carminedesktop-smoke-macos-{test_id}"));
-    let cache_dir = base.join("cache");
-    let db_path = base.join("metadata.db");
-    let mountpoint = base.join("mnt");
-    std::fs::create_dir_all(&cache_dir)?;
-    std::fs::create_dir_all(&mountpoint)?;
-
-    let graph = Arc::new(GraphClient::with_base_url(server.uri(), || async {
-        Ok("test-token".to_string())
-    }));
-    let cache = Arc::new(CacheManager::new(
-        cache_dir,
-        db_path,
-        100_000_000,
-        Some(300),
-        "test-drive".to_string(),
-    )?);
-    let inodes = Arc::new(InodeTable::new());
-    inodes.set_root("root-id");
-
-    let drive_id = "smoke-drive";
-
-    Mock::given(method("GET"))
-        .and(path(format!("/drives/{drive_id}/items/root-id/children")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "value": [
-                {
-                    "id": "smoke-file-1",
-                    "name": "readme.txt",
-                    "size": 11,
-                    "parentReference": { "driveId": drive_id, "id": "root-id" },
-                    "file": { "mimeType": "text/plain" }
-                }
-            ]
-        })))
-        .mount(&server)
-        .await;
-
-    Mock::given(method("GET"))
-        .and(path(format!(
-            "/drives/{drive_id}/items/smoke-file-1/content"
-        )))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(b"hello smoke".to_vec(), "text/plain"),
-        )
-        .mount(&server)
-        .await;
-
-    Mock::given(method("PUT"))
-        .and(path(format!(
-            "/drives/{drive_id}/items/root-id:/newfile.txt:/content"
-        )))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "id": "new-file-id",
-            "name": "newfile.txt",
-            "size": 9,
-            "parentReference": { "driveId": drive_id, "id": "root-id" },
-            "file": { "mimeType": "text/plain" }
-        })))
-        .mount(&server)
-        .await;
-
-    let rt = tokio::runtime::Handle::current();
-    let mount = MountHandle::mount(
-        graph,
-        cache,
-        inodes,
-        drive_id.to_string(),
-        mountpoint.to_str().unwrap(),
-        rt,
-        None,
-        None,
-        Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    )?;
-
-    sleep(Duration::from_millis(300)).await;
-
-    let entries: Vec<String> = std::fs::read_dir(&mountpoint)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .collect();
-    assert!(
-        entries.contains(&"readme.txt".to_string()),
-        "list: {entries:?}"
-    );
-
-    let content = std::fs::read_to_string(mountpoint.join("readme.txt"))?;
-    assert_eq!(content, "hello smoke");
-
-    std::fs::write(mountpoint.join("newfile.txt"), "new smoke")?;
-    sleep(Duration::from_millis(200)).await;
-
-    let _ = mount.unmount();
-    sleep(Duration::from_millis(200)).await;
-    let _ = std::fs::remove_dir_all(&base);
-
-    Ok(())
-}
-
-// ============================================================================
 // 15.1 — INITIALIZATION SEQUENCE: config → auth → graph → cache → assembly
 // ============================================================================
 
@@ -1156,7 +1040,6 @@ async fn test_auth_degradation_detection_in_delta_sync() -> carminedesktop_core:
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires Windows with WinFsp"]
-#[cfg(target_os = "windows")]
 async fn test_smoke_windows_winfsp_mount_list_read_write_unmount() -> carminedesktop_core::Result<()>
 {
     use carminedesktop_vfs::WinFspMountHandle;

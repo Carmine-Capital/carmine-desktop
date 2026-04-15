@@ -196,10 +196,6 @@ async fn complete_sign_in(app: &AppHandle) -> Result<(), String> {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    if !crate::fuse_available() {
-        crate::notify::fuse_unavailable(app);
-    }
     crate::start_all_mounts(app);
     crate::run_crash_recovery(app);
     crate::start_delta_sync(app);
@@ -769,11 +765,9 @@ pub fn save_settings(
     offline_max_folder_size: Option<String>,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
-    #[cfg(target_os = "windows")]
     let root_dir_changed = root_dir.is_some();
 
     let old_auto_start;
-    #[cfg(target_os = "windows")]
     let old_explorer_nav_pane;
 
     {
@@ -781,10 +775,7 @@ pub fn save_settings(
 
         let general = user_config.general.get_or_insert_with(Default::default);
         old_auto_start = general.auto_start;
-        #[cfg(target_os = "windows")]
-        {
-            old_explorer_nav_pane = general.explorer_nav_pane;
-        }
+        old_explorer_nav_pane = general.explorer_nav_pane;
         if let Some(v) = auto_start {
             general.auto_start = Some(v);
         }
@@ -850,32 +841,29 @@ pub fn save_settings(
         }
     }
 
-    #[cfg(target_os = "windows")]
+    if let Some(true) = explorer_nav_pane
+        && old_explorer_nav_pane != Some(true)
     {
-        if let Some(true) = explorer_nav_pane
-            && old_explorer_nav_pane != Some(true)
+        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+        let cloud_root = expand_mount_point(&format!("~/{}", config.root_dir));
+        if let Err(e) =
+            crate::shell_integration::register_nav_pane(std::path::Path::new(&cloud_root))
         {
-            let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-            let cloud_root = expand_mount_point(&format!("~/{}", config.root_dir));
-            if let Err(e) =
-                crate::shell_integration::register_nav_pane(std::path::Path::new(&cloud_root))
-            {
-                tracing::warn!("Explorer navigation pane registration failed: {e}");
-            }
-        } else if let Some(false) = explorer_nav_pane
-            && old_explorer_nav_pane != Some(false)
-            && let Err(e) = crate::shell_integration::unregister_nav_pane()
-        {
-            tracing::warn!("Explorer navigation pane unregistration failed: {e}");
+            tracing::warn!("Explorer navigation pane registration failed: {e}");
         }
-        if root_dir_changed && crate::shell_integration::is_nav_pane_registered() {
-            let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-            let cloud_root = expand_mount_point(&format!("~/{}", config.root_dir));
-            if let Err(e) =
-                crate::shell_integration::update_nav_pane_target(std::path::Path::new(&cloud_root))
-            {
-                tracing::warn!("Explorer navigation pane target update failed: {e}");
-            }
+    } else if let Some(false) = explorer_nav_pane
+        && old_explorer_nav_pane != Some(false)
+        && let Err(e) = crate::shell_integration::unregister_nav_pane()
+    {
+        tracing::warn!("Explorer navigation pane unregistration failed: {e}");
+    }
+    if root_dir_changed && crate::shell_integration::is_nav_pane_registered() {
+        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
+        let cloud_root = expand_mount_point(&format!("~/{}", config.root_dir));
+        if let Err(e) =
+            crate::shell_integration::update_nav_pane_target(std::path::Path::new(&cloud_root))
+        {
+            tracing::warn!("Explorer navigation pane target update failed: {e}");
         }
     }
 
@@ -1059,14 +1047,11 @@ pub async fn complete_wizard(_app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn check_fuse_available() -> bool {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        crate::fuse_available()
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        true // Windows uses WinFsp, always available after preflight
-    }
+    // Windows uses WinFsp; preflight_checks in main.rs fails fatally before
+    // Tauri starts if WinFsp is missing, so by the time the UI can call this,
+    // the backend is always available. Kept for frontend compat — wizard.js
+    // is updated in a later phase.
+    true
 }
 
 #[tauri::command]
@@ -1286,26 +1271,18 @@ fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {
 /// before a reboot refreshes COM class registrations).
 #[tauri::command]
 pub fn prompt_set_default_handler() -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        // Force re-register file associations + UserChoice hashes before opening
-        // the UI so that changes take effect even if the user already had another
-        // default handler set.
-        if let Err(e) = crate::shell_integration::register_file_associations() {
-            tracing::warn!("pre-prompt file association registration failed: {e}");
-        }
-        if let Err(e) = crate::shell_integration::set_all_user_choices() {
-            tracing::warn!("pre-prompt UserChoice registration failed: {e}");
-        }
-        launch_default_apps_ui().map_err(|e| format!("{e}"))
+    // Force re-register file associations + UserChoice hashes before opening
+    // the UI so that changes take effect even if the user already had another
+    // default handler set.
+    if let Err(e) = crate::shell_integration::register_file_associations() {
+        tracing::warn!("pre-prompt file association registration failed: {e}");
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Err("not supported on this platform".to_string())
+    if let Err(e) = crate::shell_integration::set_all_user_choices() {
+        tracing::warn!("pre-prompt UserChoice registration failed: {e}");
     }
+    launch_default_apps_ui().map_err(|e| format!("{e}"))
 }
 
-#[cfg(target_os = "windows")]
 fn launch_default_apps_ui() -> carminedesktop_core::Result<()> {
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
@@ -1344,9 +1321,9 @@ fn launch_default_apps_ui() -> carminedesktop_core::Result<()> {
 
 /// Open a mounted file in SharePoint / Office Online.
 ///
-/// Resolves the local path to its SharePoint `webUrl`, applies Office URI scheme
-/// mapping on Windows/macOS for desktop co-authoring, and opens the result.
-/// Falls back to the plain browser URL if the Office URI fails.
+/// Resolves the local path to its SharePoint `webUrl`, applies the Office URI
+/// scheme mapping for desktop co-authoring, and opens the result. Falls back
+/// to the plain browser URL if the Office URI fails.
 #[tauri::command]
 pub async fn open_online(app: AppHandle, path: String) -> Result<(), String> {
     let state = app.state::<AppState>();
@@ -1355,11 +1332,9 @@ pub async fn open_online(app: AppHandle, path: String) -> Result<(), String> {
     let extension = dotted_extension(&path);
 
     // Try the Office URI scheme with a direct document URL (requires the
-    // drive's webUrl to construct).  Falls back to the browser if anything
-    // in the chain fails.  Only on Windows — Office URI schemes are not
-    // supported on Linux/macOS.
-    if cfg!(target_os = "windows")
-        && let Some(direct_url) = build_direct_url(&state.graph, &drive_id, &item).await
+    // drive's webUrl to construct). Falls back to the browser if anything
+    // in the chain fails.
+    if let Some(direct_url) = build_direct_url(&state.graph, &drive_id, &item).await
         && let Some(uri) = carminedesktop_core::open_online::office_uri(&extension, &direct_url)
     {
         tracing::info!("open_online: launching Office URI {uri}");
@@ -1508,7 +1483,6 @@ fn open_with_os_default(path: &str) -> Result<(), String> {
 }
 
 /// Show a "no handler found" notification and return an error string.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn no_handler_error(app: &tauri::AppHandle, ext: &str) -> String {
     tracing::warn!(
         "open_file: no previous or discovered handler for {ext}, cannot fall through (we are the handler)"
@@ -1525,7 +1499,6 @@ fn no_handler_error(app: &tauri::AppHandle, ext: &str) -> String {
 /// Parse a Windows shell command template and spawn the process.
 ///
 /// Templates are typically `"C:\path\to\app.exe" "%1"` or `app.exe %1`.
-#[cfg(target_os = "windows")]
 fn spawn_from_cmd_template(template: &str, path: &str) -> std::io::Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -1555,31 +1528,12 @@ fn spawn_from_cmd_template(template: &str, path: &str) -> std::io::Result<std::p
     }
 }
 
-/// Try opening a file via a macOS bundle ID.
-///
-/// Resolves the bundle ID to an app path and tries `open -a`; falls back to `open -b`.
-#[cfg(target_os = "macos")]
-fn try_open_with_bundle(bundle_id: &str, path: &str) -> std::io::Result<()> {
-    if let Some(app_path) = crate::shell_integration::resolve_app_path(bundle_id) {
-        std::process::Command::new("open")
-            .args(["-a", &app_path, path])
-            .spawn()
-            .map(|_| ())
-    } else {
-        std::process::Command::new("open")
-            .args(["-b", bundle_id, path])
-            .spawn()
-            .map(|_| ())
-    }
-}
-
 /// Try to open a file with the locally installed Office handler (Windows).
 ///
 /// Checks config override → previous handler → runtime-discovered handler.
 /// Returns `Ok(())` if the file was opened, `Err` if no handler was found.
 /// Used for offline-cached files on Carmine Desktop mounts and for non-mount
 /// paths where Carmine Desktop is the registered default handler.
-#[cfg(target_os = "windows")]
 fn try_local_handler(state: &AppState, path: &str) -> Result<(), String> {
     let ext = dotted_extension(path);
 
@@ -1628,64 +1582,6 @@ fn try_local_handler(state: &AppState, path: &str) -> Result<(), String> {
     }
 
     Err(format!("no local handler found for {ext}"))
-}
-
-/// Try to open a file with the locally installed Office handler (macOS).
-///
-/// Checks config override → previous handler → runtime-discovered handler.
-/// Returns `Ok(())` if the file was opened, `Err` if no handler was found.
-#[cfg(target_os = "macos")]
-fn try_local_handler(state: &AppState, path: &str) -> Result<(), String> {
-    let ext = dotted_extension(path);
-
-    let override_handler = {
-        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-        config.file_handler_overrides.get(&ext).cloned()
-    };
-
-    if let Some(ref bundle_id) = override_handler {
-        tracing::info!("try_local_handler: using config override handler {bundle_id}");
-        match try_open_with_bundle(bundle_id, path) {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                tracing::warn!(
-                    "failed to invoke config override handler: {e}, trying other fallbacks"
-                );
-            }
-        }
-    }
-
-    if let Some(bundle_id) = crate::shell_integration::get_previous_handler(&ext) {
-        tracing::info!("try_local_handler: invoking previous handler {bundle_id}");
-        match try_open_with_bundle(&bundle_id, path) {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                tracing::warn!("failed to invoke previous handler: {e}, trying other fallbacks");
-            }
-        }
-    }
-
-    if crate::shell_integration::is_handled_extension(&ext)
-        && let Some(discovered) = crate::shell_integration::discover_office_handler(&ext)
-    {
-        tracing::info!("try_local_handler: using discovered handler {discovered}");
-        match try_open_with_bundle(&discovered, path) {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                tracing::warn!("failed to invoke discovered handler: {e}");
-            }
-        }
-    }
-
-    Err(format!("no local handler found for {ext}"))
-}
-
-/// Try to open a file with the OS default handler (Linux).
-///
-/// Linux has no file associations for Carmine Desktop, so `xdg-open` is safe.
-#[cfg(target_os = "linux")]
-fn try_local_handler(_state: &AppState, path: &str) -> Result<(), String> {
-    open_with_os_default(path)
 }
 
 /// Open a file: if on a Carmine Desktop drive, open online; otherwise fall through to OS handler.
@@ -1753,7 +1649,6 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
 
         match try_local_handler(&state, &path) {
             Ok(()) => Ok(()),
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
             Err(_) if crate::shell_integration::is_handled_extension(&dotted_extension(&path)) => {
                 Err(no_handler_error(&app, &dotted_extension(&path)))
             }
