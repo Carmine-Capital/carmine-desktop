@@ -309,18 +309,6 @@ fn parse_token_response(body: &serde_json::Value) -> carminedesktop_core::Result
     })
 }
 
-/// Detect whether a display server is available for opening a browser.
-pub fn has_display() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        true
-    }
-}
-
 fn print_auth_url(url: &str) {
     eprintln!(
         "\nOpen this URL in your browser to sign in:\n\n  {url}\n\nWaiting for authentication...\n"
