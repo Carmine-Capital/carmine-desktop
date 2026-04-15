@@ -1671,9 +1671,6 @@ async fn find_child_by_name(
 ) -> Result<u64, String> {
     // 1. Memory cache
     if let Some(children_map) = cache.memory.get_children(parent_ino) {
-        #[cfg(not(target_os = "windows"))]
-        let child_ino = children_map.get(name).copied();
-        #[cfg(target_os = "windows")]
         let child_ino = children_map
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case(name))
@@ -1687,12 +1684,7 @@ async fn find_child_by_name(
     // 2. SQLite
     if let Ok(children) = cache.sqlite.get_children(parent_ino) {
         for (_, item) in children {
-            #[cfg(not(target_os = "windows"))]
-            let matches = item.name == name;
-            #[cfg(target_os = "windows")]
-            let matches = item.name.eq_ignore_ascii_case(name);
-
-            if matches {
+            if item.name.eq_ignore_ascii_case(name) {
                 let ino = inodes.allocate(&item.id);
                 cache.memory.insert(ino, item);
                 return Ok(ino);
@@ -1717,12 +1709,7 @@ async fn find_child_by_name(
         children_map.insert(item.name.clone(), child_ino);
         cache.memory.insert(child_ino, item.clone());
 
-        #[cfg(not(target_os = "windows"))]
-        let matches = item.name == name;
-        #[cfg(target_os = "windows")]
-        let matches = item.name.eq_ignore_ascii_case(name);
-
-        if matches && found_ino.is_none() {
+        if item.name.eq_ignore_ascii_case(name) && found_ino.is_none() {
             found_ino = Some(child_ino);
         }
     }

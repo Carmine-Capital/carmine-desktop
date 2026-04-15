@@ -130,18 +130,15 @@ impl MemoryCache {
         if let Some(mut entry) = self.entries.get_mut(&parent_inode)
             && let Some(children) = &mut entry.children
         {
-            // On Windows, remove any case-insensitive duplicate before inserting
-            // so that a rename like "file.txt" → "FILE.TXT" doesn't leave a
-            // stale entry under the old case.
-            #[cfg(target_os = "windows")]
-            {
-                let dup = children
-                    .keys()
-                    .find(|k| k.eq_ignore_ascii_case(name) && k.as_str() != name)
-                    .cloned();
-                if let Some(dup) = dup {
-                    children.remove(&dup);
-                }
+            // Remove any case-insensitive duplicate before inserting so that a
+            // rename like "file.txt" → "FILE.TXT" doesn't leave a stale entry
+            // under the old case.
+            let dup = children
+                .keys()
+                .find(|k| k.eq_ignore_ascii_case(name) && k.as_str() != name)
+                .cloned();
+            if let Some(dup) = dup {
+                children.remove(&dup);
             }
             children.insert(name.to_string(), child_inode);
         }
@@ -151,10 +148,9 @@ impl MemoryCache {
         if let Some(mut entry) = self.entries.get_mut(&parent_inode)
             && let Some(children) = &mut entry.children
         {
-            // On Windows, filenames are case-insensitive so the stored key may
-            // differ in case from the name provided by the OS.  Fall back to a
+            // Filenames are case-insensitive so the stored key may differ in
+            // case from the name provided by the OS. Fall back to a
             // case-insensitive scan when the exact key is missing.
-            #[cfg(target_os = "windows")]
             if !children.contains_key(name) {
                 let key = children
                     .keys()

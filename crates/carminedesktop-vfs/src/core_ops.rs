@@ -22,16 +22,9 @@ use carminedesktop_core::types::{DriveItem, DriveQuota, FileFacet, ParentReferen
 use carminedesktop_graph::{CopyStatus, GraphClient, SMALL_FILE_LIMIT};
 
 /// Compare item names for child lookup.
-/// Windows (NTFS/WinFsp) uses OrdinalIgnoreCase — ASCII case-insensitive.
-/// FUSE on Linux/macOS uses exact (case-sensitive) comparison.
-#[cfg(target_os = "windows")]
+/// NTFS/WinFsp uses OrdinalIgnoreCase — ASCII case-insensitive.
 fn names_match(stored: &str, query: &str) -> bool {
     stored.eq_ignore_ascii_case(query)
-}
-
-#[cfg(not(target_os = "windows"))]
-fn names_match(stored: &str, query: &str) -> bool {
-    stored == query
 }
 
 const COPY_POLL_INITIAL_MS: u64 = 500;
@@ -737,11 +730,6 @@ impl CoreOps {
         let name = name.to_str()?;
 
         if let Some(children_map) = self.cache.memory.get_children(parent_ino) {
-            // On Windows, NTFS uses case-insensitive names so we must iterate.
-            // On Linux/macOS, exact HashMap::get is sufficient.
-            #[cfg(not(target_os = "windows"))]
-            let child_ino = children_map.get(name).copied();
-            #[cfg(target_os = "windows")]
             let child_ino = children_map
                 .iter()
                 .find(|(k, _)| names_match(k, name))
