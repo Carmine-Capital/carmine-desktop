@@ -40,8 +40,6 @@ tauri-plugin-single-instance = { workspace = true, optional = true, features = [
 url = { workspace = true }
 windows = { workspace = true }
 winreg = { workspace = true }
-md-5 = { workspace = true }
-base64 = { workspace = true }
 
 [build-dependencies]
 tauri-build = { workspace = true, optional = true }

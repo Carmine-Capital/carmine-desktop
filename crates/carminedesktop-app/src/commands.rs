@@ -1066,17 +1066,15 @@ pub struct FileHandlerInfo {
     pub extension: String,
     pub handler_name: String,
     pub handler_id: String,
-    /// One of: "override", "saved", "discovered", "none"
+    /// One of: "override", "none"
     pub source: String,
 }
 
 /// Return handler info for all managed extensions.
 ///
-/// Resolution order per extension:
-/// 1. Config override (`file_handler_overrides`)
-/// 2. Saved previous handler (`get_previous_handler`)
-/// 3. Runtime discovery (`discover_office_handler`)
-/// 4. None
+/// Carmine Desktop no longer intercepts Office double-clicks by default, so
+/// the only handler info we surface is the per-extension override the user
+/// has explicitly saved in config. Everything else reports `"none"`.
 #[tauri::command]
 pub fn get_file_handlers(app: AppHandle) -> Result<Vec<FileHandlerInfo>, String> {
     let state = app.state::<AppState>();
@@ -1088,66 +1086,12 @@ pub fn get_file_handlers(app: AppHandle) -> Result<Vec<FileHandlerInfo>, String>
     let mut results = Vec::with_capacity(OFFICE_EXTENSIONS.len());
 
     for &ext in OFFICE_EXTENSIONS {
-        // 1. Config override
         if let Some(handler_id) = overrides.get(ext) {
             results.push(FileHandlerInfo {
                 extension: ext.to_string(),
                 handler_name: handler_id.clone(),
                 handler_id: handler_id.clone(),
                 source: "override".to_string(),
-            });
-            continue;
-        }
-
-        // 2. Saved previous handler
-        if let Some(handler_id) = crate::shell_integration::get_previous_handler(ext) {
-            results.push(FileHandlerInfo {
-                extension: ext.to_string(),
-                handler_name: handler_id.clone(),
-                handler_id,
-                source: "saved".to_string(),
-            });
-            continue;
-        }
-
-        // 3. Runtime discovery
-        if let Some(handler_id) = crate::shell_integration::discover_office_handler(ext) {
-            results.push(FileHandlerInfo {
-                extension: ext.to_string(),
-                handler_name: handler_id.clone(),
-                handler_id,
-                source: "discovered".to_string(),
-            });
-            continue;
-        }
-
-        // 4. None
-        results.push(FileHandlerInfo {
-            extension: ext.to_string(),
-            handler_name: String::new(),
-            handler_id: String::new(),
-            source: "none".to_string(),
-        });
-    }
-
-    Ok(results)
-}
-
-/// Re-run handler discovery for all managed extensions.
-///
-/// Returns fresh results ignoring saved handlers — only discovers what is
-/// currently installed on the system.
-#[tauri::command]
-pub fn redetect_file_handlers(_app: AppHandle) -> Result<Vec<FileHandlerInfo>, String> {
-    let mut results = Vec::with_capacity(OFFICE_EXTENSIONS.len());
-
-    for &ext in OFFICE_EXTENSIONS {
-        if let Some(handler_id) = crate::shell_integration::discover_office_handler(ext) {
-            results.push(FileHandlerInfo {
-                extension: ext.to_string(),
-                handler_name: handler_id.clone(),
-                handler_id,
-                source: "discovered".to_string(),
             });
         } else {
             results.push(FileHandlerInfo {
@@ -1251,25 +1195,20 @@ fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {
 // Open in SharePoint
 // ---------------------------------------------------------------------------
 
-/// Force-register Carmine Desktop as the handler for Office file types and
-/// open the Windows "Default Apps" settings panel.
+/// Ensure Carmine Desktop is listed in Settings > Default Apps and open the
+/// system Default Apps panel so the user can choose it.
 ///
-/// First re-runs `register_file_associations()` and `set_all_user_choices()`
-/// to ensure our ProgIDs, defaults, and UserChoice hashes are up-to-date.
-/// Then opens the system Default Apps UI via the
-/// `IApplicationAssociationRegistrationUI` COM interface.  Falls back to
-/// `ms-settings:defaultapps` if the COM call fails (e.g. on fresh installs
-/// before a reboot refreshes COM class registrations).
+/// Re-runs `register_file_associations()` to (re)create the ProgID + Capabilities
+/// + RegisteredApplications keys (idempotent), then opens the system Default
+/// Apps UI via the `IApplicationAssociationRegistrationUI` COM interface.
+/// Falls back to `ms-settings:defaultapps` if the COM call fails.
+///
+/// We never write the per-extension default ourselves — the user picks
+/// Carmine Desktop in the Default Apps panel.
 #[tauri::command]
 pub fn prompt_set_default_handler() -> Result<(), String> {
-    // Force re-register file associations + UserChoice hashes before opening
-    // the UI so that changes take effect even if the user already had another
-    // default handler set.
     if let Err(e) = crate::shell_integration::register_file_associations() {
         tracing::warn!("pre-prompt file association registration failed: {e}");
-    }
-    if let Err(e) = crate::shell_integration::set_all_user_choices() {
-        tracing::warn!("pre-prompt UserChoice registration failed: {e}");
     }
     launch_default_apps_ui().map_err(|e| format!("{e}"))
 }
@@ -1468,126 +1407,23 @@ fn dotted_extension(path: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Open a path with the OS default handler, returning a user-facing error on failure.
-fn open_with_os_default(path: &str) -> Result<(), String> {
-    crate::open_with_clean_env(path).map_err(|e| format!("failed to open with OS handler: {e}"))
-}
-
-/// Show a "no handler found" notification and return an error string.
-fn no_handler_error(app: &tauri::AppHandle, ext: &str) -> String {
-    tracing::warn!(
-        "open_file: no previous or discovered handler for {ext}, cannot fall through (we are the handler)"
-    );
-    let msg = format!(
-        "Carmine Desktop could not find the original application to open {ext} files. \
-         Please right-click the file and choose 'Open with' to select your \
-         preferred application, then try again."
-    );
-    crate::notify::send(app, "Cannot open file", &msg);
-    msg
-}
-
-/// Parse a Windows shell command template and spawn the process.
+/// Open a file from a Carmine Desktop mount.
 ///
-/// Templates are typically `"C:\path\to\app.exe" "%1"` or `app.exe %1`.
-fn spawn_from_cmd_template(template: &str, path: &str) -> std::io::Result<std::process::Child> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let cmd = template.replace("%1", path);
-    if let Some(stripped) = cmd.strip_prefix('"') {
-        if let Some(end_quote) = stripped.find('"') {
-            let exe = &stripped[..end_quote];
-            let args = stripped[end_quote + 1..].trim();
-            std::process::Command::new(exe)
-                .raw_arg(args)
-                .creation_flags(CREATE_NO_WINDOW)
-                .spawn()
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "malformed command template",
-            ))
-        }
-    } else {
-        let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
-        let exe = parts[0];
-        let args = parts.get(1).unwrap_or(&"");
-        std::process::Command::new(exe)
-            .raw_arg(args)
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-    }
-}
-
-/// Try to open a file with the locally installed Office handler (Windows).
+/// Entry point for file associations: when the user has explicitly chosen
+/// Carmine Desktop in Settings > Default Apps, the OS invokes
+/// `carminedesktop --open <path>` on double-click. We never write the
+/// extension default ourselves, so reaching this command means the user
+/// opted in deliberately.
 ///
-/// Checks config override → previous handler → runtime-discovered handler.
-/// Returns `Ok(())` if the file was opened, `Err` if no handler was found.
-/// Used for offline-cached files on Carmine Desktop mounts and for non-mount
-/// paths where Carmine Desktop is the registered default handler.
-fn try_local_handler(state: &AppState, path: &str) -> Result<(), String> {
-    let ext = dotted_extension(path);
-
-    let override_handler = {
-        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-        config.file_handler_overrides.get(&ext).cloned()
-    };
-
-    if let Some(ref progid) = override_handler
-        && let Some(cmd_template) = crate::shell_integration::get_progid_command(progid)
-    {
-        tracing::info!("try_local_handler: using config override handler {progid}");
-        match spawn_from_cmd_template(&cmd_template, path) {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                tracing::warn!(
-                    "failed to invoke config override handler: {e}, trying other fallbacks"
-                );
-            }
-        }
-    }
-
-    if let Some(progid) = crate::shell_integration::get_previous_handler(&ext)
-        && let Some(cmd_template) = crate::shell_integration::get_progid_command(&progid)
-    {
-        tracing::info!("try_local_handler: invoking previous handler for {ext}");
-        match spawn_from_cmd_template(&cmd_template, path) {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                tracing::warn!("failed to invoke previous handler: {e}, trying other fallbacks");
-            }
-        }
-    }
-
-    if crate::shell_integration::is_handled_extension(&ext)
-        && let Some(discovered) = crate::shell_integration::discover_office_handler(&ext)
-        && let Some(cmd_template) = crate::shell_integration::get_progid_command(&discovered)
-    {
-        tracing::info!("try_local_handler: using discovered handler {discovered}");
-        match spawn_from_cmd_template(&cmd_template, path) {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                tracing::warn!("failed to invoke discovered handler: {e}");
-            }
-        }
-    }
-
-    Err(format!("no local handler found for {ext}"))
-}
-
-/// Open a file: if on a Carmine Desktop drive, open online; otherwise fall through to OS handler.
-///
-/// This is the entry point for file associations. When the user double-clicks
-/// an Office file, the OS invokes `carminedesktop --open <path>`. If the path is
-/// inside a Carmine Desktop mount, we resolve it to SharePoint and open online. If not,
-/// we pass through to the OS default handler (e.g. local Office installation).
+/// - On a mounted drive, online → delegate to [`open_online`] (Office URI / browser)
+/// - On a mounted drive, offline → notify the user (we can't open files ourselves)
+/// - Not on any mounted drive → notify the user to pick another app via "Open with"
 #[tauri::command]
 pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
     tracing::debug!("open_file: invoked with path={path}");
 
     let state = app.state::<AppState>();
 
-    // Check if the path is inside any Carmine Desktop mount
     let is_carminedesktop_path = {
         let config = state.effective_config.lock().map_err(|e| e.to_string())?;
         let path_obj = std::path::Path::new(&path);
@@ -1597,55 +1433,34 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
         })
     };
 
-    if is_carminedesktop_path {
-        // Check if the drive is offline and the file is cached locally.
-        // When offline, open with the local Office handler directly.
-        // When online, always delegate to open_online for co-authoring.
-        let (is_offline, has_local) = if let Ok((drive_id, item)) =
-            resolve_item_for_path(&state, &path).await
-            && item.file.is_some()
-        {
-            let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
-            caches
-                .get(&drive_id)
-                .map(|(cache, _, _, _, offline_flag, _)| {
-                    let offline = offline_flag.load(Ordering::Relaxed);
-                    let cached = cache.disk.has(&drive_id, &item.id);
-                    (offline, cached)
-                })
-                .unwrap_or((false, false))
-        } else {
-            (false, false)
-        };
-
-        if is_offline && has_local {
-            // Drive is offline but file is cached — open with local Office handler
-            // directly (not open_with_os_default, which would loop back to us).
-            tracing::info!("open_file: drive offline, file cached, opening with local handler");
-            return try_local_handler(&state, &path);
-        } else if is_offline {
-            // Offline and file not cached — nothing we can do
-            let msg = "This file is not available offline. Pin the parent folder for offline use.";
-            crate::notify::send(&app, "Cannot open file", msg);
-            return Err(msg.to_string());
-        }
-
-        // Online — delegate to open_online (Office URI scheme / browser)
-        tracing::info!("open_file: delegating to open_online");
-        open_online(app, path).await
-    } else {
-        // Path is NOT on a Carmine Desktop drive — use the previous handler to avoid
-        // infinite loop when Carmine Desktop is registered as the default handler.
-        tracing::info!("open_file: path is not on Carmine Desktop, falling through to OS handler");
-
-        match try_local_handler(&state, &path) {
-            Ok(()) => Ok(()),
-            Err(_) if crate::shell_integration::is_handled_extension(&dotted_extension(&path)) => {
-                Err(no_handler_error(&app, &dotted_extension(&path)))
-            }
-            Err(_) => open_with_os_default(&path),
-        }
+    if !is_carminedesktop_path {
+        let msg = "This file is not inside a Carmine Desktop drive. Right-click the \
+                   file and choose 'Open with' to select another application.";
+        crate::notify::send(&app, "Cannot open file", msg);
+        return Err(msg.to_string());
     }
+
+    let is_offline = if let Ok((drive_id, item)) = resolve_item_for_path(&state, &path).await
+        && item.file.is_some()
+    {
+        let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+        caches
+            .get(&drive_id)
+            .map(|(_, _, _, _, offline_flag, _)| offline_flag.load(Ordering::Relaxed))
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if is_offline {
+        let msg = "Carmine Desktop is offline. Right-click the file and choose \
+                   'Open with' to open it in Word/Excel/PowerPoint directly.";
+        crate::notify::send(&app, "Cannot open file", msg);
+        return Err(msg.to_string());
+    }
+
+    tracing::info!("open_file: delegating to open_online");
+    open_online(app, path).await
 }
 
 /// Find a child item by name under a parent inode.

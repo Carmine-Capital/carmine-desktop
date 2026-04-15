@@ -593,7 +593,6 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::open_online,
             commands::open_file,
             commands::get_file_handlers,
-            commands::redetect_file_handlers,
             commands::save_file_handler_override,
             commands::clear_file_handler_override,
             commands::prompt_set_default_handler,
@@ -737,29 +736,6 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
             if register_file_assoc {
                 if let Err(e) = shell_integration::register_file_associations() {
                     tracing::warn!("file association registration failed: {e}");
-                }
-
-                // Set UserChoice keys separately so we can surface total failure
-                // to the user (e.g. after reinstall where ACLs block all extensions).
-                match shell_integration::set_all_user_choices() {
-                    Ok(result) if result.all_failed() => {
-                        tracing::warn!(
-                            "all UserChoice registrations failed ({} extensions)",
-                            result.failed
-                        );
-                        notify::file_assoc_user_choice_failed(app);
-                    }
-                    Ok(result) if result.failed > 0 => {
-                        tracing::warn!(
-                            "some UserChoice registrations failed: {}/{} succeeded",
-                            result.succeeded,
-                            result.succeeded + result.failed
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!("UserChoice registration failed: {e}");
-                    }
-                    _ => {}
                 }
             } else if shell_integration::are_file_associations_registered()
                 && let Err(e) = shell_integration::unregister_file_associations()

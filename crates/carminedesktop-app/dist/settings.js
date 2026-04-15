@@ -854,23 +854,6 @@ async function removeOfflinePin(driveId, itemId, name) {
 // File Associations
 // ---------------------------------------------------------------------------
 
-async function redetectHandlers() {
-  const btn = document.getElementById('btn-redetect');
-  btn.disabled = true;
-  btn.textContent = 'Detecting\u2026';
-  try {
-    const handlers = await invoke('redetect_file_handlers');
-    setState({ handlers });
-    btn.disabled = false;
-    btn.textContent = 'Re-detect Handlers';
-    showStatus('Handlers re-detected', 'success');
-  } catch (e) {
-    btn.disabled = false;
-    btn.textContent = 'Re-detect Handlers';
-    showStatus(formatError(e), 'error');
-  }
-}
-
 async function saveHandlerOverride(extension, handlerId) {
   if (!handlerId.trim()) {
     showStatus('Please enter a handler identifier', 'error');
@@ -1032,11 +1015,10 @@ async function init() {
   // Static buttons (direct listeners — not delegated)
   document.getElementById('sign-out-btn').addEventListener('click', signOut);
   document.getElementById('btn-clear-cache').addEventListener('click', clearCache);
-  document.getElementById('btn-redetect').addEventListener('click', redetectHandlers);
   document.getElementById('btn-set-default').addEventListener('click', async () => {
     try {
       await invoke('prompt_set_default_handler');
-      showStatus('Default Apps settings opened', 'success');
+      showStatus('Pick Carmine Desktop in the Default Apps panel that just opened.', 'info');
     } catch (e) {
       showStatus(formatError(e), 'error');
     }
