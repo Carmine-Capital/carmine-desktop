@@ -7,7 +7,7 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 pub struct WriteBackBuffer {
     pending_dir: PathBuf,
     /// In-memory write buffers keyed by "{drive_id}\0{item_id}".
-    /// Avoids disk round-trips on every FUSE write call.
+    /// Avoids disk round-trips on every write call.
     buffers: DashMap<String, Vec<u8>>,
 }
 

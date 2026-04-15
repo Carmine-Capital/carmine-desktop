@@ -589,7 +589,6 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::refresh_mount,
             commands::clear_cache,
             commands::open_wizard,
-            commands::check_fuse_available,
             commands::get_default_mount_root,
             commands::open_online,
             commands::open_file,

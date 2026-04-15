@@ -1,10 +1,10 @@
 # Carmine Desktop
 
-Mount Microsoft OneDrive and SharePoint document libraries as local folders on Linux, macOS, and Windows.
+Mount Microsoft OneDrive and SharePoint document libraries as local folders on **Windows**.
 
 ## Features
 
-- **FUSE filesystem** (Linux/macOS) and **WinFsp** (Windows) — files appear as native local folders
+- **WinFsp filesystem** — files appear as native local folders on Windows
 - **SharePoint support** — browse sites, select document libraries, mount as folders
 - **Multi-tier cache** — memory → SQLite → disk for fast access with offline support
 - **Write-back** — edit files locally, changes sync to cloud automatically
@@ -16,40 +16,35 @@ Mount Microsoft OneDrive and SharePoint document libraries as local folders on L
 
 | Platform | Requirement |
 |---|---|
-| Linux | FUSE 3 (`libfuse3-dev` on Debian/Ubuntu, `fuse3` on Fedora) |
-| macOS | [macFUSE](https://osxfuse.github.io/) |
-| Windows | Windows 10+ — [WinFsp driver](https://winfsp.dev/) (installed automatically or download from winfsp.dev) |
+| Windows | Windows 10+ — [WinFsp driver](https://winfsp.dev/) (bundled by the installer, or download from winfsp.dev) |
 
 ## Installation
 
 ### From Installer
 
-Download the latest release for your platform from the [Releases](../../releases) page:
+Download the latest Windows installer (`.exe`) from the [Releases](../../releases) page.
 
-- **Linux**: `.deb` (Debian/Ubuntu) or `.AppImage`
-- **macOS**: `.dmg`
-- **Windows**: `.msi`
+### From Source (on Windows)
 
-### From Source
-
-```bash
+```powershell
 # Install Rust 1.85+
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# https://rustup.rs/
 
-# Build headless (no GUI)
-cargo build --release -p carminedesktop-app
+# Install WinFsp (from https://winfsp.dev) and LLVM (for bindgen)
+choco install winfsp llvm -y --params '/Developer'
 
-# Build with desktop GUI (requires Tauri CLI + system deps)
+# Build with the desktop GUI
 cargo install tauri-cli --version "^2"
 cargo tauri build --features desktop
 ```
 
-Linux build dependencies:
+## Developing on Linux/macOS
 
-```bash
-sudo apt-get install -y libfuse3-dev pkg-config \
-  libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
-```
+Carmine Desktop builds on Windows only. On Linux/macOS you can edit sources
+and run git workflows, but `cargo build` / `cargo check` will fail because
+`winfsp-sys` requires Windows. All authoritative checks (clippy, tests,
+builds) run on GitHub Actions against `windows-latest`. Push to a branch
+and let CI verify.
 
 ## First Run
 
@@ -57,20 +52,15 @@ sudo apt-get install -y libfuse3-dev pkg-config \
 2. Click **Sign in with Microsoft** — your browser opens for authentication
 3. Choose **OneDrive** or **SharePoint** as your source
 4. For SharePoint: search for a site, select a document library
-5. Choose a local mount point (e.g., `~/OneDrive`)
+5. Choose a local mount point (e.g., `C:\OneDrive`)
 6. Done — your files appear as a local folder
 
 Carmine Desktop minimizes to the system tray. Right-click the tray icon for options.
 
 ## Configuration
 
-User settings are stored at:
-
-- **Linux**: `~/.config/carminedesktop/config.toml`
-- **macOS**: `~/Library/Application Support/carminedesktop/config.toml`
-- **Windows**: `%APPDATA%\Carmine Desktop\config.toml`
-
-Settings are also accessible from the tray icon → **Settings**.
+User settings are stored at `%APPDATA%\Carmine Desktop\config.toml` and are
+also accessible from the tray icon → **Settings**.
 
 ## For Organizations
 

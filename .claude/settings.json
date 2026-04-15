@@ -10,21 +10,6 @@
           }
         ]
       }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -q '\\.rs\"'; then toolbox run -c carminedesktop-build cargo fmt --all; fi"
-          },
-          {
-            "type": "command",
-            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -q '\\.rs\"'; then toolbox run -c carminedesktop-build cargo clippy --all-targets --all-features 2>&1; fi"
-          }
-        ]
-      }
     ]
   }
 }

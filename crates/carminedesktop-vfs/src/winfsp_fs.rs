@@ -1,7 +1,7 @@
 //! WinFsp filesystem backend for Windows.
 //!
 //! Implements the WinFsp `FileSystemContext` trait by delegating all filesystem
-//! operations to [`CoreOps`], mirroring the FUSE backend pattern in `fuse_fs.rs`.
+//! operations to [`CoreOps`].
 
 use std::ffi::{OsString, c_void};
 use std::os::windows::ffi::OsStringExt;
@@ -77,8 +77,8 @@ pub struct CarmineDesktopWinFsp {
 
 /// Mount handle for a WinFsp filesystem instance.
 ///
-/// Mirrors the FUSE `MountHandle` API: `mount()`, `unmount()`, `drive_id()`,
-/// `mountpoint()`, `delta_observer()`.
+/// Exposes `mount()`, `unmount()`, `drive_id()`, `mountpoint()`,
+/// `delta_observer()`.
 pub struct WinFspMountHandle {
     host: FileSystemHost<CarmineDesktopWinFsp>,
     cache: Arc<CacheManager>,
@@ -94,9 +94,8 @@ pub struct WinFspMountHandle {
 /// Delta sync observer for the WinFsp backend.
 ///
 /// Implements [`DeltaSyncObserver`] to mark open file handles as stale when
-/// delta sync detects remote content changes. Unlike the FUSE observer, no
-/// kernel cache invalidation is needed because WinFsp serves every read
-/// through our callbacks.
+/// delta sync detects remote content changes. No kernel cache invalidation
+/// is needed because WinFsp serves every read through our callbacks.
 pub struct WinFspDeltaObserver {
     open_files: Arc<OpenFileTable>,
 }
@@ -999,9 +998,8 @@ impl FileSystemContext for CarmineDesktopWinFsp {
 impl WinFspMountHandle {
     /// Mount a WinFsp filesystem for the given drive.
     ///
-    /// Follows the same pattern as the FUSE `MountHandle::mount()`:
-    /// fetch root item, seed caches, create filesystem, configure WinFsp host,
-    /// mount and start.
+    /// Fetches root item, seeds caches, creates the filesystem, configures the
+    /// WinFsp host, then mounts and starts it.
     #[allow(clippy::too_many_arguments)]
     pub fn mount(
         graph: Arc<GraphClient>,

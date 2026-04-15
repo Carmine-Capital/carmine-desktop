@@ -1046,15 +1046,6 @@ pub async fn complete_wizard(_app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn check_fuse_available() -> bool {
-    // Windows uses WinFsp; preflight_checks in main.rs fails fatally before
-    // Tauri starts if WinFsp is missing, so by the time the UI can call this,
-    // the backend is always available. Kept for frontend compat — wizard.js
-    // is updated in a later phase.
-    true
-}
-
-#[tauri::command]
 pub fn get_default_mount_root(app: AppHandle) -> Result<String, String> {
     let state = app.state::<AppState>();
     let config = state.effective_config.lock().map_err(|e| e.to_string())?;

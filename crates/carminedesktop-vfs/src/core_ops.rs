@@ -1,8 +1,8 @@
-//! Shared VFS operations used by both FUSE (Linux/macOS) and WinFsp (Windows) backends.
+//! Shared VFS operations consumed by the WinFsp backend.
 //!
 //! This module contains the core business logic for cache lookups, Graph API interactions,
-//! inode management, and write-back operations. Platform-specific backends (FUSE callbacks,
-//! WinFsp filesystem context) delegate to [`CoreOps`] instead of duplicating this logic.
+//! inode management, and write-back operations. The WinFsp `FileSystemContext` delegates
+//! here instead of duplicating the logic.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -387,23 +387,22 @@ pub fn conflict_name(original: &str, timestamp: i64) -> String {
 
 /// Errors from core VFS operations.
 ///
-/// Each platform backend maps these to its own error type
-/// (e.g., `fuser::Errno` for FUSE, `NTSTATUS` for WinFsp).
+/// The WinFsp backend maps these to `NTSTATUS` values.
 #[derive(Debug)]
 pub enum VfsError {
-    /// Item not found (FUSE: ENOENT, Windows: STATUS_OBJECT_NAME_NOT_FOUND)
+    /// Item not found (STATUS_OBJECT_NAME_NOT_FOUND)
     NotFound,
-    /// Target is not a directory (FUSE: ENOTDIR)
+    /// Target is not a directory
     NotADirectory,
-    /// Directory is not empty (FUSE: ENOTEMPTY)
+    /// Directory is not empty
     DirectoryNotEmpty,
-    /// Permission denied (FUSE: EACCES)
+    /// Permission denied
     PermissionDenied,
-    /// Operation timed out (FUSE: ETIMEDOUT)
+    /// Operation timed out
     TimedOut,
-    /// Storage quota exceeded (FUSE: ENOSPC)
+    /// Storage quota exceeded
     QuotaExceeded,
-    /// I/O or network operation failed (FUSE: EIO, Windows: STATUS_DEVICE_NOT_READY)
+    /// I/O or network operation failed (STATUS_DEVICE_NOT_READY)
     IoError(String),
 }
 
@@ -453,16 +452,16 @@ const QUOTA_CACHE_TTL_SECS: u64 = 60;
 /// when the network is slow or unreachable.
 const VFS_GRAPH_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Core VFS operations shared between platform backends.
+/// Core VFS operations consumed by the WinFsp backend.
 ///
 /// Encapsulates cache lookups, Graph API calls, inode management, and write-back logic.
-/// Each platform backend holds a `CoreOps` instance and delegates business logic to it,
-/// keeping only platform-specific callback translation in the backend layer.
+/// The backend holds a `CoreOps` instance and delegates business logic to it,
+/// keeping only WinFsp callback translation in the backend layer.
 /// Callback to invalidate kernel-cached attributes for an inode.
 ///
-/// Set by the platform backend (e.g., FUSE `inval_inode`) to force the kernel
-/// to discard its cached `i_size` / `mtime` when a metadata mismatch is detected
-/// at open time. Without this, `FUSE_WRITEBACK_CACHE` keeps stale values.
+/// Reserved for backends that need to force the kernel to discard cached
+/// `i_size` / `mtime` when a metadata mismatch is detected at open time.
+/// Currently unused on WinFsp because every read is served through our callbacks.
 pub type InodeInvalidator = Arc<dyn Fn(u64) + Send + Sync>;
 
 pub struct CoreOps {
@@ -1103,11 +1102,9 @@ impl CoreOps {
         }
 
         // Refresh metadata from the server BEFORE checking the disk cache.
-        // With FUSE_WRITEBACK_CACHE the kernel ignores size/mtime updates from
-        // getattr, so a stale cached size causes reads to be truncated.
         // Without this, the disk cache validation compares against memory-cached
-        // metadata which may also be stale — both have the old eTag, so the
-        // stale content passes validation and is served as-is (corruption).
+        // metadata which may be stale — both have the old eTag, so the stale
+        // content passes validation and is served as-is (corruption).
         let item = match self.graph_with_timeout(self.graph.get_item(&self.drive_id, &item_id)) {
             Ok(fresh) => {
                 // Check if file is locked (co-authoring, checkout)
@@ -1769,7 +1766,7 @@ impl CoreOps {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // Mirrors FUSE copy_file_range signature
+    #[allow(clippy::too_many_arguments)] // Mirrors POSIX copy_file_range signature
     pub fn copy_file_range(
         &self,
         ino_in: u64,

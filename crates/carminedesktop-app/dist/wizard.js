@@ -113,21 +113,6 @@ function cleanupAuthListeners() {
 async function startSignIn() {
   if (state.signingIn) return;
 
-  const fuseWarning = document.getElementById('fuse-warning');
-  fuseWarning.style.display = 'none';
-
-  try {
-    const fuseOk = await invoke('check_fuse_available');
-    if (!fuseOk) {
-      fuseWarning.textContent = 'FUSE is not installed. Install libfuse3 (Linux) or macFUSE (macOS) to use Carmine Desktop.';
-      fuseWarning.style.display = 'block';
-      showStatus('FUSE is not installed. Install libfuse3 (Linux) or macFUSE (macOS) to use Carmine Desktop.', 'error');
-      return;
-    }
-  } catch (e) {
-    console.warn('FUSE check failed, proceeding:', e);
-  }
-
   state.signingIn = true;
   document.getElementById('sign-in-btn').style.display = 'none';
   document.getElementById('auth-waiting').style.display = 'block';
@@ -429,7 +414,6 @@ async function switchAccount() {
   document.getElementById('auth-waiting').style.display = 'none';
   document.getElementById('auth-url').value = '';
   document.getElementById('auth-error').style.display = 'none';
-  document.getElementById('fuse-warning').style.display = 'none';
   goToStep('step-welcome');
 }
 
