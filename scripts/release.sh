@@ -46,10 +46,8 @@ if [ "$upload_only" = true ]; then
     trap 'rm -rf "$STAGING_DIR"' EXIT
 
     find "$ARTIFACTS_DIR" -type f \( \
-        -name '*.AppImage' -o -name '*.AppImage.tar.gz' -o -name '*.AppImage.tar.gz.sig' \
-        -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' -o -name '*.dmg' \
-        -o -name '*.exe' -o -name '*.nsis.zip' -o -name '*.nsis.zip.sig' \
-        -o -name '*.deb' \
+        -name '*.exe' -o -name '*.exe.sig' \
+        -o -name '*.nsis.zip' -o -name '*.nsis.zip.sig' \
     \) -exec cp {} "$STAGING_DIR/" \;
 
     echo "Staged artifacts:"
@@ -64,19 +62,7 @@ if [ "$upload_only" = true ]; then
         if [ -f "$sig_file" ]; then cat "$sig_file"; else echo ""; fi
     }
 
-    # Detect platform updater bundles from whatever was built locally.
-    # Prefer compressed archives (.tar.gz / .nsis.zip) over raw installers.
-    LINUX_BUNDLE=$(find "$STAGING_DIR" -maxdepth 1 -name '*.AppImage.tar.gz' ! -name '*.sig' | head -1)
-    if [ -z "$LINUX_BUNDLE" ]; then
-        LINUX_BUNDLE=$(find "$STAGING_DIR" -maxdepth 1 -name '*.AppImage' ! -name '*.sig' ! -name '*.tar.gz' | head -1)
-    fi
-    LINUX_SIG=$(read_sig "${LINUX_BUNDLE}.sig" 2>/dev/null || echo "")
-    LINUX_FILENAME=$(basename "$LINUX_BUNDLE" 2>/dev/null || echo "")
-
-    MACOS_BUNDLE=$(find "$STAGING_DIR" -maxdepth 1 -name '*.app.tar.gz' ! -name '*.sig' | head -1)
-    MACOS_SIG=$(read_sig "${MACOS_BUNDLE}.sig" 2>/dev/null || echo "")
-    MACOS_FILENAME=$(basename "$MACOS_BUNDLE" 2>/dev/null || echo "")
-
+    # Detect Windows updater bundle. Prefer .nsis.zip over raw setup.exe.
     WIN_BUNDLE=$(find "$STAGING_DIR" -maxdepth 1 -name '*.nsis.zip' ! -name '*.sig' | head -1)
     if [ -z "$WIN_BUNDLE" ]; then
         WIN_BUNDLE=$(find "$STAGING_DIR" -maxdepth 1 -name '*-setup.exe' | head -1)
@@ -84,44 +70,30 @@ if [ "$upload_only" = true ]; then
     WIN_SIG=$(read_sig "${WIN_BUNDLE}.sig" 2>/dev/null || echo "")
     WIN_FILENAME=$(basename "$WIN_BUNDLE" 2>/dev/null || echo "")
 
-    # Warn about missing platforms (local builds only produce the current OS)
-    missing_platforms=()
-    [ -z "$LINUX_SIG" ] && missing_platforms+=("linux")
-    [ -z "$MACOS_SIG" ] && missing_platforms+=("macOS")
-    [ -z "$WIN_SIG" ] && missing_platforms+=("windows")
-
-    if [ ${#missing_platforms[@]} -gt 0 ]; then
+    if [ -z "$WIN_SIG" ] || [ -z "$WIN_FILENAME" ]; then
         echo ""
-        echo "WARNING: No updater artifacts found for: ${missing_platforms[*]}"
-        echo "         latest.json will only include platforms with signed bundles."
-        echo "         For a full release, use the CI workflow (git tag + push) instead."
-    fi
-
-    # Build latest.json — only include platforms that have a signed bundle
-    PLATFORMS_JSON="{}"
-    if [ -n "$LINUX_SIG" ] && [ -n "$LINUX_FILENAME" ]; then
-        PLATFORMS_JSON=$(echo "$PLATFORMS_JSON" | jq \
-            --arg sig "$LINUX_SIG" --arg url "${BASE_URL}/${LINUX_FILENAME}" \
-            '.["linux-x86_64"] = {signature: $sig, url: $url}')
-    fi
-    if [ -n "$MACOS_SIG" ] && [ -n "$MACOS_FILENAME" ]; then
-        PLATFORMS_JSON=$(echo "$PLATFORMS_JSON" | jq \
-            --arg sig "$MACOS_SIG" --arg url "${BASE_URL}/${MACOS_FILENAME}" \
-            '.["darwin-x86_64"] = {signature: $sig, url: $url} | .["darwin-aarch64"] = {signature: $sig, url: $url}')
-    fi
-    if [ -n "$WIN_SIG" ] && [ -n "$WIN_FILENAME" ]; then
-        PLATFORMS_JSON=$(echo "$PLATFORMS_JSON" | jq \
-            --arg sig "$WIN_SIG" --arg url "${BASE_URL}/${WIN_FILENAME}" \
-            '.["windows-x86_64"] = {signature: $sig, url: $url}')
+        echo "ERROR: No signed Windows updater bundle found in $STAGING_DIR"
+        echo "       Expected *.nsis.zip + .sig or *-setup.exe + .sig"
+        exit 1
     fi
 
     jq -n \
         --arg version "$new_version" \
         --arg notes "Release v${new_version}" \
         --arg pub_date "$PUB_DATE" \
-        --argjson platforms "$PLATFORMS_JSON" \
-        '{version: $version, notes: $notes, pub_date: $pub_date, platforms: $platforms}' \
-        > "$STAGING_DIR/latest.json"
+        --arg win_sig "$WIN_SIG" \
+        --arg win_url "${BASE_URL}/${WIN_FILENAME}" \
+        '{
+          version: $version,
+          notes: $notes,
+          pub_date: $pub_date,
+          platforms: {
+            "windows-x86_64": {
+              signature: $win_sig,
+              url: $win_url
+            }
+          }
+        }' > "$STAGING_DIR/latest.json"
 
     echo ""
     echo "=== latest.json ==="
@@ -198,7 +170,7 @@ fi
 
 # --- Regenerate Cargo.lock ---
 echo "Regenerating Cargo.lock..."
-toolbox run -c carminedesktop-build cargo generate-lockfile --quiet
+cargo generate-lockfile --quiet
 
 # --- Commit, tag, push ---
 git add "$CARGO_TOML" "$TAURI_CONF" "$REPO_ROOT/Cargo.lock"

@@ -34,46 +34,20 @@ jobs:
 
   build:
     needs: check-version
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            platform_key: linux-x86_64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            platform_key: darwin-aarch64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            platform_key: windows-x86_64
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-pc-windows-msvc
 
-      - name: Install system deps (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libfuse3-dev pkg-config \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
-
-      - name: Install macFUSE (macOS)
-        if: runner.os == 'macOS'
-        run: brew install macfuse
-
-      - name: Install WinFsp SDK and LLVM (Windows)
-        if: runner.os == 'Windows'
+      - name: Install WinFsp SDK and LLVM
         run: |
           choco install winfsp llvm -y --params '/Developer'
           echo "WINFSP_INSTALL_DIR=C:\Program Files (x86)\WinFsp" >> $env:GITHUB_ENV
           echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
 
-      - name: Download WinFsp MSI for bundling (Windows)
-        if: runner.os == 'Windows'
+      - name: Download WinFsp MSI for bundling
         run: |
           New-Item -ItemType Directory -Force -Path crates/carminedesktop-app/resources
           $url = "https://github.com/winfsp/winfsp/releases/download/v$($env:WINFSP_MSI_VERSION.Split('.')[0..1] -join '.')/winfsp-$env:WINFSP_MSI_VERSION.msi"
@@ -98,7 +72,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: cargo tauri build --features desktop --target ${{ matrix.target }}
+        run: cargo tauri build --features desktop --target x86_64-pc-windows-msvc
         working-directory: crates/carminedesktop-app
 
       - name: Collect artifacts
@@ -106,77 +80,32 @@ jobs:
         run: |
           set +e  # don't exit on cp failures — we validate explicitly below
           mkdir -p artifacts
-          BUNDLE="target/${{ matrix.target }}/release/bundle"
+          BUNDLE="target/x86_64-pc-windows-msvc/release/bundle"
 
           echo "=== Bundle directory contents ==="
-          find "$BUNDLE" -type f -name '*.tar.gz' -o -name '*.sig' -o -name '*.zip' \
-            -o -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' \
-            -o -name '*.exe' -o -name '*.msi' 2>/dev/null | sort || echo "(nothing found)"
+          find "$BUNDLE" -type f \( -name '*.zip' -o -name '*.sig' -o -name '*.exe' -o -name '*.msi' \) 2>/dev/null | sort || echo "(nothing found)"
 
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            # Collect Linux bundles and signatures. Depending on updater mode,
-            # updater artifact may be .AppImage.tar.gz or direct .AppImage.
-            find "$BUNDLE/appimage" -maxdepth 1 -name '*.AppImage.tar.gz'     -exec cp {} artifacts/ \;
-            find "$BUNDLE/appimage" -maxdepth 1 -name '*.AppImage.tar.gz.sig' -exec cp {} artifacts/ \;
-            find "$BUNDLE/appimage" -maxdepth 1 -name '*.AppImage' ! -name '*.sig' ! -name '*.tar.gz' -exec cp {} artifacts/ \;
-            find "$BUNDLE/appimage" -maxdepth 1 -name '*.AppImage.sig'        -exec cp {} artifacts/ \;
-            find "$BUNDLE/deb"      -maxdepth 1 -name '*.deb'                 -exec cp {} artifacts/ \;
+          # Collect Windows bundles and signatures. Depending on updater mode,
+          # updater artifact may be .nsis.zip or direct setup.exe.
+          find "$BUNDLE/nsis" -maxdepth 1 -name '*-setup.exe'     -exec cp {} artifacts/ \;
+          find "$BUNDLE/nsis" -maxdepth 1 -name '*-setup.exe.sig' -exec cp {} artifacts/ \;
+          find "$BUNDLE/nsis" -maxdepth 1 -name '*.nsis.zip'      -exec cp {} artifacts/ \;
+          find "$BUNDLE/nsis" -maxdepth 1 -name '*.nsis.zip.sig'  -exec cp {} artifacts/ \;
 
-            # Validate an updater bundle + signature pair exists
-            if ls artifacts/*.AppImage.tar.gz 1>/dev/null 2>&1; then
-              if ! ls artifacts/*.AppImage.tar.gz.sig 1>/dev/null 2>&1; then
-                echo "::error::Missing Linux updater signature (.AppImage.tar.gz.sig)"
-                exit 1
-              fi
-            elif ls artifacts/*.AppImage 1>/dev/null 2>&1; then
-              if ! ls artifacts/*.AppImage.sig 1>/dev/null 2>&1; then
-                echo "::error::Missing Linux updater signature (.AppImage.sig)"
-                exit 1
-              fi
-            else
-              echo "::error::Missing Linux updater bundle (.AppImage or .AppImage.tar.gz)"
+          # Validate an updater bundle + signature pair exists
+          if ls artifacts/*.nsis.zip 1>/dev/null 2>&1; then
+            if ! ls artifacts/*.nsis.zip.sig 1>/dev/null 2>&1; then
+              echo "::error::Missing Windows updater signature (.nsis.zip.sig)"
               exit 1
             fi
-
-          elif [ "$RUNNER_OS" = "macOS" ]; then
-            # Tauri v2 produces .app.tar.gz (updater) + .sig, then .dmg
-            find "$BUNDLE/macos" -maxdepth 1 -name '*.app.tar.gz'     -exec cp {} artifacts/ \;
-            find "$BUNDLE/macos" -maxdepth 1 -name '*.app.tar.gz.sig' -exec cp {} artifacts/ \;
-            find "$BUNDLE/dmg"   -maxdepth 1 -name '*.dmg'            -exec cp {} artifacts/ \;
-
-            # Validate updater bundles exist
-            if ! ls artifacts/*.app.tar.gz 1>/dev/null 2>&1; then
-              echo "::error::Missing macOS updater bundle (.app.tar.gz)"
+          elif ls artifacts/*-setup.exe 1>/dev/null 2>&1; then
+            if ! ls artifacts/*-setup.exe.sig 1>/dev/null 2>&1; then
+              echo "::error::Missing Windows updater signature (-setup.exe.sig)"
               exit 1
             fi
-            if ! ls artifacts/*.app.tar.gz.sig 1>/dev/null 2>&1; then
-              echo "::error::Missing macOS updater signature (.app.tar.gz.sig)"
-              exit 1
-            fi
-
-          elif [ "$RUNNER_OS" = "Windows" ]; then
-            # Collect Windows bundles and signatures. Depending on updater mode,
-            # updater artifact may be .nsis.zip or direct setup.exe.
-            find "$BUNDLE/nsis" -maxdepth 1 -name '*-setup.exe'     -exec cp {} artifacts/ \;
-            find "$BUNDLE/nsis" -maxdepth 1 -name '*-setup.exe.sig' -exec cp {} artifacts/ \;
-            find "$BUNDLE/nsis" -maxdepth 1 -name '*.nsis.zip'      -exec cp {} artifacts/ \;
-            find "$BUNDLE/nsis" -maxdepth 1 -name '*.nsis.zip.sig'  -exec cp {} artifacts/ \;
-
-            # Validate an updater bundle + signature pair exists
-            if ls artifacts/*.nsis.zip 1>/dev/null 2>&1; then
-              if ! ls artifacts/*.nsis.zip.sig 1>/dev/null 2>&1; then
-                echo "::error::Missing Windows updater signature (.nsis.zip.sig)"
-                exit 1
-              fi
-            elif ls artifacts/*-setup.exe 1>/dev/null 2>&1; then
-              if ! ls artifacts/*-setup.exe.sig 1>/dev/null 2>&1; then
-                echo "::error::Missing Windows updater signature (-setup.exe.sig)"
-                exit 1
-              fi
-            else
-              echo "::error::Missing Windows updater bundle (.nsis.zip or -setup.exe)"
-              exit 1
-            fi
+          else
+            echo "::error::Missing Windows updater bundle (.nsis.zip or -setup.exe)"
+            exit 1
           fi
 
           echo "=== Collected artifacts ==="
@@ -185,7 +114,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: release-${{ matrix.platform_key }}
+          name: release-windows-x86_64
           path: artifacts/*
 
   publish:
@@ -219,63 +148,28 @@ jobs:
             fi
           }
 
-          # Find platform-specific updater bundles and signatures.
-          # Prefer v1-compatible archives when present, otherwise use direct installers.
-          LINUX_BUNDLE=$(find artifacts -name '*.AppImage.tar.gz' ! -name '*.sig' | head -1)
-          if [ -z "$LINUX_BUNDLE" ]; then
-            LINUX_BUNDLE=$(find artifacts -name '*.AppImage' ! -name '*.sig' ! -name '*.tar.gz' | head -1)
+          # Windows: .nsis.zip + .sig OR setup.exe + .sig
+          WIN_BUNDLE=$(find artifacts -name '*.nsis.zip' ! -name '*.sig' | head -1)
+          if [ -z "$WIN_BUNDLE" ]; then
+            WIN_BUNDLE=$(find artifacts -name '*-setup.exe' | head -1)
           fi
-          LINUX_SIG=$(read_sig "${LINUX_BUNDLE}.sig" 2>/dev/null || echo "")
-          LINUX_FILENAME=$(basename "$LINUX_BUNDLE" 2>/dev/null || echo "")
+          WIN_SIG=$(read_sig "${WIN_BUNDLE}.sig" 2>/dev/null || echo "")
+          WIN_FILENAME=$(basename "$WIN_BUNDLE" 2>/dev/null || echo "")
 
-           # macOS: .app.tar.gz + .sig
-           MACOS_BUNDLE=$(find artifacts -name '*.app.tar.gz' ! -name '*.sig' | head -1)
-           MACOS_SIG=$(read_sig "${MACOS_BUNDLE}.sig" 2>/dev/null || echo "")
-           MACOS_FILENAME=$(basename "$MACOS_BUNDLE" 2>/dev/null || echo "")
+          if [ -z "$WIN_SIG" ]; then
+            echo "::error::Missing Windows updater signature in latest.json generation"
+            exit 1
+          fi
+          if [ -z "$WIN_FILENAME" ]; then
+            echo "::error::Missing Windows updater filename in latest.json generation"
+            exit 1
+          fi
 
-           # Windows: .nsis.zip + .sig OR setup.exe + .sig
-           WIN_BUNDLE=$(find artifacts -name '*.nsis.zip' ! -name '*.sig' | head -1)
-           if [ -z "$WIN_BUNDLE" ]; then
-             WIN_BUNDLE=$(find artifacts -name '*-setup.exe' | head -1)
-           fi
-           WIN_SIG=$(read_sig "${WIN_BUNDLE}.sig" 2>/dev/null || echo "")
-           WIN_FILENAME=$(basename "$WIN_BUNDLE" 2>/dev/null || echo "")
-
-           # Validate all required updater artifacts are present
-           if [ -z "$LINUX_SIG" ]; then
-             echo "::error::Missing Linux updater signature in latest.json generation"
-             exit 1
-           fi
-           if [ -z "$LINUX_FILENAME" ]; then
-             echo "::error::Missing Linux updater filename in latest.json generation"
-             exit 1
-           fi
-           if [ -z "$MACOS_SIG" ]; then
-             echo "::error::Missing macOS updater signature in latest.json generation"
-             exit 1
-           fi
-           if [ -z "$MACOS_FILENAME" ]; then
-             echo "::error::Missing macOS updater filename in latest.json generation"
-             exit 1
-           fi
-           if [ -z "$WIN_SIG" ]; then
-             echo "::error::Missing Windows updater signature in latest.json generation"
-             exit 1
-           fi
-           if [ -z "$WIN_FILENAME" ]; then
-             echo "::error::Missing Windows updater filename in latest.json generation"
-             exit 1
-           fi
-
-           # Build latest.json for Tauri updater
-           jq -n \
+          # Build latest.json for Tauri updater
+          jq -n \
             --arg version "$VERSION" \
             --arg notes "Release v${VERSION}" \
             --arg pub_date "$PUB_DATE" \
-            --arg linux_sig "$LINUX_SIG" \
-            --arg linux_url "${BASE_URL}/${LINUX_FILENAME}" \
-            --arg macos_sig "$MACOS_SIG" \
-            --arg macos_url "${BASE_URL}/${MACOS_FILENAME}" \
             --arg win_sig "$WIN_SIG" \
             --arg win_url "${BASE_URL}/${WIN_FILENAME}" \
             '{
@@ -283,18 +177,6 @@ jobs:
               notes: $notes,
               pub_date: $pub_date,
               platforms: {
-                "linux-x86_64": {
-                  signature: $linux_sig,
-                  url: $linux_url
-                },
-                "darwin-x86_64": {
-                  signature: $macos_sig,
-                  url: $macos_url
-                },
-                "darwin-aarch64": {
-                  signature: $macos_sig,
-                  url: $macos_url
-                },
                 "windows-x86_64": {
                   signature: $win_sig,
                   url: $win_url
