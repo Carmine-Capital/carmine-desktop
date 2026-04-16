@@ -256,15 +256,16 @@ fn parse_cache_size(size_str: &str) -> u64 {
     // suffixes so settings persisted before the French-UI migration keep
     // parsing and the new UI-facing strings round-trip correctly.
     let s = size_str.trim().to_uppercase();
-    let (num_part, multiplier) = if let Some(n) = s.strip_suffix("GB").or_else(|| s.strip_suffix("GO")) {
-        (n.trim(), 1024u64 * 1024 * 1024)
-    } else if let Some(n) = s.strip_suffix("MB").or_else(|| s.strip_suffix("MO")) {
-        (n.trim(), 1024u64 * 1024)
-    } else if let Some(n) = s.strip_suffix("KB").or_else(|| s.strip_suffix("KO")) {
-        (n.trim(), 1024u64)
-    } else {
-        (s.as_str(), 1u64)
-    };
+    let (num_part, multiplier) =
+        if let Some(n) = s.strip_suffix("GB").or_else(|| s.strip_suffix("GO")) {
+            (n.trim(), 1024u64 * 1024 * 1024)
+        } else if let Some(n) = s.strip_suffix("MB").or_else(|| s.strip_suffix("MO")) {
+            (n.trim(), 1024u64 * 1024)
+        } else if let Some(n) = s.strip_suffix("KB").or_else(|| s.strip_suffix("KO")) {
+            (n.trim(), 1024u64)
+        } else {
+            (s.as_str(), 1u64)
+        };
     num_part.parse::<u64>().unwrap_or(5) * multiplier
 }
 
