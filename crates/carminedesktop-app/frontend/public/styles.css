@@ -17,32 +17,36 @@ body, h1, h2, h3, h4, p, ul, li { margin: 0; padding: 0; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
 
 /* ── Block 2: Design Tokens (Neutral Modern) ─────────────── */
 :root {
   color-scheme: dark;
   
   /* Surfaces */
-  --bg-base:        #121214; /* Deep Zinc for depth */
-  --bg-surface:     rgba(24, 24, 27, 0.65);
+  --bg-base:        #0c0c0e; /* Even deeper Zinc for better contrast */
+  --bg-surface:     rgba(18, 18, 20, 0.75);
   --bg-elevated:    rgba(255, 255, 255, 0.05);
-  --bg-card:        rgba(255, 255, 255, 0.035);
+  --bg-card:        rgba(255, 255, 255, 0.03);
   
   /* Borders & Dividers */
-  --border:         rgba(255, 255, 255, 0.08);
-  --border-strong:  rgba(255, 255, 255, 0.15);
-  --border-row:     rgba(255, 255, 255, 0.05);
+  --border:         rgba(255, 255, 255, 0.06);
+  --border-strong:  rgba(255, 255, 255, 0.12);
+  --border-row:     rgba(255, 255, 255, 0.04);
   
   /* Accents */
   --accent:         #E53E3E;
   --accent-hover:   #FC8181;
-  --accent-soft:    rgba(229, 62, 62, 0.15);
-  --accent-glow:    0 0 24px rgba(229, 62, 62, 0.25);
+  --accent-soft:    rgba(229, 62, 62, 0.12);
+  --accent-glow:    0 0 32px rgba(229, 62, 62, 0.2);
   
   /* Text */
-  --text-primary:   #fcfcfc;
+  --text-primary:   #ededed; /* Softer than pure white */
   --text-secondary: #a1a1aa;
-  --text-muted:     #71717a;
+  --text-muted:     #63636b;
   
   /* Status */
   --success:        #10b981;
@@ -57,13 +61,14 @@ body, h1, h2, h3, h4, p, ul, li { margin: 0; padding: 0; }
   --space-8: 32px;
   --space-12: 48px;
   
-  /* Radius & Shadows */
+  /* Radius & Shadows (Multi-layered for depth) */
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
-  --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 12px 32px -8px rgba(0, 0, 0, 0.6);
-  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.16), 0 4px 8px rgba(0,0,0,0.12);
+  --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.2), 0 12px 24px -4px rgba(0,0,0,0.4);
+  --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.3), 0 25px 50px -12px rgba(0,0,0,0.6);
+  --glass-highlight: inset 0 1px 0px rgba(255, 255, 255, 0.08), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
   
   /* Animations */
   --easing: cubic-bezier(0.16, 1, 0.3, 1);
@@ -75,6 +80,8 @@ body {
   background: var(--bg-base);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   line-height: 1.6;
   font-size: 14px;
   overflow: hidden; /* App layout handles scrolling */
@@ -94,34 +101,34 @@ button {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all var(--duration) var(--easing);
+  transition: all 0.2s var(--easing);
   white-space: nowrap;
   box-shadow: var(--shadow-sm);
 }
 
 button:hover:not(:disabled) {
-  background: rgba(255,255,255,0.08);
+  background: rgba(255, 255, 255, 0.08);
   border-color: var(--border-strong);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-md), var(--glass-highlight);
 }
 
 button:active:not(:disabled) {
-  transform: translateY(0);
-  background: rgba(255,255,255,0.02);
-  box-shadow: none;
+  transform: scale(0.97);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 button:disabled { opacity: 0.3; cursor: not-allowed; box-shadow: none; }
 
 .btn-primary {
-  background: var(--accent);
+  background: linear-gradient(180deg, var(--accent) 0%, #c53030 100%);
   color: #fff;
   border: none;
-  box-shadow: 0 4px 12px rgba(229, 62, 62, 0.3), var(--glass-highlight);
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 12px rgba(229, 62, 62, 0.25), var(--glass-highlight);
 }
 .btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
+  background: linear-gradient(180deg, var(--accent-hover) 0%, var(--accent) 100%);
   box-shadow: var(--accent-glow), var(--glass-highlight);
 }
 
@@ -134,7 +141,7 @@ button:disabled { opacity: 0.3; cursor: not-allowed; box-shadow: none; }
 .btn-ghost:hover:not(:disabled) {
   background: var(--bg-elevated);
   color: var(--text-primary);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
 }
 
 .btn-danger {
@@ -151,21 +158,21 @@ button:disabled { opacity: 0.3; cursor: not-allowed; box-shadow: none; }
 
 /* ── Block 4: Inputs, Selects, Toggles ───────────────────── */
 input[type="text"], input[type="number"], select {
-  background: var(--bg-elevated);
+  background: rgba(255, 255, 255, 0.03);
   color: var(--text-primary);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 10px 16px;
   font-size: 13px;
   outline: none;
-  transition: all var(--duration) var(--easing);
-  box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+  transition: all 0.2s var(--easing);
+  box-shadow: none;
 }
 
 input:focus, select:focus {
   border-color: var(--accent);
-  background: rgba(255,255,255,0.05);
-  box-shadow: 0 0 0 3px var(--accent-soft), inset 0 2px 4px rgba(0,0,0,0.2);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 0 0 2px var(--bg-base), 0 0 0 4px var(--accent-soft);
 }
 
 .toggle-switch {
@@ -181,8 +188,7 @@ input:focus, select:focus {
   border: 1px solid var(--border);
   border-radius: 12px;
   position: relative;
-  transition: all var(--duration) var(--easing);
-  box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+  transition: all 0.2s var(--easing);
 }
 .toggle-track::after {
   content: ''; position: absolute;
@@ -190,18 +196,20 @@ input:focus, select:focus {
   width: 14px; height: 14px;
   background: var(--text-secondary);
   border-radius: 50%;
-  transition: all var(--duration) var(--easing);
+  transition: all 0.2s var(--easing);
   box-shadow: 0 2px 4px rgba(0,0,0,0.3);
 }
 .toggle-switch input:checked + .toggle-track {
   background: var(--accent);
   border-color: transparent;
-  box-shadow: var(--glass-highlight), 0 2px 8px rgba(229, 62, 62, 0.4);
+  box-shadow: var(--glass-highlight), 0 2px 8px rgba(229, 62, 62, 0.3);
 }
 .toggle-switch input:checked + .toggle-track::after {
   transform: translateX(16px);
   background: #fff;
 }
+.toggle-switch:active .toggle-track::after { transform: scale(0.9); }
+.toggle-switch input:checked:active + .toggle-track::after { transform: translateX(16px) scale(0.9); }
 
 /* ── Block 5: Layout (Sidebar Glassmorphism) ─────────────── */
 .app-layout {
@@ -342,16 +350,15 @@ input:focus, select:focus {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  transition: all var(--duration) var(--easing);
+  transition: all 0.3s var(--easing);
   position: relative;
   overflow: hidden;
   box-shadow: var(--glass-highlight), var(--shadow-sm);
 }
 
 .drive-card:hover {
-  background: var(--bg-elevated);
-  border-color: var(--border-strong);
-  transform: translateY(-4px);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
   box-shadow: var(--glass-highlight), var(--shadow-md);
 }
 
@@ -362,10 +369,11 @@ input:focus, select:focus {
 .status-dot {
   width: 8px; height: 8px;
   border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.5);
 }
-.status-dot.ok { background: var(--success); box-shadow: 0 0 8px var(--success); }
-.status-dot.syncing { background: var(--warning); animation: pulse 1.5s infinite; }
-.status-dot.error { background: var(--danger); box-shadow: 0 0 8px rgba(239, 68, 68, 0.6); }
+.status-dot.ok { background: var(--success); box-shadow: 0 0 10px rgba(16, 185, 129, 0.5); }
+.status-dot.syncing { background: var(--warning); animation: pulse 1.5s infinite; box-shadow: 0 0 10px rgba(245, 158, 11, 0.5); }
+.status-dot.error { background: var(--danger); box-shadow: 0 0 10px rgba(239, 68, 68, 0.6); }
 .status-dot.offline { background: var(--text-muted); }
 
 .drive-card-last-sync {
@@ -812,17 +820,14 @@ input:focus, select:focus {
   border-radius: var(--radius-lg);
   /* Only animate hover-related properties so per-pin push updates
      (data-health changes) never trigger a color flash on untouched rows. */
-  transition:
-    transform var(--duration) var(--easing),
-    box-shadow var(--duration) var(--easing);
+  transition: all 0.3s var(--easing);
   box-shadow: var(--glass-highlight), var(--shadow-sm);
   animation: fadeIn 0.4s var(--easing);
 }
 
 .pin-card:hover {
-  background: var(--bg-elevated);
-  border-color: var(--border-strong);
-  transform: translateY(-2px);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
   box-shadow: var(--glass-highlight), var(--shadow-md);
 }
 
@@ -1027,15 +1032,14 @@ input:focus, select:focus {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  transition: all var(--duration) var(--easing);
+  transition: all 0.3s var(--easing);
   box-shadow: var(--glass-highlight), var(--shadow-sm);
   animation: fadeIn 0.4s var(--easing);
 }
 
 .mount-card:hover {
-  background: var(--bg-elevated);
-  border-color: var(--border-strong);
-  transform: translateY(-2px);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
   box-shadow: var(--glass-highlight), var(--shadow-md);
 }
 
@@ -1238,10 +1242,18 @@ button:focus-visible,
   color: var(--text-muted);
   font-size: 12px;
 }
+.skeleton-pin, .skeleton-card {
+  background: linear-gradient(90deg, 
+    var(--bg-card) 25%, 
+    rgba(255,255,255,0.06) 50%, 
+    var(--bg-card) 75%
+  );
+  background-size: 400% 100%;
+  animation: shimmer 2s infinite ease-in-out;
+}
 .skeleton-pin {
   list-style: none;
   padding: 16px 20px;
-  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--glass-highlight), var(--shadow-sm);
@@ -1249,13 +1261,21 @@ button:focus-visible,
 }
 .skeleton-card {
   padding: var(--space-4);
-  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   min-height: 92px;
   box-shadow: var(--glass-highlight), var(--shadow-sm);
 }
-.skeleton-row { padding: var(--space-2) 0; }
+.skeleton-row { 
+  padding: var(--space-2) 0;
+  background: linear-gradient(90deg, 
+    transparent 25%, 
+    rgba(255,255,255,0.03) 50%, 
+    transparent 75%
+  );
+  background-size: 400% 100%;
+  animation: shimmer 2s infinite ease-in-out;
+}
 .skeleton-title { color: var(--text-secondary); }
 
 /* ── Wizard (auth + libraries + success steps) ─────────────── */
