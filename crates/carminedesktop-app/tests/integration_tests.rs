@@ -419,7 +419,7 @@ async fn test_initialization_sequence() -> carminedesktop_core::Result<()> {
     // 1. Load config (same sequence as run_desktop)
     let user_config = UserConfig::load("")?;
     let effective = EffectiveConfig::build(&user_config);
-    assert_eq!(effective.cache_max_size, "5GB");
+    assert_eq!(effective.cache_max_size, "5Go");
     assert_eq!(effective.sync_interval_secs, 60);
     assert_eq!(effective.root_dir, "Cloud");
 

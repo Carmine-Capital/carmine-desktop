@@ -219,8 +219,8 @@ pub struct UserGeneralSettings {
     /// Default: 86400 (1 day). Clamped to [60, 31_536_000].
     #[serde(default)]
     pub offline_ttl_secs: Option<u64>,
-    /// Maximum folder size allowed for offline pinning (e.g. "5GB", "500MB").
-    /// Default: "5GB".
+    /// Maximum folder size allowed for offline pinning (e.g. "5Go", "500Mo").
+    /// Default: "5Go".
     #[serde(default)]
     pub offline_max_folder_size: Option<String>,
 }
