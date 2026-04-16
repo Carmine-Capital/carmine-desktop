@@ -176,12 +176,10 @@ if ($dirty) {
     exit 1
 }
 
-& git rev-parse $tag *> $null
-if ($LASTEXITCODE -eq 0) {
+if (git tag -l $tag) {
     Write-Host "ERROR: Tag $tag already exists."
     exit 1
 }
-$global:LASTEXITCODE = 0
 
 # --- Summary & confirmation ---
 Write-Host "=== Release ==="
