@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use carminedesktop_core::types::{CacheManagerStats, DriveItem};
 use dashmap::DashSet;
@@ -21,10 +22,29 @@ pub struct CacheManager {
 }
 
 impl CacheManager {
+    /// Convenience constructor for tests/single-mount scenarios.  Production
+    /// callers should prefer `new_shared` so the cache budget propagates
+    /// across mounts via a single `Arc<AtomicU64>`.
     pub fn new(
         cache_dir: PathBuf,
         db_path: PathBuf,
         max_cache_bytes: u64,
+        ttl_secs: Option<u64>,
+        drive_id: String,
+    ) -> carminedesktop_core::Result<Self> {
+        Self::new_shared(
+            cache_dir,
+            db_path,
+            Arc::new(AtomicU64::new(max_cache_bytes)),
+            ttl_secs,
+            drive_id,
+        )
+    }
+
+    pub fn new_shared(
+        cache_dir: PathBuf,
+        db_path: PathBuf,
+        max_cache_bytes: Arc<AtomicU64>,
         ttl_secs: Option<u64>,
         drive_id: String,
     ) -> carminedesktop_core::Result<Self> {
@@ -34,7 +54,7 @@ impl CacheManager {
 
         let sqlite = SqliteStore::open(&db_path)?;
         let memory = MemoryCache::new(ttl_secs);
-        let disk = DiskCache::new(cache_dir.join("content"), max_cache_bytes, &db_path)?;
+        let disk = DiskCache::new_shared(cache_dir.join("content"), max_cache_bytes, &db_path)?;
         let writeback = WriteBackBuffer::new(cache_dir);
         let pin_store = Arc::new(PinStore::open(&db_path)?);
 

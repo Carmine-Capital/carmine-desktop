@@ -199,6 +199,46 @@ async fn read_content_serves_disk_cache_when_offline() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// get_quota in offline mode returns None (or the cached value) without
+/// making a Graph API call. Prevents Explorer's volume-info queries from
+/// freezing on the 5 s Graph timeout when we already know we're offline.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_quota_returns_none_when_offline() {
+    let server = MockServer::start().await;
+    let graph = test_graph(&server.uri());
+    let (cache, base) = test_cache("quota-offline");
+    let inodes = Arc::new(InodeTable::new());
+    let offline = Arc::new(AtomicBool::new(true));
+
+    let rt = tokio::runtime::Handle::current();
+    let ops = Arc::new(
+        CoreOps::new(
+            graph,
+            cache.clone(),
+            inodes.clone(),
+            DRIVE_ID.to_string(),
+            rt,
+        )
+        .with_offline_flag(offline),
+    );
+
+    // get_quota calls rt.block_on internally — must run outside async context.
+    let ops2 = ops.clone();
+    let quota = tokio::task::spawn_blocking(move || ops2.get_quota())
+        .await
+        .unwrap();
+
+    assert!(quota.is_none(), "offline get_quota should return None");
+
+    let requests = server.received_requests().await.unwrap();
+    assert!(
+        requests.is_empty(),
+        "offline mode should not make Graph API calls for quota"
+    );
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A network error during list_children sets the offline flag for future operations.
 #[tokio::test(flavor = "multi_thread")]
 async fn network_error_sets_offline_flag() {

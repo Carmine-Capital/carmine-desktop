@@ -7,18 +7,36 @@ use rusqlite::{Connection, params};
 use tokio::fs;
 
 type EvictionFilter = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
+/// Callback invoked whenever a cache entry is put, removed, or evicted.
+/// Arguments: (drive_id, item_id).  Used by the pin aggregator to push
+/// `pin:health` events without polling.
+pub type CacheChangeCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 pub struct DiskCache {
     base_dir: PathBuf,
-    max_size_bytes: AtomicU64,
+    /// Shared budget across all mounts. Mutating this via `set_max_size` (from
+    /// settings) instantly propagates to every DiskCache holding the Arc.
+    max_size_bytes: Arc<AtomicU64>,
     tracker: Mutex<Connection>,
     eviction_filter: std::sync::RwLock<Option<EvictionFilter>>,
+    on_change: std::sync::RwLock<Option<CacheChangeCallback>>,
 }
 
 impl DiskCache {
+    /// Convenience constructor for tests/single-mount scenarios where the
+    /// budget is not shared. Production callers should use `new_shared` with
+    /// the AppState-owned Arc so updates propagate across mounts.
     pub fn new(
         base_dir: PathBuf,
         max_size_bytes: u64,
+        db_path: &Path,
+    ) -> carminedesktop_core::Result<Self> {
+        Self::new_shared(base_dir, Arc::new(AtomicU64::new(max_size_bytes)), db_path)
+    }
+
+    pub fn new_shared(
+        base_dir: PathBuf,
+        max_size_bytes: Arc<AtomicU64>,
         db_path: &Path,
     ) -> carminedesktop_core::Result<Self> {
         let conn = Connection::open(db_path).map_err(|e| {
@@ -66,10 +84,24 @@ impl DiskCache {
 
         Ok(Self {
             base_dir,
-            max_size_bytes: AtomicU64::new(max_size_bytes),
+            max_size_bytes,
             tracker: Mutex::new(conn),
             eviction_filter: std::sync::RwLock::new(None),
+            on_change: std::sync::RwLock::new(None),
         })
+    }
+
+    /// Register a callback that is fired whenever a cache entry is added,
+    /// removed, or evicted.  The pin aggregator in the app crate uses this to
+    /// receive a push signal instead of polling `pin_store.health()`.
+    pub fn set_cache_change_handler(&self, handler: CacheChangeCallback) {
+        *self.on_change.write().unwrap() = Some(handler);
+    }
+
+    fn notify_change(&self, drive_id: &str, item_id: &str) {
+        if let Some(handler) = self.on_change.read().unwrap().as_ref() {
+            handler(drive_id, item_id);
+        }
     }
 
     fn content_path(&self, drive_id: &str, item_id: &str) -> PathBuf {
@@ -192,6 +224,7 @@ impl DiskCache {
             );
         }
 
+        self.notify_change(drive_id, item_id);
         self.evict_if_needed().await?;
 
         Ok(())
@@ -214,6 +247,7 @@ impl DiskCache {
                 params![drive_id, item_id],
             );
         }
+        self.notify_change(drive_id, item_id);
         Ok(())
     }
 
@@ -245,8 +279,10 @@ impl DiskCache {
         self.max_size_bytes.load(Ordering::Relaxed)
     }
 
-    pub fn set_max_size(&self, max_size_bytes: u64) {
-        self.max_size_bytes.store(max_size_bytes, Ordering::Relaxed);
+    /// Handle to the shared budget. Callers can mutate it once (via `store`)
+    /// and every DiskCache pointing at the same Arc will observe the change.
+    pub fn max_size_handle(&self) -> Arc<AtomicU64> {
+        self.max_size_bytes.clone()
     }
 
     /// Set a filter predicate for eviction.  If the filter returns `true`
@@ -341,6 +377,7 @@ impl DiskCache {
                     params![drive_id, item_id],
                 );
             }
+            self.notify_change(&drive_id, &item_id);
             freed += size as u64;
             tracing::debug!("evicted cache entry {drive_id}/{item_id} ({size} bytes)");
         }

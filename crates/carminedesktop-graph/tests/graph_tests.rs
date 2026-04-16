@@ -870,3 +870,91 @@ async fn list_primary_site_libraries_returns_error_when_auth_expired() {
         other => panic!("expected GraphApi 401 error, got: {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Retry module: offline-aware short-circuit
+// ---------------------------------------------------------------------------
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+#[tokio::test]
+async fn with_retry_short_circuits_network_error_when_offline() {
+    tokio::time::pause();
+    let offline = AtomicBool::new(true);
+    let calls = Arc::new(AtomicU32::new(0));
+    let calls_c = calls.clone();
+
+    let result: carminedesktop_core::Result<()> =
+        carminedesktop_graph::retry::with_retry(Some(&offline), || {
+            let calls = calls_c.clone();
+            async move {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Err(carminedesktop_core::Error::Network("unreachable".into()))
+            }
+        })
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(carminedesktop_core::Error::Network(_))
+    ));
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        1,
+        "offline short-circuit should run exactly one attempt"
+    );
+}
+
+#[tokio::test]
+async fn with_retry_retries_network_error_when_online() {
+    tokio::time::pause();
+    let offline = AtomicBool::new(false);
+    let calls = Arc::new(AtomicU32::new(0));
+    let calls_c = calls.clone();
+
+    let result: carminedesktop_core::Result<()> =
+        carminedesktop_graph::retry::with_retry(Some(&offline), || {
+            let calls = calls_c.clone();
+            async move {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Err(carminedesktop_core::Error::Network("transient".into()))
+            }
+        })
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(carminedesktop_core::Error::Network(_))
+    ));
+    // 1 initial + 3 retries when offline flag is false.
+    assert_eq!(calls.load(Ordering::Relaxed), 4);
+}
+
+#[tokio::test]
+async fn with_retry_still_retries_429_when_offline() {
+    tokio::time::pause();
+    let offline = AtomicBool::new(true);
+    let calls = Arc::new(AtomicU32::new(0));
+    let calls_c = calls.clone();
+
+    let result: carminedesktop_core::Result<()> =
+        carminedesktop_graph::retry::with_retry(Some(&offline), || {
+            let calls = calls_c.clone();
+            async move {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Err(carminedesktop_core::Error::GraphApi {
+                    status: 429,
+                    message: "throttled".into(),
+                })
+            }
+        })
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(carminedesktop_core::Error::GraphApi { status: 429, .. })
+    ));
+    // Offline flag only affects Network errors; 429 still consumes full budget.
+    assert_eq!(calls.load(Ordering::Relaxed), 4);
+}

@@ -53,7 +53,7 @@ impl Default for SyncProcessorConfig {
 }
 
 /// Snapshot of sync processor metrics, updated each tick.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncMetrics {
     pub queue_depth: usize,
     pub in_flight: usize,
@@ -92,6 +92,14 @@ impl SyncHandle {
     /// Read the latest metrics snapshot without blocking the processor.
     pub fn metrics(&self) -> SyncMetrics {
         self.metrics_rx.borrow().clone()
+    }
+
+    /// Subscribe to live metrics updates.  The returned receiver fires on every
+    /// tick where the processor ran at least one pass (~1 Hz); callers that
+    /// push these over IPC should debounce to keep the frontend bound to the
+    /// render budget.
+    pub fn subscribe_metrics(&self) -> watch::Receiver<SyncMetrics> {
+        self.metrics_rx.clone()
     }
 }
 

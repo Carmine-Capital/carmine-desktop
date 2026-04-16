@@ -586,6 +586,16 @@ impl CoreOps {
                 return Some(quota.clone());
             }
         }
+        if self.is_offline() {
+            // Return last-known quota (may be None or stale). Avoids the 5s Graph
+            // timeout on Explorer volume-info queries when we know we're offline.
+            return self
+                .quota_cache
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|(_, q)| q.clone());
+        }
         let _guard = self.rt.enter();
         match self.rt.block_on(tokio::time::timeout(
             VFS_GRAPH_TIMEOUT,
@@ -617,6 +627,9 @@ impl CoreOps {
 
     /// Check if a remote item has been modified on the server compared to our cache.
     fn has_server_conflict(&self, item: &DriveItem) -> bool {
+        if self.is_offline() {
+            return false;
+        }
         let Some(cached_etag) = item.etag.as_deref() else {
             return false;
         };

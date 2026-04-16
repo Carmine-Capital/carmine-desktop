@@ -1,4 +1,6 @@
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use bytes::Bytes;
 use carminedesktop_core::types::*;
@@ -27,6 +29,7 @@ pub struct GraphClient {
     http: Client,
     base_url: String,
     token_fn: Box<dyn Fn() -> TokenFuture + Send + Sync>,
+    offline: Arc<AtomicBool>,
 }
 
 impl GraphClient {
@@ -39,6 +42,7 @@ impl GraphClient {
             http: Client::new(),
             base_url: GRAPH_BASE.to_string(),
             token_fn: Box::new(move || Box::pin(token_fn())),
+            offline: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -51,7 +55,29 @@ impl GraphClient {
             http: Client::new(),
             base_url,
             token_fn: Box::new(move || Box::pin(token_fn())),
+            offline: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Attach a shared offline flag so `with_retry` can short-circuit the
+    /// exponential backoff loop on `Network` errors when the machine is
+    /// already known to be offline. The first attempt still runs, so delta
+    /// sync (and other opportunistic callers) can flip the flag back to
+    /// `false` when connectivity returns.
+    pub fn with_offline_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.offline = flag;
+        self
+    }
+
+    /// Shared handle to the offline flag. Lets callers (mount setup, VFS)
+    /// alias the same atomic so every code path reads the same state.
+    pub fn offline_flag(&self) -> &Arc<AtomicBool> {
+        &self.offline
+    }
+
+    /// Borrow the raw atomic for internal use in `with_retry` call sites.
+    fn offline_ref(&self) -> &AtomicBool {
+        self.offline.as_ref()
     }
 
     async fn token(&self) -> carminedesktop_core::Result<String> {
@@ -62,7 +88,7 @@ impl GraphClient {
         &self,
         url: &str,
     ) -> carminedesktop_core::Result<T> {
-        with_retry(|| async {
+        with_retry(Some(self.offline_ref()), || async {
             let token = self.token().await?;
             let resp = self
                 .http
@@ -214,7 +240,7 @@ impl GraphClient {
         item_id: &str,
     ) -> carminedesktop_core::Result<Bytes> {
         let base_url = &self.base_url;
-        with_retry(|| async {
+        with_retry(Some(self.offline_ref()), || async {
             let token = self.token().await?;
             let resp = self
                 .http
@@ -243,7 +269,7 @@ impl GraphClient {
         length: u64,
     ) -> carminedesktop_core::Result<Bytes> {
         let base_url = &self.base_url;
-        with_retry(|| async {
+        with_retry(Some(self.offline_ref()), || async {
             let token = self.token().await?;
             let range_header = format!("bytes={}-{}", offset, offset + length - 1);
             let resp = self
@@ -617,7 +643,7 @@ impl GraphClient {
             "name": dest_name,
         });
 
-        with_retry(|| async {
+        with_retry(Some(self.offline_ref()), || async {
             let token = self.token().await?;
             let resp = self
                 .http

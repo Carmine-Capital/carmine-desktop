@@ -68,6 +68,27 @@ impl PinStore {
         Ok(())
     }
 
+    /// Refresh an existing pin's `expires_at` without touching `pinned_at`.
+    /// No-op if the folder is not pinned.
+    pub fn update_expires_at(
+        &self,
+        drive_id: &str,
+        item_id: &str,
+        ttl_secs: u64,
+    ) -> carminedesktop_core::Result<()> {
+        let conn = self.conn.lock().map_err(|e| {
+            carminedesktop_core::Error::Cache(format!("pin store lock failed: {e}"))
+        })?;
+        conn.execute(
+            "UPDATE pinned_folders
+             SET expires_at = datetime('now', '+' || ?3 || ' seconds')
+             WHERE drive_id = ?1 AND item_id = ?2",
+            params![drive_id, item_id, ttl_secs as i64],
+        )
+        .map_err(|e| carminedesktop_core::Error::Cache(format!("pin store update failed: {e}")))?;
+        Ok(())
+    }
+
     /// Remove a pin record.  No-op if the folder is not pinned.
     pub fn unpin(&self, drive_id: &str, item_id: &str) -> carminedesktop_core::Result<()> {
         let conn = self.conn.lock().map_err(|e| {

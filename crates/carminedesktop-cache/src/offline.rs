@@ -11,6 +11,10 @@ use crate::pin_store::PinStore;
 /// Arguments: (folder_name, error_message).
 type DownloadErrorCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
+/// Callback invoked when a background download completes successfully.
+/// Argument: folder_name.
+type DownloadCompleteCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// Result of a pin attempt.
 pub enum PinResult {
     /// Pin succeeded, background download spawned.
@@ -27,6 +31,7 @@ pub struct OfflineManager {
     ttl_secs: AtomicU64,
     max_folder_bytes: AtomicU64,
     on_download_error: std::sync::RwLock<Option<DownloadErrorCallback>>,
+    on_download_complete: std::sync::RwLock<Option<DownloadCompleteCallback>>,
 }
 
 impl OfflineManager {
@@ -46,6 +51,7 @@ impl OfflineManager {
             ttl_secs: AtomicU64::new(ttl_secs),
             max_folder_bytes: AtomicU64::new(max_folder_bytes),
             on_download_error: std::sync::RwLock::new(None),
+            on_download_complete: std::sync::RwLock::new(None),
         }
     }
 
@@ -123,9 +129,10 @@ impl OfflineManager {
         let item_id = item_id.to_string();
         let folder_name = folder_name.to_string();
         let error_handler = self.on_download_error.read().unwrap().clone();
+        let complete_handler = self.on_download_complete.read().unwrap().clone();
 
         tokio::spawn(async move {
-            if let Err(e) = recursive_download(
+            match recursive_download(
                 &graph,
                 &cache,
                 &drive_id,
@@ -135,14 +142,21 @@ impl OfflineManager {
             )
             .await
             {
-                tracing::error!(
-                    "offline: recursive download failed for {}/{}: {}",
-                    drive_id,
-                    item_id,
-                    e
-                );
-                if let Some(handler) = &error_handler {
-                    handler(&folder_name, &e.to_string());
+                Ok(()) => {
+                    if let Some(handler) = &complete_handler {
+                        handler(&folder_name);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "offline: recursive download failed for {}/{}: {}",
+                        drive_id,
+                        item_id,
+                        e
+                    );
+                    if let Some(handler) = &error_handler {
+                        handler(&folder_name, &e.to_string());
+                    }
                 }
             }
         });
@@ -283,6 +297,11 @@ impl OfflineManager {
     /// Set a callback invoked when a background download fails.
     pub fn set_download_error_handler(&self, handler: DownloadErrorCallback) {
         *self.on_download_error.write().unwrap() = Some(handler);
+    }
+
+    /// Set a callback invoked when a background download completes successfully.
+    pub fn set_download_complete_handler(&self, handler: DownloadCompleteCallback) {
+        *self.on_download_complete.write().unwrap() = Some(handler);
     }
 }
 
