@@ -3,7 +3,10 @@
   "version": "0.1.0-rc.40",
   "identifier": "com.carmine-capital.desktop",
   "build": {
-    "frontendDist": "./dist"
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5174",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "./frontend/dist"
   },
   "bundle": {
     "active": true,

@@ -8,7 +8,7 @@ Carmine Desktop mounts Microsoft OneDrive and SharePoint document libraries as l
 
 | Crate | Stack | Path |
 |-------|-------|------|
-| **carminedesktop-app** | Tauri 2, Tokio, vanilla-JS UI (`dist/`) | `crates/carminedesktop-app/` |
+| **carminedesktop-app** | Tauri 2, Tokio, Solid.js + Vite + TypeScript UI (`frontend/`) | `crates/carminedesktop-app/` |
 | **carminedesktop-auth** | OAuth2 PKCE, `keyring` → AES-256-GCM + Argon2id fallback | `crates/carminedesktop-auth/` |
 | **carminedesktop-cache** | DashMap (memory) → SQLite (metadata) → disk (blobs) + writeback | `crates/carminedesktop-cache/` |
 | **carminedesktop-core** | Shared types (`DriveItem`, `Drive`, `Site`), `thiserror` errors, TOML config | `crates/carminedesktop-core/` |
@@ -68,10 +68,13 @@ GitHub interactions use the `gh` CLI (not GitHub MCP).
 - **Serde**: per-field `#[serde(rename = "camelCaseField")]` to match Microsoft Graph JSON (e.g. `lastModifiedDateTime`, `eTag`, `@microsoft.graph.downloadUrl`).
 - **Feature gate**: `#[cfg(feature = "desktop")]` → Tauri UI surface. No platform `#[cfg]` gates — the app is Windows-only.
 - **Clippy**: CI runs `RUSTFLAGS=-Dwarnings` with `--all-targets` and `--all-targets --features desktop`. Collapse nested `if`: `if cond { if let Err(e) = f() { ... } }` → `if cond && let Err(e) = f() { ... }`. No suppressed lints without justification.
-- **Frontend (vanilla JS, no build step)**:
-  - Bind events with `addEventListener` in `.js` files; no inline `onclick=""` (CSP blocks it).
-  - Every mutating action calls `showStatus(message, type)` from `dist/ui.js`.
-  - IPC via `const { invoke } = window.__TAURI__.core;` then `await invoke('command_name', { ... })`.
+- **Frontend (Solid.js + Vite + TypeScript, in `crates/carminedesktop-app/frontend/`)**:
+  - JSX components under `frontend/src/`; signals/stores for reactive state, `@tanstack/solid-query` for async bootstrapping, per-topic Tauri `listen()` subscriptions for realtime updates.
+  - No inline event handlers in `*.html` (CSP `script-src 'self'` blocks them); wire interactions in the `.tsx` components.
+  - Every mutating action calls `showStatus(message, kind)` from `frontend/src/components/StatusBar.tsx`.
+  - IPC via the typed wrappers in `frontend/src/ipc.ts` — prefer the `api.*` helpers (e.g. `api.saveSettings({...})`) which wrap each `#[tauri::command]`; the bare `invoke<T>(cmd, args)` export is the fallback.
+  - `npm --prefix crates/carminedesktop-app/frontend run build` is invoked automatically by `cargo tauri build` (`beforeBuildCommand`).
+  - Realtime topics, frontend layout, pin aggregator, upload-progress task and related conventions: `crates/carminedesktop-app/AGENTS.md`.
 
 ## Architecture
 
@@ -81,7 +84,7 @@ GitHub interactions use the `gh` CLI (not GitHub MCP).
 - **Cache tiers** (`carminedesktop-cache`): memory (DashMap) → SQLite metadata → disk blobs; writeback buffer in `src/writeback.rs`, delta sync in `src/sync.rs`, upload processor in `carminedesktop-vfs/src/sync_processor.rs`.
 - **Auth** (`carminedesktop-auth`): OAuth2 PKCE in `src/oauth.rs` (`generate_pkce()` with SHA-256 challenge). Token storage (`src/storage.rs`) tries OS keyring first, falls back to AES-256-GCM file encrypted with an Argon2id-derived key.
 - **Config**: `UserConfig`, `MountConfig`, `EffectiveConfig` in `crates/carminedesktop-core/src/config.rs`. TOML on disk with on-corruption backup. Mount-path templates expand `{home}` / `~/`.
-- **CSP** (`dist/*.html`): `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'`.
+- **CSP** (`frontend/*.html`): `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:* wss://localhost:*; object-src 'none'`.
 
 ## Workflow
 
@@ -102,7 +105,7 @@ GitHub interactions use the `gh` CLI (not GitHub MCP).
 ## Common mistakes
 
 - Trying to run `cargo build` on Linux/macOS — `winfsp-sys` won't compile. Use CI on `windows-latest`.
-- Adding an `onclick="..."` attribute in `dist/*.html` — the CSP silently blocks it. Bind with `addEventListener` in the paired `.js`.
+- Adding an `onclick="..."` attribute in `frontend/*.html` — the CSP silently blocks it. Wire interactions in the `.tsx` components via Solid's JSX event props (`onClick={...}`) instead.
 - Letting a `#[tauri::command]` mutate state without a `showStatus(...)` call — users see no feedback.
 - Mixing `anyhow::Error` into public APIs — only the `Other` variant of `carminedesktop_core::Error` may hold an `anyhow::Error`.
 - Adding a dep directly to a crate's `Cargo.toml` — always declare in workspace root and reference with `{ workspace = true }`.
