@@ -2,14 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_CACHE_MAX_SIZE: &str = "5GB";
+const DEFAULT_CACHE_MAX_SIZE: &str = "5Go";
 const DEFAULT_SYNC_INTERVAL_SECS: u64 = 60;
 const DEFAULT_METADATA_TTL_SECS: u64 = 60;
 const DEFAULT_ROOT_DIR: &str = "Cloud";
 const DEFAULT_OFFLINE_TTL_SECS: u64 = 86400; // 1 day
-const DEFAULT_OFFLINE_MAX_FOLDER_SIZE: &str = "5GB";
+const DEFAULT_OFFLINE_MAX_FOLDER_SIZE: &str = "5Go";
 const MIN_OFFLINE_TTL_SECS: u64 = 60; // 1 minute
-const MAX_OFFLINE_TTL_SECS: u64 = 604800; // 7 days
+const MAX_OFFLINE_TTL_SECS: u64 = 31_536_000; // 1 year
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UserConfig {
@@ -216,7 +216,7 @@ pub struct UserGeneralSettings {
     #[serde(default)]
     pub explorer_nav_pane: Option<bool>,
     /// How long pinned folders remain available offline (seconds).
-    /// Default: 86400 (1 day). Clamped to [60, 604800].
+    /// Default: 86400 (1 day). Clamped to [60, 31_536_000].
     #[serde(default)]
     pub offline_ttl_secs: Option<u64>,
     /// Maximum folder size allowed for offline pinning (e.g. "5GB", "500MB").

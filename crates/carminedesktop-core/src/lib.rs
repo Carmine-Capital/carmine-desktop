@@ -6,6 +6,8 @@ pub mod types;
 
 pub use error::{Error, Result};
 pub use types::{
-    ActivityEntry, CacheManagerStats, CacheStatsResponse, DashboardError, DashboardStatus,
-    DeltaSyncObserver, DriveStatus, ObsEvent, PinHealthInfo, UploadQueueInfo, WritebackEntry,
+    ActivityEntry, AuthStateEvent, CacheManagerStats, CacheStatsResponse, DashboardError,
+    DashboardStatus, DeltaSyncObserver, DriveOnlineEvent, DriveStatus, DriveStatusEvent,
+    DriveUploadProgressEvent, ObsEvent, PinHealthEvent, PinHealthInfo, PinRemovedEvent,
+    UploadQueueInfo, WritebackEntry,
 };

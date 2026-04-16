@@ -166,8 +166,10 @@ pub struct CopyMonitorResponse {
 // Observability types — ObsEvent enum and Tauri command response structs
 // ---------------------------------------------------------------------------
 
-/// Real-time observability event, emitted via `tokio::sync::broadcast` and
-/// forwarded to the frontend via `app.emit("obs-event", &event)`.
+/// Real-time observability event, carried on a `tokio::sync::broadcast` and
+/// fanned out by the event bridge (app/src/observability.rs) to typed,
+/// per-topic Tauri emits such as `error:append`, `activity:append`,
+/// `drive:status`, `drive:online` and `auth:state`.
 ///
 /// The `#[serde(tag = "type")]` attribute produces a JSON discriminator field
 /// named `"type"` with camelCase variant names (e.g. `"syncStateChanged"`).
@@ -320,4 +322,71 @@ pub struct CacheManagerStats {
     pub disk_used_bytes: u64,
     pub disk_max_bytes: u64,
     pub dirty_inode_count: usize,
+}
+
+/// Single-pin push payload emitted on the `pin:health` Tauri event.
+///
+/// Same shape as `PinHealthInfo` plus `mount_name` so the frontend can render a
+/// full PinCard without a second invoke.  Emitted by the debounced pin
+/// aggregator whenever the (totalFiles, cachedFiles, status) tuple changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PinHealthEvent {
+    pub drive_id: String,
+    pub item_id: String,
+    pub folder_name: String,
+    pub mount_name: String,
+    pub status: String,
+    pub total_files: usize,
+    pub cached_files: usize,
+    pub pinned_at: String,
+    pub expires_at: String,
+}
+
+/// Emitted on the `pin:removed` Tauri event when a pin disappears from the
+/// `pinned_folders` table (explicit unpin or TTL expiry).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PinRemovedEvent {
+    pub drive_id: String,
+    pub item_id: String,
+}
+
+/// Payload for the `drive:status` Tauri event (sync state transition).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriveStatusEvent {
+    pub drive_id: String,
+    /// One of: "syncing", "up_to_date", "error".
+    pub state: String,
+}
+
+/// Payload for the `drive:online` Tauri event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriveOnlineEvent {
+    pub drive_id: String,
+    pub online: bool,
+}
+
+/// Payload for the `auth:state` Tauri event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthStateEvent {
+    pub degraded: bool,
+}
+
+/// Payload for the `drive:upload-progress` Tauri event: a live snapshot of
+/// the sync processor's upload queue metrics for a single drive, emitted by
+/// a debounced watcher on top of the existing `watch::Receiver<SyncMetrics>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriveUploadProgressEvent {
+    pub drive_id: String,
+    pub queue_depth: usize,
+    pub in_flight: usize,
+    pub failed_count: usize,
+    pub total_uploaded: u64,
+    pub total_failed: u64,
+    pub total_deduplicated: u64,
 }
