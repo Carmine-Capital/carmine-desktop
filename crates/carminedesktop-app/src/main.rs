@@ -12,6 +12,8 @@ mod notify;
 #[cfg(feature = "desktop")]
 mod observability;
 #[cfg(feature = "desktop")]
+mod pin_events;
+#[cfg(feature = "desktop")]
 mod shell_integration;
 #[cfg(feature = "desktop")]
 mod tray;
@@ -237,17 +239,29 @@ pub struct AppState {
     /// Pins known to be stale (drive_id, item_id) -- set by delta sync when changed
     /// items overlap pinned subtrees.
     pub stale_pins: Mutex<std::collections::HashSet<(String, String)>>,
+    /// Dirty signal into the pin aggregator (see `pin_events::spawn_aggregator`).
+    /// Fed from `DiskCache::on_change` plus explicit pin/unpin commands; drives
+    /// debounced `pin:health` / `pin:removed` emissions to the frontend.
+    pub pin_tx: tokio::sync::mpsc::UnboundedSender<pin_events::PinDirty>,
+    /// Global cache budget shared across every mount's DiskCache.  A single
+    /// atomic store here (triggered from `save_settings`) instantly updates
+    /// the eviction threshold seen by every mount — one user-configured
+    /// value, one source of truth.
+    pub cache_budget: Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[allow(dead_code)] // Read by start_mount on desktop builds
 fn parse_cache_size(size_str: &str) -> u64 {
+    // Accept both English (GB/MB/KB/B) and French (Go/Mo/Ko/o) byte-unit
+    // suffixes so settings persisted before the French-UI migration keep
+    // parsing and the new UI-facing strings round-trip correctly.
     let s = size_str.trim().to_uppercase();
-    let (num_part, multiplier) = if let Some(n) = s.strip_suffix("GB") {
-        (n.trim(), 1024 * 1024 * 1024)
-    } else if let Some(n) = s.strip_suffix("MB") {
-        (n.trim(), 1024 * 1024)
-    } else if let Some(n) = s.strip_suffix("KB") {
-        (n.trim(), 1024)
+    let (num_part, multiplier) = if let Some(n) = s.strip_suffix("GB").or_else(|| s.strip_suffix("GO")) {
+        (n.trim(), 1024u64 * 1024 * 1024)
+    } else if let Some(n) = s.strip_suffix("MB").or_else(|| s.strip_suffix("MO")) {
+        (n.trim(), 1024u64 * 1024)
+    } else if let Some(n) = s.strip_suffix("KB").or_else(|| s.strip_suffix("KO")) {
+        (n.trim(), 1024u64)
     } else {
         (s.as_str(), 1u64)
     };
@@ -499,6 +513,10 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
     let (obs_tx, _) = tokio::sync::broadcast::channel::<carminedesktop_core::ObsEvent>(256);
     let error_ring = Arc::new(Mutex::new(observability::ErrorAccumulator::new(100)));
     let activity_ring = Arc::new(Mutex::new(observability::ActivityBuffer::new(500)));
+    let (pin_tx, pin_rx) = tokio::sync::mpsc::unbounded_channel::<pin_events::PinDirty>();
+    let cache_budget = Arc::new(std::sync::atomic::AtomicU64::new(parse_cache_size(
+        &effective.cache_max_size,
+    )));
 
     let state = AppState {
         user_config: Mutex::new(user_config),
@@ -519,6 +537,8 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
         activity_ring,
         last_synced: Mutex::new(HashMap::new()),
         stale_pins: Mutex::new(std::collections::HashSet::new()),
+        pin_tx,
+        cache_budget,
     };
 
     tauri::Builder::default()
@@ -598,6 +618,7 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::prompt_set_default_handler,
             commands::list_offline_pins,
             commands::remove_offline_pin,
+            commands::extend_offline_pin,
             commands::get_dashboard_status,
             commands::get_recent_errors,
             commands::get_activity_feed,
@@ -636,6 +657,10 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
                     state.activity_ring.clone(),
                 );
             }
+
+            // Spawn the pin aggregator that fans disk-cache writes into
+            // granular `pin:health` / `pin:removed` events.
+            pin_events::spawn_aggregator(app.handle().clone(), pin_rx);
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -769,20 +794,7 @@ async fn setup_after_launch(app: &tauri::AppHandle, first_run: bool) {
         }
 
         // Register offline context menu verbs
-        {
-            let mount_paths: Vec<String> = {
-                let config = state.effective_config.lock().unwrap();
-                config
-                    .mounts
-                    .iter()
-                    .filter(|m| m.enabled)
-                    .map(|m| expand_mount_point(&m.mount_point))
-                    .collect()
-            };
-            if let Err(e) = shell_integration::register_context_menu(&mount_paths) {
-                tracing::warn!("offline context menu registration failed: {e}");
-            }
-        }
+        refresh_offline_context_menu(app);
 
         {
             let ipc = ipc_server::IpcServer::start(app.clone());
@@ -851,10 +863,13 @@ async fn handle_deep_link_urls(app: &tauri::AppHandle, urls: Vec<url::Url>) {
 /// Supported actions:
 /// - `carminedesktop://open-online?path=<percent-encoded-path>`: resolve the local
 ///   mount path to its SharePoint URL and open it.
+/// - `carminedesktop://open-offline`: focus the settings window on the Offline panel.
 ///
 /// Invalid paths or unrecognized actions produce a desktop notification.
 #[cfg(feature = "desktop")]
 async fn handle_deep_link_url(app: &tauri::AppHandle, url: url::Url) {
+    use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+
     if url.scheme() != "carminedesktop" {
         return;
     }
@@ -879,6 +894,26 @@ async fn handle_deep_link_url(app: &tauri::AppHandle, url: url::Url) {
                     tracing::warn!("deep link: {msg} — {url}");
                     notify::deep_link_failed(app, msg);
                 }
+            }
+        }
+        Some("open-offline") => {
+            tracing::info!("deep link: open-offline");
+            if let Some(win) = app.get_webview_window("settings") {
+                let _ = win.unminimize();
+                let _ = win.show();
+                let _ = win.set_focus();
+                let _ = win.emit("navigate-to-panel", "offline");
+            } else {
+                let _ = WebviewWindowBuilder::new(
+                    app,
+                    "settings",
+                    WebviewUrl::App("settings.html?panel=offline".into()),
+                )
+                .title("Settings")
+                .inner_size(800.0, 600.0)
+                .min_inner_size(640.0, 480.0)
+                .center()
+                .build();
             }
         }
         Some(action) => {
@@ -915,13 +950,13 @@ async fn handle_offline_pin(app: &tauri::AppHandle, path: &str) -> Result<String
         .authenticated
         .load(std::sync::atomic::Ordering::Relaxed)
     {
-        notify::offline_pin_rejected(app, path, "sign in required");
+        notify::offline_pin_rejected(app, path, "connexion requise");
         return Err("sign in required".to_string());
     }
 
     match resolve_and_pin(app, path).await {
         Ok(folder_name) => {
-            notify::offline_pin_complete(app, &folder_name);
+            notify::offline_pin_started(app, &folder_name);
             Ok(folder_name)
         }
         Err(e) => {
@@ -983,7 +1018,15 @@ async fn resolve_and_pin(app: &tauri::AppHandle, path: &str) -> Result<String, S
         .await
         .map_err(|e| e.to_string())?
     {
-        carminedesktop_cache::PinResult::Ok => Ok(folder_name),
+        carminedesktop_cache::PinResult::Ok => {
+            // Surface the new pin in the UI before recursive_download lands —
+            // the row shows up with analyzing/partial health and ticks up as
+            // files cache in.
+            let _ = state.pin_tx.send(pin_events::PinDirty::DriveRefresh {
+                drive_id: drive_id.clone(),
+            });
+            Ok(folder_name)
+        }
         carminedesktop_cache::PinResult::Rejected { reason } => {
             notify::offline_pin_rejected(app, &folder_name, &reason);
             Err(reason)
@@ -1013,6 +1056,9 @@ async fn resolve_and_unpin(app: &tauri::AppHandle, path: &str) -> Result<String,
     offline_mgr
         .unpin_folder(&item.id)
         .map_err(|e| e.to_string())?;
+    let _ = state.pin_tx.send(pin_events::PinDirty::DriveRefresh {
+        drive_id: drive_id.clone(),
+    });
     Ok(folder_name)
 }
 
@@ -1177,30 +1223,47 @@ fn start_mount_common(
 
     let state = app.state::<AppState>();
 
-    let (effective_cache_dir, max_cache_bytes, metadata_ttl) = {
+    let (effective_cache_dir, metadata_ttl) = {
         let cfg = state.effective_config.lock().map_err(|e| e.to_string())?;
         let dir = cfg
             .cache_dir
             .as_ref()
             .map(std::path::PathBuf::from)
             .unwrap_or_else(cache_dir);
-        let max_bytes = parse_cache_size(&cfg.cache_max_size);
         let ttl = Some(cfg.metadata_ttl_secs);
-        (dir, max_bytes, ttl)
+        (dir, ttl)
     };
 
     let safe_id = drive_id.replace('!', "_");
     let db_path = effective_cache_dir.join(format!("drive-{safe_id}.db"));
     let cache = Arc::new(
-        CacheManager::new(
+        CacheManager::new_shared(
             effective_cache_dir,
             db_path,
-            max_cache_bytes,
+            state.cache_budget.clone(),
             metadata_ttl,
             drive_id.to_string(),
         )
         .map_err(|e| e.to_string())?,
     );
+
+    // Push `pin:health` updates whenever a cache entry lands or is evicted.
+    // The aggregator debounces and only emits when the snapshot actually
+    // changed, so high-churn writes (recursive pin downloads) stay quiet on
+    // the wire.
+    {
+        let pin_tx = state.pin_tx.clone();
+        let drive_id_owned = drive_id.to_string();
+        cache
+            .disk
+            .set_cache_change_handler(Arc::new(move |_did: &str, item_id: &str| {
+                let _ = pin_tx.send(pin_events::PinDirty::Cache {
+                    drive_id: drive_id_owned.clone(),
+                    item_id: item_id.to_string(),
+                });
+            }));
+    }
+
     let max_inode = cache.sqlite.max_inode().unwrap_or(0);
     let inodes = Arc::new(InodeTable::new_starting_after(max_inode));
     // Seed InodeTable with existing SQLite mappings so VFS and offline
@@ -1236,7 +1299,20 @@ fn start_mount_common(
         ));
     }
 
-    let offline_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Wire download completion handler — fires once recursive_download finishes
+    // successfully, replacing the old premature "pin complete" notification.
+    {
+        let app_for_notify = app.clone();
+        offline_manager.set_download_complete_handler(Arc::new(move |folder_name: &str| {
+            notify::offline_pin_completed(&app_for_notify, folder_name);
+        }));
+    }
+
+    // Alias the shared offline flag owned by GraphClient. This way the retry
+    // short-circuit in carminedesktop_graph::retry and the VFS/app reads of
+    // the per-drive entry in `mount_caches` observe the same atomic — one
+    // network transition propagates everywhere instantly.
+    let offline_flag = state.graph.offline_flag().clone();
 
     let rt = state
         .tokio_handle
@@ -1357,6 +1433,87 @@ fn spawn_event_forwarder(
     });
 }
 
+/// Spawn a task that streams `drive:upload-progress` to the frontend from the
+/// sync processor's `SyncMetrics` watch channel.  The watch fires roughly once
+/// per second when the processor is active; we debounce to 250 ms so a burst
+/// of tick updates collapses into a single emit, and skip emits when the
+/// snapshot is byte-for-byte equal to the last one we sent.
+#[cfg(feature = "desktop")]
+fn spawn_upload_progress_emitter(
+    rt: &tokio::runtime::Handle,
+    app: &tauri::AppHandle,
+    drive_id: String,
+    mut metrics_rx: tokio::sync::watch::Receiver<carminedesktop_vfs::SyncMetrics>,
+) {
+    use carminedesktop_core::types::DriveUploadProgressEvent;
+    use carminedesktop_vfs::SyncMetrics;
+    use tauri::Emitter;
+
+    const DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(250);
+    let app_handle = app.clone();
+
+    rt.spawn(async move {
+        let mut last_emitted: Option<SyncMetrics> = None;
+
+        loop {
+            // Block until the processor publishes a new SyncMetrics snapshot.
+            if metrics_rx.changed().await.is_err() {
+                // Processor task ended and dropped the sender — exit.
+                break;
+            }
+
+            // Debounce: coalesce any follow-up changes that arrive within the
+            // window into a single emit.  `timeout` returning Err means we hit
+            // the window quiet, which is what we want.
+            let _ = tokio::time::timeout(DEBOUNCE, async {
+                while metrics_rx.changed().await.is_ok() {}
+            })
+            .await;
+
+            let metrics = metrics_rx.borrow().clone();
+            if last_emitted.as_ref() == Some(&metrics) {
+                continue;
+            }
+
+            let payload = DriveUploadProgressEvent {
+                drive_id: drive_id.clone(),
+                queue_depth: metrics.queue_depth,
+                in_flight: metrics.in_flight,
+                failed_count: metrics.failed_count,
+                total_uploaded: metrics.total_uploaded,
+                total_failed: metrics.total_failed,
+                total_deduplicated: metrics.total_deduplicated,
+            };
+            if let Err(e) = app_handle.emit("drive:upload-progress", &payload) {
+                tracing::warn!("drive:upload-progress emit failed: {e}");
+            }
+            last_emitted = Some(metrics);
+        }
+    });
+}
+
+/// Rewrite the `AppliesTo` filter on the offline context menu registry keys
+/// from the currently-enabled mounts. Call after any change to the set of
+/// enabled mount paths (toggle / add / remove) so Explorer picks up the new
+/// set without requiring an app restart.
+#[cfg(feature = "desktop")]
+pub(crate) fn refresh_offline_context_menu(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let state = app.state::<AppState>();
+    let mount_paths: Vec<String> = {
+        let config = state.effective_config.lock().unwrap();
+        config
+            .mounts
+            .iter()
+            .filter(|m| m.enabled)
+            .map(|m| expand_mount_point(&m.mount_point))
+            .collect()
+    };
+    if let Err(e) = shell_integration::register_context_menu(&mount_paths) {
+        tracing::warn!("offline context menu refresh failed: {e}");
+    }
+}
+
 #[cfg(feature = "desktop")]
 fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(), String> {
     use tauri::Manager;
@@ -1378,6 +1535,14 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
         },
         carminedesktop_vfs::SyncProcessorConfig::default(),
         &ctx.rt,
+    );
+
+    // Stream debounced `drive:upload-progress` events for this drive.
+    spawn_upload_progress_emitter(
+        &ctx.rt,
+        app,
+        ctx.drive_id.clone(),
+        sync_handle.subscribe_metrics(),
     );
 
     let sync_handle_clone = sync_handle.clone();
@@ -1555,6 +1720,21 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                 let inodes = inodes.clone();
                 let inode_allocator: Arc<dyn Fn(&str) -> u64 + Send + Sync> =
                     Arc::new(move |item_id: &str| inodes.allocate(item_id));
+
+                // Publish "syncing" state transition before the tick runs.  The
+                // Solid frontend dedupes on === so repeat values across ticks
+                // are free.
+                {
+                    use carminedesktop_core::types::ObsEvent;
+                    use tauri::Manager;
+                    let state = app_handle.state::<AppState>();
+                    let _ = state.obs_tx.send(ObsEvent::SyncStateChanged {
+                        drive_id: drive_id.clone(),
+                        state: "syncing".to_string(),
+                    });
+                }
+
+                let mut sync_succeeded = false;
                 match run_delta_sync(
                     &graph,
                     cache,
@@ -1565,9 +1745,22 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                 .await
                 {
                     Ok(result) => {
+                        sync_succeeded = true;
                         notified_403.remove(drive_id.as_str());
-                        // Network is working -- exit offline mode
-                        offline_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                        // Network is working -- exit offline mode.  Swap so we
+                        // only emit the `online=true` transition on the tick
+                        // that actually recovered connectivity.
+                        let was_offline =
+                            offline_flag.swap(false, std::sync::atomic::Ordering::Relaxed);
+                        if was_offline {
+                            use carminedesktop_core::types::ObsEvent;
+                            use tauri::Manager;
+                            let state = app_handle.state::<AppState>();
+                            let _ = state.obs_tx.send(ObsEvent::OnlineStateChanged {
+                                drive_id: drive_id.clone(),
+                                online: true,
+                            });
+                        }
 
                         // Update last_synced timestamp
                         {
@@ -1763,8 +1956,12 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                     }
                     Err(carminedesktop_core::Error::Network(_)) => {
                         tracing::warn!("delta sync for {drive_id}: network unavailable");
-                        offline_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                        {
+                        // Swap so we only emit the `online=false` transition on
+                        // the tick that actually lost connectivity; subsequent
+                        // failing probes are silent.
+                        let was_online =
+                            !offline_flag.swap(true, std::sync::atomic::Ordering::Relaxed);
+                        if was_online {
                             use carminedesktop_core::types::ObsEvent;
                             use tauri::Manager;
                             let state = app_handle.state::<AppState>();
@@ -1792,16 +1989,58 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                         }
                     }
                 }
-            }
 
-            // Process expired offline pins (once per cycle)
-            for (_, _, _, _, _, _, offline_mgr, _, _) in &snapshot {
-                if let Err(e) = offline_mgr.process_expired() {
-                    tracing::warn!("offline expiry processing failed: {e}");
+                // Emit the final sync state transition after each tick.  A
+                // Network error does not count as sync "error" state — the
+                // drive is offline, not broken — so we keep the previous
+                // final state for that case by skipping the emit.
+                {
+                    use carminedesktop_core::types::ObsEvent;
+                    use tauri::Manager;
+                    let is_offline = offline_flag.load(std::sync::atomic::Ordering::Relaxed);
+                    if !is_offline || sync_succeeded {
+                        let final_state = if sync_succeeded {
+                            "up_to_date"
+                        } else {
+                            "error"
+                        };
+                        let state = app_handle.state::<AppState>();
+                        let _ = state.obs_tx.send(ObsEvent::SyncStateChanged {
+                            drive_id: drive_id.clone(),
+                            state: final_state.to_string(),
+                        });
+                    }
                 }
             }
 
-            let wait = std::time::Duration::from_secs(interval);
+            // Process expired offline pins (once per cycle)
+            for (drive_id, _, _, _, _, _, offline_mgr, _, _) in &snapshot {
+                match offline_mgr.process_expired() {
+                    Ok(expired) if !expired.is_empty() => {
+                        use tauri::Manager;
+                        let state = app_handle.state::<AppState>();
+                        let _ = state.pin_tx.send(pin_events::PinDirty::DriveRefresh {
+                            drive_id: drive_id.clone(),
+                        });
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("offline expiry processing failed: {e}"),
+                }
+            }
+
+            // When any drive is offline, probe more frequently so we recover
+            // connectivity within ~15 s instead of the full configured cadence
+            // (default 60 s). Cost is one Graph call per interval while
+            // offline — negligible, and the retry short-circuit keeps it cheap.
+            const OFFLINE_PROBE_SECS: u64 = 15;
+            let any_offline = snapshot
+                .iter()
+                .any(|row| row.7.load(std::sync::atomic::Ordering::Relaxed));
+            let wait = if any_offline {
+                std::time::Duration::from_secs(OFFLINE_PROBE_SECS.min(interval))
+            } else {
+                std::time::Duration::from_secs(interval)
+            };
             tokio::select! {
                 _ = delta_cancel.cancelled() => break,
                 _ = tokio::time::sleep(wait) => {}

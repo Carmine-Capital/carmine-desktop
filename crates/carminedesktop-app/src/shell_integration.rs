@@ -279,6 +279,78 @@ fn notify_shell_change() {
 }
 
 // ---------------------------------------------------------------------------
+// Offline Office open support
+// ---------------------------------------------------------------------------
+
+/// Fallback ProgID for Office 2013+ documents, keyed by dotted extension.
+///
+/// Used when the user hasn't set a `file_handler_overrides` entry and the
+/// system's `OpenWithProgids` list yields nothing usable.
+#[cfg(target_os = "windows")]
+pub fn default_office_progid(ext: &str) -> Option<&'static str> {
+    match ext.to_ascii_lowercase().as_str() {
+        ".docx" => Some("Word.Document.12"),
+        ".doc" => Some("Word.Document.8"),
+        ".xlsx" => Some("Excel.Sheet.12"),
+        ".xls" => Some("Excel.Sheet.8"),
+        ".pptx" => Some("PowerPoint.Show.12"),
+        ".ppt" => Some("PowerPoint.Show.8"),
+        _ => None,
+    }
+}
+
+/// Return the first `OpenWithProgids` entry for `ext` that is **not** one of
+/// ours (`CarmineDesktop.OfficeFile*`). Looks in `HKEY_CLASSES_ROOT` which is
+/// the merged HKCU+HKLM view Windows uses for shell lookups.
+#[cfg(target_os = "windows")]
+pub fn find_non_carmine_progid(ext: &str) -> Option<String> {
+    use winreg::enums::HKEY_CLASSES_ROOT;
+
+    let hkcr = RegKey::predef(HKEY_CLASSES_ROOT);
+    let ext_key = hkcr.open_subkey_with_flags(ext, KEY_READ).ok()?;
+    let owp_key = ext_key
+        .open_subkey_with_flags("OpenWithProgids", KEY_READ)
+        .ok()?;
+    owp_key
+        .enum_values()
+        .filter_map(|v| v.ok())
+        .map(|(name, _)| name)
+        .find(|name| !name.starts_with(PROGID_PREFIX))
+}
+
+/// Launch `path` using the handler registered under `progid`, bypassing the
+/// per-user default association. Equivalent to invoking `ShellExecuteEx` with
+/// `SEE_MASK_CLASSNAME` and the given class — lets us route around Carmine's
+/// own default-handler registration when opening cached files offline.
+#[cfg(target_os = "windows")]
+pub fn open_with_progid(path: &std::path::Path, progid: &str) -> carminedesktop_core::Result<()> {
+    use windows::Win32::UI::Shell::{SEE_MASK_CLASSNAME, SHELLEXECUTEINFOW, ShellExecuteExW};
+    use windows::core::{HSTRING, PCWSTR};
+
+    // Keep HSTRINGs alive across the ShellExecuteExW call — SHELLEXECUTEINFOW
+    // holds raw pointers into their buffers.
+    let path_h = HSTRING::from(path.as_os_str());
+    let progid_h = HSTRING::from(progid);
+    let verb_h = HSTRING::from("open");
+
+    let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+    info.fMask = SEE_MASK_CLASSNAME;
+    info.lpVerb = PCWSTR(verb_h.as_ptr());
+    info.lpFile = PCWSTR(path_h.as_ptr());
+    info.lpClass = PCWSTR(progid_h.as_ptr());
+    info.nShow = 1; // SW_SHOWNORMAL
+
+    unsafe {
+        ShellExecuteExW(&mut info).map_err(|e| {
+            carminedesktop_core::Error::Other(anyhow::anyhow!(
+                "ShellExecuteExW failed for progid '{progid}': {e}"
+            ))
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Windows Explorer navigation pane integration
 // ---------------------------------------------------------------------------
 

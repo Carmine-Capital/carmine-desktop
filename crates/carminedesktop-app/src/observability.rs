@@ -9,7 +9,9 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast;
 
-use carminedesktop_core::types::{ActivityEntry, DashboardError, ObsEvent};
+use carminedesktop_core::types::{
+    ActivityEntry, AuthStateEvent, DashboardError, DriveOnlineEvent, DriveStatusEvent, ObsEvent,
+};
 
 /// Fixed-capacity ring buffer for dashboard errors.
 /// Oldest entries dropped when buffer is full.
@@ -105,10 +107,8 @@ pub fn spawn_event_bridge(
         loop {
             match obs_rx.recv().await {
                 Ok(event) => {
-                    // 1. Emit to frontend
-                    let _ = app.emit("obs-event", &event);
-
-                    // 2. Route to appropriate ring buffer
+                    // Fan out to a granular, typed topic per variant and route to
+                    // the appropriate ring buffer when the event has one.
                     match &event {
                         ObsEvent::Error {
                             drive_id,
@@ -119,17 +119,19 @@ pub fn spawn_event_bridge(
                             action_hint,
                             timestamp,
                         } => {
+                            let entry = DashboardError {
+                                drive_id: drive_id.clone(),
+                                file_name: file_name.clone(),
+                                remote_path: remote_path.clone(),
+                                error_type: error_type.clone(),
+                                message: message.clone(),
+                                action_hint: action_hint.clone(),
+                                timestamp: timestamp.clone(),
+                            };
                             if let Ok(mut buf) = errors.lock() {
-                                buf.push(DashboardError {
-                                    drive_id: drive_id.clone(),
-                                    file_name: file_name.clone(),
-                                    remote_path: remote_path.clone(),
-                                    error_type: error_type.clone(),
-                                    message: message.clone(),
-                                    action_hint: action_hint.clone(),
-                                    timestamp: timestamp.clone(),
-                                });
+                                buf.push(entry.clone());
                             }
+                            let _ = app.emit("error:append", &entry);
                         }
                         ObsEvent::Activity {
                             drive_id,
@@ -137,19 +139,43 @@ pub fn spawn_event_bridge(
                             activity_type,
                             timestamp,
                         } => {
+                            let entry = ActivityEntry {
+                                drive_id: drive_id.clone(),
+                                file_path: file_path.clone(),
+                                activity_type: activity_type.clone(),
+                                timestamp: timestamp.clone(),
+                            };
                             if let Ok(mut buf) = activity.lock() {
-                                buf.push(ActivityEntry {
-                                    drive_id: drive_id.clone(),
-                                    file_path: file_path.clone(),
-                                    activity_type: activity_type.clone(),
-                                    timestamp: timestamp.clone(),
-                                });
+                                buf.push(entry.clone());
                             }
+                            let _ = app.emit("activity:append", &entry);
                         }
-                        // State change events are emitted to frontend only (no ring buffer)
-                        ObsEvent::SyncStateChanged { .. }
-                        | ObsEvent::OnlineStateChanged { .. }
-                        | ObsEvent::AuthStateChanged { .. } => {}
+                        ObsEvent::SyncStateChanged { drive_id, state } => {
+                            let _ = app.emit(
+                                "drive:status",
+                                &DriveStatusEvent {
+                                    drive_id: drive_id.clone(),
+                                    state: state.clone(),
+                                },
+                            );
+                        }
+                        ObsEvent::OnlineStateChanged { drive_id, online } => {
+                            let _ = app.emit(
+                                "drive:online",
+                                &DriveOnlineEvent {
+                                    drive_id: drive_id.clone(),
+                                    online: *online,
+                                },
+                            );
+                        }
+                        ObsEvent::AuthStateChanged { degraded } => {
+                            let _ = app.emit(
+                                "auth:state",
+                                &AuthStateEvent {
+                                    degraded: *degraded,
+                                },
+                            );
+                        }
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {

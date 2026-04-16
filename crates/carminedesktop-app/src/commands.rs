@@ -370,6 +370,7 @@ pub fn add_mount(
         }
     }
 
+    crate::refresh_offline_context_menu(&app);
     crate::tray::update_tray_menu(&app);
     Ok(mount_id)
 }
@@ -389,6 +390,7 @@ pub fn remove_mount(app: AppHandle, id: String) -> Result<bool, String> {
     drop(user_config);
 
     rebuild_effective_config(&app)?;
+    crate::refresh_offline_context_menu(&app);
     crate::tray::update_tray_menu(&app);
     Ok(removed)
 }
@@ -431,6 +433,7 @@ pub fn toggle_mount(app: AppHandle, id: String) -> Result<Option<bool>, String> 
         }
     }
 
+    crate::refresh_offline_context_menu(&app);
     crate::tray::update_tray_menu(&app);
     Ok(result)
 }
@@ -537,7 +540,47 @@ pub fn remove_offline_pin(app: AppHandle, drive_id: String, item_id: String) -> 
 
     offline_mgr
         .unpin_folder(&item_id)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // Poke the pin aggregator: the pin table shrank but no `disk.put` fired,
+    // so without this signal the frontend wouldn't see the removal until the
+    // next cache write.
+    let _ = state
+        .pin_tx
+        .send(crate::pin_events::PinDirty::DriveRefresh { drive_id });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn extend_offline_pin(
+    app: AppHandle,
+    drive_id: String,
+    item_id: String,
+    ttl_secs: u64,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+
+    // Clone Arc out of the lock, then drop it.
+    let cache = {
+        let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+        let (cache, _, _, _, _, _) = caches
+            .get(&drive_id)
+            .ok_or_else(|| format!("no mount found for drive {drive_id}"))?;
+        cache.clone()
+    };
+
+    cache
+        .pin_store
+        .update_expires_at(&drive_id, &item_id, ttl_secs)
+        .map_err(|e| e.to_string())?;
+
+    // Fire pin health refresh so the UI picks up the new expiry immediately.
+    let _ = state
+        .pin_tx
+        .send(crate::pin_events::PinDirty::DriveRefresh { drive_id });
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -674,9 +717,14 @@ pub async fn get_cache_stats(app: AppHandle) -> Result<CacheStatsResponse, Strin
     // Get stale pins set
     let stale_pins = state.stale_pins.lock().map_err(|e| e.to_string())?.clone();
 
-    // Aggregate stats across all mounted drives
+    // Aggregate stats across all mounted drives.  `disk_used` is a true sum
+    // (each mount owns its own content/ subdir), but `disk_max` is the single
+    // global budget (read once from the shared Arc), not a per-mount cap
+    // summed across mounts — that would misrepresent the limit to the user.
     let mut total_disk_used: u64 = 0;
-    let mut total_disk_max: u64 = 0;
+    let total_disk_max: u64 = state
+        .cache_budget
+        .load(std::sync::atomic::Ordering::Relaxed);
     let mut total_memory_entries: usize = 0;
     let mut all_pinned_items: Vec<PinHealthInfo> = Vec::new();
     let mut all_writeback: Vec<WritebackEntry> = Vec::new();
@@ -684,7 +732,6 @@ pub async fn get_cache_stats(app: AppHandle) -> Result<CacheStatsResponse, Strin
     for (_drive_id, cache) in &cache_snapshot {
         let stats = cache.stats();
         total_disk_used += stats.disk_used_bytes;
-        total_disk_max += stats.disk_max_bytes;
         total_memory_entries += stats.memory_entry_count;
 
         // Pin health -- computed on-demand from SQLite
@@ -978,24 +1025,44 @@ pub async fn refresh_mount(app: AppHandle, id: String) -> Result<(), String> {
 pub async fn clear_cache(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
 
-    // Collect cache references before stopping — stop_mount removes entries from mount_caches.
-    let caches: Vec<std::sync::Arc<carminedesktop_cache::CacheManager>> = state
+    // Collect (drive_id, cache) pairs before stopping — stop_mount removes entries from mount_caches.
+    let caches: Vec<(String, std::sync::Arc<carminedesktop_cache::CacheManager>)> = state
         .mount_caches
         .lock()
         .map_err(|e| e.to_string())?
-        .values()
-        .map(|(c, _, _, _, _, _)| c.clone())
+        .iter()
+        .map(|(drive_id, (c, _, _, _, _, _))| (drive_id.clone(), c.clone()))
         .collect();
 
     crate::stop_all_mounts(&app);
 
-    for cache in &caches {
+    for (_, cache) in &caches {
         cache.clear().await.map_err(|e| e.to_string())?;
     }
     tracing::info!("cache cleared");
 
     if state.authenticated.load(Ordering::Relaxed) {
         crate::start_all_mounts(&app);
+    }
+
+    // `cache.clear()` purges content blobs for pinned folders too; pin rows in
+    // `pinned_folders` survive but their files are gone. Nudge the pin
+    // aggregator on each drive that still has pins so the sync loop re-downloads
+    // them instead of waiting for the next delta tick.
+    for (drive_id, cache) in &caches {
+        match cache.pin_store.list_all() {
+            Ok(pins) if !pins.is_empty() => {
+                let _ = state
+                    .pin_tx
+                    .send(crate::pin_events::PinDirty::DriveRefresh {
+                        drive_id: drive_id.clone(),
+                    });
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!("pin_store.list_all failed for drive {drive_id}: {e}");
+            }
+        }
     }
 
     crate::tray::update_tray_menu(&app);
@@ -1188,6 +1255,15 @@ fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {
     };
     let mut effective = state.effective_config.lock().map_err(|e| e.to_string())?;
     *effective = new_effective;
+
+    // Propagate the (possibly changed) cache budget to every live DiskCache.
+    // A single atomic store here updates the eviction threshold across all
+    // mounts because each DiskCache holds a clone of the same Arc.
+    let new_budget = crate::parse_cache_size(&effective.cache_max_size);
+    state
+        .cache_budget
+        .store(new_budget, std::sync::atomic::Ordering::Relaxed);
+
     Ok(())
 }
 
@@ -1440,19 +1516,41 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
         return Err(msg.to_string());
     }
 
-    let is_offline = if let Ok((drive_id, item)) = resolve_item_for_path(&state, &path).await
-        && item.file.is_some()
-    {
-        let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
-        caches
-            .get(&drive_id)
-            .map(|(_, _, _, _, offline_flag, _)| offline_flag.load(Ordering::Relaxed))
-            .unwrap_or(false)
-    } else {
-        false
+    let resolved = resolve_item_for_path(&state, &path).await.ok();
+
+    let (is_offline, cache) = match &resolved {
+        Some((drive_id, item)) if item.file.is_some() => {
+            let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
+            match caches.get(drive_id) {
+                Some((c, _, _, _, offline_flag, _)) => {
+                    (offline_flag.load(Ordering::Relaxed), Some(c.clone()))
+                }
+                None => (false, None),
+            }
+        }
+        _ => (false, None),
     };
 
     if is_offline {
+        // File is on a mount we know to be offline. Serve it from the local
+        // disk cache via the real Office app, bypassing our own default-handler
+        // registration. Word/Excel reads the bytes through WinFsp, which already
+        // knows how to answer from the disk cache when offline.
+        if let (Some((drive_id, item)), Some(cache)) = (resolved.as_ref(), cache)
+            && cache.disk.has(drive_id, &item.id)
+        {
+            let ext = dotted_extension(&path);
+            match open_cached_offline(&state, &path, &ext) {
+                Ok(()) => {
+                    tracing::info!("open_file: opened cached file offline via progid");
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::warn!("open_file: offline open fallback failed: {e}");
+                }
+            }
+        }
+
         let msg = "Carmine Desktop is offline. Right-click the file and choose \
                    'Open with' to open it in Word/Excel/PowerPoint directly.";
         crate::notify::send(&app, "Cannot open file", msg);
@@ -1461,6 +1559,43 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
 
     tracing::info!("open_file: delegating to open_online");
     open_online(app, path).await
+}
+
+/// Launch a locally cached file in its native application without going
+/// through Carmine's own default-handler registration.
+///
+/// Tries, in order: user override (`file_handler_overrides`), a non-Carmine
+/// ProgID from `HKCR\<ext>\OpenWithProgids`, then a hard-coded Office 2013+
+/// fallback. Each attempt uses `ShellExecuteEx` with `SEE_MASK_CLASSNAME`.
+fn open_cached_offline(state: &AppState, path: &str, ext: &str) -> carminedesktop_core::Result<()> {
+    use crate::shell_integration::{
+        default_office_progid, find_non_carmine_progid, open_with_progid,
+    };
+
+    let path_obj = std::path::Path::new(path);
+
+    let override_progid = state
+        .effective_config
+        .lock()
+        .ok()
+        .and_then(|c| c.file_handler_overrides.get(ext).cloned())
+        .filter(|s| !s.is_empty());
+
+    if let Some(progid) = override_progid {
+        return open_with_progid(path_obj, &progid);
+    }
+
+    if let Some(progid) = find_non_carmine_progid(ext) {
+        return open_with_progid(path_obj, &progid);
+    }
+
+    if let Some(progid) = default_office_progid(ext) {
+        return open_with_progid(path_obj, progid);
+    }
+
+    Err(carminedesktop_core::Error::Other(anyhow::anyhow!(
+        "no handler available for extension '{ext}'"
+    )))
 }
 
 /// Find a child item by name under a parent inode.
