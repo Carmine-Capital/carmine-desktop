@@ -11,7 +11,7 @@ Tauri 2 desktop shell + Solid.js/Vite/TypeScript UI.  Two WebViews: settings/das
 ## FRONTEND LAYOUT
 
 - `src/panels/{Dashboard,General,Mounts,Offline,About}.tsx` — one per settings tab.
-- `src/components/` — presentational pieces (`PinCard`, `DriveCard`, `StatusBar`, `Skeleton`, `UploadBanner`, `AuthBanner`, `CacheSection`, `ActivityFeed`, `ErrorFeed`, `MountCard`, `DriveList`, `Icons`, `autoAnimate`).
+- `src/components/` — presentational pieces (`PinCard`, `DriveCard`, `StatusBar`, `Skeleton`, `AuthBanner`, `CacheSection`, `ActivityFeed`, `ErrorFeed`, `MountCard`, `DriveList`, `Icons`, `autoAnimate`).
 - `src/store/` — one file per domain (`pins`, `drives`, `activity`, `errors`, `auth`, `cache`, `mounts`, `settings`).  Bootstrap via `@tanstack/solid-query`, updates via the event bus.
 - `src/eventBus.ts` — typed wrappers around `tauri::event::listen()`, one `on<Topic>()` per topic.  Nothing else is allowed to call `listen()` directly.
 - `src/ipc.ts` — typed wrappers around `invoke()`; prefer the `api.*` helpers (one per `#[tauri::command]`), fall back to the bare `invoke<T>` export only for ad-hoc calls.
@@ -29,7 +29,7 @@ Emitted from Rust, subscribed via `eventBus.ts`, routed to stores:
 | `drive:upload-progress` | `DriveUploadProgressEvent` | `main.rs::spawn_upload_progress_emitter`, one task per drive, reads the `watch<SyncMetrics>` from `carminedesktop-vfs::sync_processor`, 250 ms debounce, skips byte-equal snapshots. |
 | `drive:online` | `DriveOnlineEvent` | `observability::spawn_event_bridge` fan-out of `ObsEvent::OnlineStateChanged`. |
 | `drive:status` | `DriveStatusEvent` | same bridge — `ObsEvent::SyncStateChanged`. |
-| `activity:append` | `ActivityEntry` | same bridge + append to `ActivityBuffer` ring. |
+| `activity:append` | `ActivityEntry` | same bridge + append to `ActivityBuffer` ring (cap 500). `ActivityEntry` carries a typed `kind` union (`created` / `modified` / `deleted` / `renamed` / `moved` / `conflict` / `pinned` / `unpinned`) plus `source` (`local` / `remote` / `system`). |
 | `error:append` | `DashboardError` | same bridge + append to `ErrorAccumulator` ring. |
 | `auth:state` | `AuthStateEvent` | same bridge — `ObsEvent::AuthStateChanged`. |
 | `auth-complete` / `auth-error` | `()` / `String` | `commands::start_sign_in` — wizard-only. |
@@ -47,6 +47,7 @@ Emitted from Rust, subscribed via `eventBus.ts`, routed to stores:
 - **User feedback on mutations** — every `invoke<void>` / `invoke<bool>` sits in `try { ... } catch (e) { showStatus(formatError(e), 'error') }` with a matching success `showStatus(..., 'success')`.  `showStatus` and `formatError` live in `components/StatusBar.tsx`.
 - **List animations** — use `use:autoAnimate` from `components/autoAnimate.ts` on `pin-list`, `drive-cards`, `activity-list`, `error-list`.
 - **Pin dirty signal** — triggering a re-aggregation of pin health from Rust goes through `state.pin_tx.send(PinDirty::...)`; do not call `pin_store.health()` on command paths.
+- **Activity routing** — every activity event (local / remote / system) goes through `ActivityCollector::record()` in `activity.rs`. It handles transient-file filtering, LRU dedup (5 s window on `(drive_id, item_id, kind)`), and group-id assignment (2 s window by `(drive_id, parent_path, source, kind)`). Do not emit `ObsEvent::Activity` directly or build `ActivityEntry` by hand — go through the collector so dedup and grouping stay coherent. Informational `VfsEvent` variants (`LocalUploaded` / `LocalDeleted` / `LocalRenamed`) are routed to the collector by `spawn_event_forwarder` in `main.rs`.
 
 ## ANTI-PATTERNS
 

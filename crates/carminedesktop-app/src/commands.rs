@@ -10,7 +10,7 @@ use carminedesktop_core::config::{
 };
 use carminedesktop_core::types::{
     ActivityEntry, CacheStatsResponse, DashboardError, DashboardStatus, DriveItem, DriveStatus,
-    PinHealthInfo, UploadQueueInfo, WritebackEntry,
+    PinHealthInfo, UploadQueueInfo,
 };
 
 use crate::AppState;
@@ -528,12 +528,19 @@ pub fn remove_offline_pin(app: AppHandle, drive_id: String, item_id: String) -> 
     let state = app.state::<AppState>();
 
     // Clone Arc out of the lock, then drop it.
-    let offline_mgr = {
+    let (offline_mgr, folder_name) = {
         let caches = state.mount_caches.lock().map_err(|e| e.to_string())?;
-        let (_, _, _, mgr, _, _) = caches
+        let (cache, _, _, mgr, _, _) = caches
             .get(&drive_id)
             .ok_or_else(|| format!("no mount found for drive {drive_id}"))?;
-        mgr.clone()
+        let name = cache
+            .sqlite
+            .get_item_by_id(&item_id)
+            .ok()
+            .flatten()
+            .map(|(_, item)| item.name)
+            .unwrap_or_else(|| item_id.clone());
+        (mgr.clone(), name)
     };
 
     offline_mgr
@@ -545,7 +552,19 @@ pub fn remove_offline_pin(app: AppHandle, drive_id: String, item_id: String) -> 
     // next cache write.
     let _ = state
         .pin_tx
-        .send(crate::pin_events::PinDirty::DriveRefresh { drive_id });
+        .send(crate::pin_events::PinDirty::DriveRefresh {
+            drive_id: drive_id.clone(),
+        });
+
+    state.activity.record(crate::activity::ActivityInput {
+        drive_id,
+        source: carminedesktop_core::types::ActivitySource::System,
+        kind: carminedesktop_core::types::ActivityKind::Unpinned,
+        file_path: format!("/{folder_name}"),
+        item_id: Some(item_id),
+        is_folder: true,
+        size_bytes: None,
+    });
 
     Ok(())
 }
@@ -725,7 +744,6 @@ pub async fn get_cache_stats(app: AppHandle) -> Result<CacheStatsResponse, Strin
         .load(std::sync::atomic::Ordering::Relaxed);
     let mut total_memory_entries: usize = 0;
     let mut all_pinned_items: Vec<PinHealthInfo> = Vec::new();
-    let mut all_writeback: Vec<WritebackEntry> = Vec::new();
 
     for (_drive_id, cache) in &cache_snapshot {
         let stats = cache.stats();
@@ -764,24 +782,6 @@ pub async fn get_cache_stats(app: AppHandle) -> Result<CacheStatsResponse, Strin
                 });
             }
         }
-
-        // Writeback queue -- list_pending() is async, called OUTSIDE lock scope
-        if let Ok(pending) = cache.writeback.list_pending().await {
-            for (pending_drive_id, item_id) in pending {
-                let file_name = cache
-                    .sqlite
-                    .get_item_by_id(&item_id)
-                    .ok()
-                    .flatten()
-                    .map(|(_, item)| item.name);
-
-                all_writeback.push(WritebackEntry {
-                    drive_id: pending_drive_id,
-                    item_id,
-                    file_name,
-                });
-            }
-        }
     }
 
     Ok(CacheStatsResponse {
@@ -789,7 +789,6 @@ pub async fn get_cache_stats(app: AppHandle) -> Result<CacheStatsResponse, Strin
         disk_max_bytes: total_disk_max,
         memory_entry_count: total_memory_entries,
         pinned_items: all_pinned_items,
-        writeback_queue: all_writeback,
     })
 }
 

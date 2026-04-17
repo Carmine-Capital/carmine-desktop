@@ -133,22 +133,11 @@ pub fn spawn_event_bridge(
                             }
                             let _ = app.emit("error:append", &entry);
                         }
-                        ObsEvent::Activity {
-                            drive_id,
-                            file_path,
-                            activity_type,
-                            timestamp,
-                        } => {
-                            let entry = ActivityEntry {
-                                drive_id: drive_id.clone(),
-                                file_path: file_path.clone(),
-                                activity_type: activity_type.clone(),
-                                timestamp: timestamp.clone(),
-                            };
+                        ObsEvent::Activity(entry) => {
                             if let Ok(mut buf) = activity.lock() {
                                 buf.push(entry.clone());
                             }
-                            let _ = app.emit("activity:append", &entry);
+                            let _ = app.emit("activity:append", entry);
                         }
                         ObsEvent::SyncStateChanged { drive_id, state } => {
                             let _ = app.emit(
@@ -207,11 +196,18 @@ mod tests {
     }
 
     fn make_activity(path: &str) -> ActivityEntry {
+        use carminedesktop_core::types::{ActivityKind, ActivitySource};
         ActivityEntry {
+            id: "act-test".to_string(),
             drive_id: "drive-1".to_string(),
-            file_path: path.to_string(),
-            activity_type: "synced".to_string(),
             timestamp: "2026-01-01T00:00:00Z".to_string(),
+            file_path: path.to_string(),
+            file_name: path.rsplit('/').next().unwrap_or(path).to_string(),
+            is_folder: false,
+            source: ActivitySource::Remote,
+            kind: ActivityKind::Modified,
+            size_bytes: None,
+            group_id: None,
         }
     }
 

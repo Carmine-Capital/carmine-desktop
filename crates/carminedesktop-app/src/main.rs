@@ -4,6 +4,8 @@
 )]
 
 #[cfg(feature = "desktop")]
+mod activity;
+#[cfg(feature = "desktop")]
 mod commands;
 #[cfg(feature = "desktop")]
 mod ipc_server;
@@ -234,6 +236,10 @@ pub struct AppState {
     pub error_ring: Arc<Mutex<observability::ErrorAccumulator>>,
     /// Ring buffer of recent activity entries for the dashboard.
     pub activity_ring: Arc<Mutex<observability::ActivityBuffer>>,
+    /// Central collector for every activity feed entry. All emission sites
+    /// (VFS bridge, delta sync, pin commands) route through this object so
+    /// dedup (local vs remote echo) and group_id assignment stay consistent.
+    pub activity: Arc<activity::ActivityCollector>,
     /// Per-drive last successful sync timestamp (ISO 8601).
     pub last_synced: Mutex<HashMap<String, String>>,
     /// Pins known to be stale (drive_id, item_id) -- set by delta sync when changed
@@ -514,6 +520,7 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
     let (obs_tx, _) = tokio::sync::broadcast::channel::<carminedesktop_core::ObsEvent>(256);
     let error_ring = Arc::new(Mutex::new(observability::ErrorAccumulator::new(100)));
     let activity_ring = Arc::new(Mutex::new(observability::ActivityBuffer::new(500)));
+    let activity_collector = Arc::new(activity::ActivityCollector::new(obs_tx.clone()));
     let (pin_tx, pin_rx) = tokio::sync::mpsc::unbounded_channel::<pin_events::PinDirty>();
     let cache_budget = Arc::new(std::sync::atomic::AtomicU64::new(parse_cache_size(
         &effective.cache_max_size,
@@ -536,6 +543,7 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
         obs_tx,
         error_ring,
         activity_ring,
+        activity: activity_collector,
         last_synced: Mutex::new(HashMap::new()),
         stale_pins: Mutex::new(std::collections::HashSet::new()),
         pin_tx,
@@ -1023,6 +1031,15 @@ async fn resolve_and_pin(app: &tauri::AppHandle, path: &str) -> Result<String, S
             let _ = state.pin_tx.send(pin_events::PinDirty::DriveRefresh {
                 drive_id: drive_id.clone(),
             });
+            state.activity.record(activity::ActivityInput {
+                drive_id: drive_id.clone(),
+                source: carminedesktop_core::types::ActivitySource::System,
+                kind: carminedesktop_core::types::ActivityKind::Pinned,
+                file_path: format!("/{folder_name}"),
+                item_id: Some(item.id.clone()),
+                is_folder: true,
+                size_bytes: None,
+            });
             Ok(folder_name)
         }
         carminedesktop_cache::PinResult::Rejected { reason } => {
@@ -1056,6 +1073,15 @@ async fn resolve_and_unpin(app: &tauri::AppHandle, path: &str) -> Result<String,
         .map_err(|e| e.to_string())?;
     let _ = state.pin_tx.send(pin_events::PinDirty::DriveRefresh {
         drive_id: drive_id.clone(),
+    });
+    state.activity.record(activity::ActivityInput {
+        drive_id: drive_id.clone(),
+        source: carminedesktop_core::types::ActivitySource::System,
+        kind: carminedesktop_core::types::ActivityKind::Unpinned,
+        file_path: format!("/{folder_name}"),
+        item_id: Some(item.id.clone()),
+        is_folder: true,
+        size_bytes: None,
     });
     Ok(folder_name)
 }
@@ -1339,10 +1365,12 @@ fn start_mount_common(
 fn spawn_event_forwarder(
     rt: &tokio::runtime::Handle,
     app: &tauri::AppHandle,
+    drive_id: String,
     mut event_rx: tokio::sync::mpsc::UnboundedReceiver<carminedesktop_vfs::core_ops::VfsEvent>,
     obs_tx: tokio::sync::broadcast::Sender<carminedesktop_core::ObsEvent>,
+    activity_collector: Arc<activity::ActivityCollector>,
 ) {
-    use carminedesktop_core::types::ObsEvent;
+    use carminedesktop_core::types::{ActivityKind, ActivitySource, ObsEvent};
 
     let app_handle = app.clone();
     rt.spawn(async move {
@@ -1355,7 +1383,7 @@ fn spawn_event_forwarder(
                 } => {
                     notify::conflict_detected(&app_handle, &file_name, &conflict_name);
                     let _ = obs_tx.send(ObsEvent::Error {
-                        drive_id: None,
+                        drive_id: Some(drive_id.clone()),
                         file_name: Some(file_name.clone()),
                         remote_path: None,
                         error_type: "conflict_detected".to_string(),
@@ -1365,11 +1393,16 @@ fn spawn_event_forwarder(
                         ),
                         timestamp: now.clone(),
                     });
-                    let _ = obs_tx.send(ObsEvent::Activity {
-                        drive_id: String::new(),
+                    activity_collector.record(activity::ActivityInput {
+                        drive_id: drive_id.clone(),
+                        source: ActivitySource::System,
+                        kind: ActivityKind::Conflict {
+                            conflict_name: conflict_name.clone(),
+                        },
                         file_path: format!("/{file_name}"),
-                        activity_type: "conflict".to_string(),
-                        timestamp: now,
+                        item_id: None,
+                        is_folder: false,
+                        size_bytes: None,
                     });
                 }
                 carminedesktop_vfs::core_ops::VfsEvent::WritebackFailed { file_name } => {
@@ -1424,6 +1457,65 @@ fn spawn_event_forwarder(
                             "Delete failed -- the file may still exist on the server".to_string(),
                         ),
                         timestamp: now,
+                    });
+                }
+                carminedesktop_vfs::core_ops::VfsEvent::LocalUploaded {
+                    file_path,
+                    item_id,
+                    is_new,
+                    size,
+                    is_folder,
+                } => {
+                    let kind = if is_new {
+                        ActivityKind::Created
+                    } else {
+                        ActivityKind::Modified
+                    };
+                    activity_collector.record(activity::ActivityInput {
+                        drive_id: drive_id.clone(),
+                        source: ActivitySource::Local,
+                        kind,
+                        file_path,
+                        item_id: Some(item_id),
+                        is_folder,
+                        size_bytes: Some(size),
+                    });
+                }
+                carminedesktop_vfs::core_ops::VfsEvent::LocalDeleted {
+                    file_path,
+                    item_id,
+                    is_folder,
+                } => {
+                    activity_collector.record(activity::ActivityInput {
+                        drive_id: drive_id.clone(),
+                        source: ActivitySource::Local,
+                        kind: ActivityKind::Deleted,
+                        file_path,
+                        item_id: Some(item_id),
+                        is_folder,
+                        size_bytes: None,
+                    });
+                }
+                carminedesktop_vfs::core_ops::VfsEvent::LocalRenamed {
+                    old_path,
+                    new_path,
+                    item_id,
+                    is_folder,
+                    parent_changed,
+                } => {
+                    let kind = if parent_changed {
+                        ActivityKind::Moved { from: old_path }
+                    } else {
+                        ActivityKind::Renamed { from: old_path }
+                    };
+                    activity_collector.record(activity::ActivityInput {
+                        drive_id: drive_id.clone(),
+                        source: ActivitySource::Local,
+                        kind,
+                        file_path: new_path,
+                        item_id: Some(item_id),
+                        is_folder,
+                        size_bytes: None,
                     });
                 }
             }
@@ -1561,7 +1653,14 @@ fn start_mount(app: &tauri::AppHandle, mount_config: &MountConfig) -> Result<(),
     handle.set_sync_join(sync_join);
 
     let obs_tx = state.obs_tx.clone();
-    spawn_event_forwarder(&ctx.rt, app, ctx.event_rx, obs_tx);
+    spawn_event_forwarder(
+        &ctx.rt,
+        app,
+        ctx.drive_id.clone(),
+        ctx.event_rx,
+        obs_tx,
+        state.activity.clone(),
+    );
 
     let observer = Some(handle.delta_observer());
     state.mount_caches.lock().unwrap().insert(
@@ -1768,16 +1867,21 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                             ls.insert(drive_id.clone(), chrono::Utc::now().to_rfc3339());
                         }
 
-                        // Publish activity entries for changed/deleted items
+                        // Publish activity entries for changed/deleted items via the
+                        // centralized collector — which handles dedup against local
+                        // emissions (an item we just uploaded will not re-appear as
+                        // a remote event within the dedup window) and assigns a
+                        // shared `group_id` to items sharing the same parent.
                         {
-                            use carminedesktop_core::types::ObsEvent;
+                            use carminedesktop_core::types::{ActivityKind, ActivitySource};
                             use tauri::Manager;
 
-                            let now = chrono::Utc::now().to_rfc3339();
-                            let mut activity_events: Vec<ObsEvent> = Vec::new();
+                            let collector = {
+                                let state = app_handle.state::<AppState>();
+                                state.activity.clone()
+                            };
 
                             for item in &result.changed_items {
-                                // Skip folders: files only per CONTEXT.md decision
                                 if item.is_folder() {
                                     continue;
                                 }
@@ -1786,8 +1890,6 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                                     .as_ref()
                                     .and_then(|pr| pr.path.as_ref())
                                     .map(|p| {
-                                        // Graph parent_reference.path: "/drives/{id}/root:/path"
-                                        // Strip prefix to get user-visible path
                                         if let Some(idx) = p.find(":/") {
                                             format!("{}/{}", &p[idx + 1..], &item.name)
                                         } else {
@@ -1796,16 +1898,23 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                                     })
                                     .unwrap_or_else(|| format!("/{}", &item.name));
 
-                                activity_events.push(ObsEvent::Activity {
+                                // Cache-crate does not yet surface "added vs
+                                // updated" for remote items; default to `Modified`.
+                                // The dedup pass against the Local/Created emitted
+                                // by `sync_processor` on CommitUpload is what keeps
+                                // the feed accurate for files we uploaded ourselves.
+                                collector.record(activity::ActivityInput {
                                     drive_id: drive_id.clone(),
+                                    source: ActivitySource::Remote,
+                                    kind: ActivityKind::Modified,
                                     file_path,
-                                    activity_type: "synced".to_string(),
-                                    timestamp: now.clone(),
+                                    item_id: Some(item.id.clone()),
+                                    is_folder: false,
+                                    size_bytes: (item.size > 0).then_some(item.size as u64),
                                 });
                             }
 
                             for deleted in &result.deleted_items {
-                                // Skip items without a resolved name (not in SQLite)
                                 if deleted.name.is_empty() {
                                     continue;
                                 }
@@ -1813,7 +1922,6 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                                     .parent_path
                                     .as_ref()
                                     .map(|p| {
-                                        // Strip OData prefix (e.g. "/drive/root:/path")
                                         if let Some(idx) = p.find(":/") {
                                             format!("{}/{}", &p[idx + 1..], &deleted.name)
                                         } else {
@@ -1822,22 +1930,15 @@ fn start_delta_sync(app: &tauri::AppHandle) {
                                     })
                                     .unwrap_or_else(|| format!("/{}", &deleted.name));
 
-                                activity_events.push(ObsEvent::Activity {
+                                collector.record(activity::ActivityInput {
                                     drive_id: drive_id.clone(),
+                                    source: ActivitySource::Remote,
+                                    kind: ActivityKind::Deleted,
                                     file_path,
-                                    activity_type: "deleted".to_string(),
-                                    timestamp: now.clone(),
+                                    item_id: Some(deleted.id.clone()),
+                                    is_folder: false,
+                                    size_bytes: None,
                                 });
-                            }
-
-                            // Batch-emit activity entries for efficient frontend delivery
-                            if !activity_events.is_empty() {
-                                let state = app_handle.state::<AppState>();
-                                for event in &activity_events {
-                                    let _ = state.obs_tx.send(event.clone());
-                                }
-                                use tauri::Emitter;
-                                let _ = app_handle.emit("activity-batch", &activity_events);
                             }
                         }
 
