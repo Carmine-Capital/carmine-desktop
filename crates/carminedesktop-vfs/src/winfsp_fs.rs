@@ -545,21 +545,17 @@ impl FileSystemContext for CarmineDesktopWinFsp {
     // ──────────────────────────────────────────────────────────────────────
 
     fn get_volume_info(&self, volume_info: &mut VolumeInfo) -> winfsp::Result<()> {
-        let (total_size, free_size) = match self.ops.get_quota() {
-            Some(quota) => {
-                let total = quota.total.unwrap_or(0).max(0) as u64;
-                let remaining = quota.remaining.unwrap_or(total as i64).max(0) as u64;
-                (total, remaining)
-            }
-            None => {
-                // Fallback: 1 TB total, 1 TB free
-                let one_tb = 1u64 << 40;
-                (one_tb, one_tb)
-            }
-        };
-
-        volume_info.total_size = total_size;
-        volume_info.free_size = free_size;
+        // Report a large virtual capacity unconditionally. Windows Explorer
+        // uses VolumeInfo for a pre-copy free-space check; reporting the
+        // Graph `Drive.quota` verbatim blocks legitimate copies because
+        // SharePoint exposes a site-collection quota (often near-zero
+        // remaining or `total: 0`) that has nothing to do with what the
+        // local cache + writeback pipeline can absorb. True quota
+        // violations are surfaced by the upload layer when bytes are
+        // actually pushed to Graph.
+        let one_tib = 1u64 << 40;
+        volume_info.total_size = one_tib;
+        volume_info.free_size = one_tib;
         volume_info.set_volume_label("Carmine Desktop");
         Ok(())
     }

@@ -44,9 +44,9 @@ pub struct SyncProcessorConfig {
 impl Default for SyncProcessorConfig {
     fn default() -> Self {
         Self {
-            max_concurrent_uploads: 4,
-            debounce_ms: 500,
-            tick_interval_ms: 1000,
+            max_concurrent_uploads: 16,
+            debounce_ms: 100,
+            tick_interval_ms: 200,
             shutdown_timeout_secs: 30,
         }
     }
@@ -535,6 +535,7 @@ pub(crate) async fn flush_inode_async(
 
     let is_new_file = item_id.starts_with("local:");
     let content_bytes = bytes::Bytes::from(content);
+    let content_size = content_bytes.len() as u64;
 
     // Conflict check for existing files
     let mut server_etag: Option<String> = None;
@@ -616,8 +617,19 @@ pub(crate) async fn flush_inode_async(
             if is_new_file {
                 inodes.reassign(ino, &updated_item.id);
             }
+            let new_item_id = updated_item.id.clone();
+            let file_path = build_upload_path(cache, inodes, ino, &updated_item);
             cache.memory.insert(ino, updated_item);
             let _ = cache.writeback.remove(drive_id, &item_id).await;
+            if let Some(tx) = event_tx {
+                let _ = tx.send(VfsEvent::LocalUploaded {
+                    file_path,
+                    item_id: new_item_id,
+                    is_new: is_new_file,
+                    size: content_size,
+                    is_folder: false,
+                });
+            }
             true
         }
         Err(carminedesktop_core::Error::PreconditionFailed) => {
@@ -690,4 +702,52 @@ pub(crate) async fn flush_inode_async(
             false
         }
     }
+}
+
+/// Build a display-style path for an upload event.
+///
+/// Walks up from `ino` through the memory cache + inode table. Falls back
+/// to `/{name}` when any link in the chain is missing.
+fn build_upload_path(
+    cache: &CacheManager,
+    inodes: &InodeTable,
+    ino: u64,
+    updated_item: &carminedesktop_core::types::DriveItem,
+) -> String {
+    use crate::inode::ROOT_INODE;
+
+    let mut segments: Vec<String> = Vec::new();
+    let mut cur_parent_id = updated_item
+        .parent_reference
+        .as_ref()
+        .and_then(|p| p.id.as_deref())
+        .map(|s| s.to_string());
+    let mut safety = 256;
+    while let Some(pid) = cur_parent_id.take() {
+        if safety == 0 {
+            break;
+        }
+        safety -= 1;
+        let pino = match inodes.get_inode(&pid) {
+            Some(v) => v,
+            None => break,
+        };
+        if pino == ROOT_INODE {
+            break;
+        }
+        let item = match cache.memory.get(pino) {
+            Some(i) => i,
+            None => break,
+        };
+        segments.push(item.name.clone());
+        cur_parent_id = item
+            .parent_reference
+            .as_ref()
+            .and_then(|p| p.id.as_deref())
+            .map(|s| s.to_string());
+    }
+    let _ = ino;
+    segments.reverse();
+    segments.push(updated_item.name.clone());
+    format!("/{}", segments.join("/"))
 }

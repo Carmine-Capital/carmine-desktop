@@ -350,6 +350,30 @@ pub enum VfsEvent {
     FileLocked { file_name: String },
     /// A delete-on-close operation failed during cleanup.
     DeleteFailed { file_name: String, reason: String },
+    /// A local file has been successfully uploaded to OneDrive.
+    /// `is_new` distinguishes first-time upload (Created) from update (Modified).
+    LocalUploaded {
+        file_path: String,
+        item_id: String,
+        is_new: bool,
+        size: u64,
+        is_folder: bool,
+    },
+    /// A local delete has been committed (unlink or rmdir, after tombstone OK).
+    LocalDeleted {
+        file_path: String,
+        item_id: String,
+        is_folder: bool,
+    },
+    /// A local rename or move has been committed (after SQLite upsert OK).
+    /// `Moved` vs `Renamed` is derived from whether the parent changed.
+    LocalRenamed {
+        old_path: String,
+        new_path: String,
+        item_id: String,
+        is_folder: bool,
+        parent_changed: bool,
+    },
 }
 
 /// Check if a filename matches known transient file patterns that should not
@@ -692,6 +716,49 @@ impl CoreOps {
         Some((current_ino, item))
     }
 
+    /// Build a display-style path (`/Reports/Q4.xlsx`) for a child under `parent_ino`.
+    ///
+    /// Walks up from `parent_ino` through the inode table + memory cache.
+    /// Falls back to `/name` if any link in the chain is missing.
+    pub fn display_path_under(&self, parent_ino: u64, name: &str) -> String {
+        let mut segments: Vec<String> = Vec::new();
+        let mut cur = parent_ino;
+        let mut safety = 256;
+        while cur != crate::inode::ROOT_INODE && safety > 0 {
+            let item = match self.lookup_item(cur) {
+                Some(i) => i,
+                None => break,
+            };
+            segments.push(item.name.clone());
+            let parent_id = match item.parent_reference.as_ref().and_then(|p| p.id.as_deref()) {
+                Some(pid) => pid.to_string(),
+                None => break,
+            };
+            match self.inodes.get_inode(&parent_id) {
+                Some(pino) => cur = pino,
+                None => break,
+            }
+            safety -= 1;
+        }
+        segments.reverse();
+        segments.push(name.to_string());
+        format!("/{}", segments.join("/"))
+    }
+
+    /// Build a display-style path for the given inode itself (resolves `name` from memory).
+    pub fn display_path_of(&self, ino: u64) -> Option<String> {
+        if ino == crate::inode::ROOT_INODE {
+            return Some("/".to_string());
+        }
+        let item = self.lookup_item(ino)?;
+        let parent_id = item
+            .parent_reference
+            .as_ref()
+            .and_then(|p| p.id.as_deref())?;
+        let parent_ino = self.inodes.get_inode(parent_id).unwrap_or(crate::inode::ROOT_INODE);
+        Some(self.display_path_under(parent_ino, &item.name))
+    }
+
     /// Look up a [`DriveItem`] by inode from cache (memory → SQLite).
     /// Does NOT fall back to the Graph API.
     pub fn lookup_item(&self, inode: u64) -> Option<DriveItem> {
@@ -780,6 +847,23 @@ impl CoreOps {
                 let mut found = None;
 
                 for item in &children {
+                    match self.cache.sqlite.is_tombstoned(&item.id) {
+                        Ok(true) => {
+                            tracing::debug!(
+                                item_id = %item.id,
+                                "find_child: skipping tombstoned item from Graph"
+                            );
+                            continue;
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            tracing::warn!(
+                                item_id = %item.id,
+                                "find_child: is_tombstoned check failed: {e}"
+                            );
+                        }
+                    }
+
                     let child_inode = self.inodes.allocate(&item.id);
                     children_map.insert(item.name.clone(), child_inode);
                     self.cache.memory.insert(child_inode, item.clone());
@@ -850,6 +934,25 @@ impl CoreOps {
                 let mut children_map = std::collections::HashMap::new();
                 let result: Vec<_> = items
                     .into_iter()
+                    .filter(|item| {
+                        match self.cache.sqlite.is_tombstoned(&item.id) {
+                            Ok(true) => {
+                                tracing::debug!(
+                                    item_id = %item.id,
+                                    "list_children: skipping tombstoned item from Graph"
+                                );
+                                false
+                            }
+                            Ok(false) => true,
+                            Err(e) => {
+                                tracing::warn!(
+                                    item_id = %item.id,
+                                    "list_children: is_tombstoned check failed: {e}"
+                                );
+                                true
+                            }
+                        }
+                    })
                     .map(|item| {
                         let ino = self.inodes.allocate(&item.id);
                         children_map.insert(item.name.clone(), ino);
@@ -1595,6 +1698,8 @@ impl CoreOps {
             .find_child(parent_ino, OsStr::new(name))
             .ok_or(VfsError::NotFound)?;
         let item_id = child_item.id.clone();
+        let is_folder = child_item.is_folder();
+        let file_path = self.display_path_under(parent_ino, name);
 
         if !item_id.starts_with("local:") {
             self.rt
@@ -1604,6 +1709,12 @@ impl CoreOps {
 
         self.cache.memory.remove_child(parent_ino, name);
         self.cleanup_deleted_item(&item_id, child_ino);
+
+        self.send_event(VfsEvent::LocalDeleted {
+            file_path,
+            item_id,
+            is_folder,
+        });
         Ok(())
     }
 
@@ -1617,6 +1728,7 @@ impl CoreOps {
         }
 
         let item_id = child_item.id.clone();
+        let file_path = self.display_path_under(parent_ino, name);
 
         if !item_id.starts_with("local:") {
             match self
@@ -1649,8 +1761,19 @@ impl CoreOps {
         self.cache.memory.invalidate(child_ino);
         self.cache.memory.remove_child(parent_ino, name);
         self.inodes.remove_by_item_id(&item_id);
-        let _ = self.cache.sqlite.delete_item(&item_id);
+        if let Err(e) = self
+            .cache
+            .sqlite
+            .delete_with_tombstone(&self.drive_id, &item_id)
+        {
+            tracing::warn!(%item_id, "rmdir: sqlite delete_with_tombstone failed: {e}");
+        }
 
+        self.send_event(VfsEvent::LocalDeleted {
+            file_path,
+            item_id,
+            is_folder: true,
+        });
         Ok(())
     }
 
@@ -1665,6 +1788,10 @@ impl CoreOps {
             .find_child(parent_ino, OsStr::new(name))
             .ok_or(VfsError::NotFound)?;
         let item_id = child_item.id.clone();
+        let is_folder = child_item.is_folder();
+        let old_path = self.display_path_under(parent_ino, name);
+        let new_path = self.display_path_under(new_parent_ino, new_name);
+        let parent_changed = parent_ino != new_parent_ino;
 
         let new_parent_item_id = if parent_ino == new_parent_ino {
             None
@@ -1776,6 +1903,13 @@ impl CoreOps {
             .memory
             .add_child(new_parent_ino, new_name, child_ino);
 
+        self.send_event(VfsEvent::LocalRenamed {
+            old_path,
+            new_path,
+            item_id,
+            is_folder,
+            parent_changed,
+        });
         Ok(())
     }
 
@@ -1996,7 +2130,13 @@ impl CoreOps {
     fn cleanup_deleted_item(&self, item_id: &str, ino: u64) {
         self.cache.memory.invalidate(ino);
         self.inodes.remove_by_item_id(item_id);
-        let _ = self.cache.sqlite.delete_item(item_id);
+        if let Err(e) = self
+            .cache
+            .sqlite
+            .delete_with_tombstone(&self.drive_id, item_id)
+        {
+            tracing::warn!(%item_id, "cleanup_deleted_item: sqlite delete_with_tombstone failed: {e}");
+        }
         let _ = self
             .rt
             .block_on(self.cache.disk.remove(&self.drive_id, item_id));
