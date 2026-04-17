@@ -158,6 +158,13 @@ pub async fn run_delta_sync(
     inode_allocator: &Arc<dyn Fn(&str) -> u64 + Send + Sync>,
     observer: Option<&dyn DeltaSyncObserver>,
 ) -> carminedesktop_core::Result<DeltaSyncResult> {
+    // Purge stale tombstones first. Covers the case where a deletion
+    // the user made more than a few minutes ago never got confirmed by
+    // Graph delta — the tombstone shouldn't block resurrection forever.
+    if let Err(e) = cache.sqlite.purge_tombstones_older_than(300) {
+        tracing::warn!("purge tombstones failed: {e}");
+    }
+
     let delta_token = cache.sqlite.get_delta_token(drive_id)?;
     let response = graph.delta_query(drive_id, delta_token.as_deref()).await?;
 
@@ -205,6 +212,24 @@ pub async fn run_delta_sync(
             }
             let _ = cache.disk.remove(drive_id, &item.id).await;
             continue;
+        }
+
+        // Skip resurrection of locally-deleted items. This is an optimization —
+        // apply_delta also checks tombstones atomically inside its transaction,
+        // so correctness is guaranteed even if the tombstone is inserted after
+        // this check. This early skip just avoids pointless memory churn.
+        match cache.sqlite.is_tombstoned(&item.id) {
+            Ok(true) => {
+                tracing::debug!(
+                    item_id = %item.id,
+                    "delta sync: skipping upsert for tombstoned item"
+                );
+                continue;
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(item_id = %item.id, "is_tombstoned check failed: {e}");
+            }
         }
 
         let inode = inode_allocator(&item.id);

@@ -1,8 +1,16 @@
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, params};
 
 use carminedesktop_core::types::DriveItem;
+
+fn now_unix_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
 
 pub struct SqliteStore {
     conn: Mutex<Connection>,
@@ -72,6 +80,13 @@ impl SqliteStore {
                 PRIMARY KEY (drive_id, item_id)
             );
 
+            CREATE TABLE IF NOT EXISTS tombstones (
+                item_id    TEXT PRIMARY KEY,
+                drive_id   TEXT NOT NULL,
+                deleted_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_tombstones_deleted_at ON tombstones(deleted_at);
+
 ",
         )
         .map_err(|e| carminedesktop_core::Error::Cache(format!("failed to create tables: {e}")))?;
@@ -90,7 +105,34 @@ impl SqliteStore {
             .map_err(|e| carminedesktop_core::Error::Cache(format!("serialize failed: {e}")))?;
 
         let conn = self.conn.lock().unwrap();
-        conn.execute(
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| carminedesktop_core::Error::Cache(format!("tx begin failed: {e}")))?;
+
+        // Atomic tombstone guard: prevents eventually-consistent Graph responses
+        // from resurrecting a locally-deleted item via any ingestion path
+        // (list_children/find_child Graph fallback, open_file refresh, etc.).
+        let tombstoned: bool = tx
+            .query_row(
+                "SELECT 1 FROM tombstones WHERE item_id = ?1",
+                params![item.id],
+                |_| Ok(true),
+            )
+            .optional()
+            .map_err(|e| {
+                carminedesktop_core::Error::Cache(format!("tombstone check failed: {e}"))
+            })?
+            .unwrap_or(false);
+
+        if tombstoned {
+            tracing::debug!(item_id = %item.id, "upsert_item: skipping tombstoned item");
+            tx.commit().map_err(|e| {
+                carminedesktop_core::Error::Cache(format!("tx commit failed: {e}"))
+            })?;
+            return Ok(());
+        }
+
+        tx.execute(
             "INSERT INTO items (inode, item_id, parent_inode, drive_id, name, size, is_folder, etag, mtime, ctime, json_data)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(item_id) DO UPDATE SET
@@ -117,6 +159,9 @@ impl SqliteStore {
             ],
         )
         .map_err(|e| carminedesktop_core::Error::Cache(format!("upsert failed: {e}")))?;
+
+        tx.commit()
+            .map_err(|e| carminedesktop_core::Error::Cache(format!("tx commit failed: {e}")))?;
 
         Ok(())
     }
@@ -236,6 +281,73 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Atomically tombstone and delete an item in a single transaction.
+    /// Use from user-driven delete paths so a concurrent delta sync cannot
+    /// resurrect the row between the tombstone insert and the items DELETE.
+    pub fn delete_with_tombstone(
+        &self,
+        drive_id: &str,
+        item_id: &str,
+    ) -> carminedesktop_core::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| carminedesktop_core::Error::Cache(format!("transaction failed: {e}")))?;
+
+        tx.execute(
+            "INSERT INTO tombstones (item_id, drive_id, deleted_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(item_id) DO UPDATE SET drive_id = excluded.drive_id, deleted_at = excluded.deleted_at",
+            params![item_id, drive_id, now_unix_secs()],
+        )
+        .map_err(|e| carminedesktop_core::Error::Cache(format!("tombstone insert failed: {e}")))?;
+
+        tx.execute("DELETE FROM items WHERE item_id = ?1", params![item_id])
+            .map_err(|e| carminedesktop_core::Error::Cache(format!("delete failed: {e}")))?;
+
+        tx.commit()
+            .map_err(|e| carminedesktop_core::Error::Cache(format!("commit failed: {e}")))?;
+        Ok(())
+    }
+
+    pub fn is_tombstoned(&self, item_id: &str) -> carminedesktop_core::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let present: Option<i64> = conn
+            .query_row(
+                "SELECT 1 FROM tombstones WHERE item_id = ?1",
+                params![item_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| {
+                carminedesktop_core::Error::Cache(format!("is_tombstoned query failed: {e}"))
+            })?;
+        Ok(present.is_some())
+    }
+
+    pub fn remove_tombstone(&self, item_id: &str) -> carminedesktop_core::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM tombstones WHERE item_id = ?1", params![item_id])
+            .map_err(|e| {
+                carminedesktop_core::Error::Cache(format!("remove_tombstone failed: {e}"))
+            })?;
+        Ok(())
+    }
+
+    /// Delete tombstones older than `secs` seconds. Returns the number of rows removed.
+    pub fn purge_tombstones_older_than(&self, secs: u64) -> carminedesktop_core::Result<usize> {
+        let cutoff = now_unix_secs().saturating_sub(secs as i64);
+        let conn = self.conn.lock().unwrap();
+        let removed = conn
+            .execute(
+                "DELETE FROM tombstones WHERE deleted_at < ?1",
+                params![cutoff],
+            )
+            .map_err(|e| {
+                carminedesktop_core::Error::Cache(format!("purge_tombstones failed: {e}"))
+            })?;
+        Ok(removed)
+    }
+
     pub fn get_delta_token(&self, drive_id: &str) -> carminedesktop_core::Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
@@ -294,7 +406,9 @@ impl SqliteStore {
 
     pub fn clear(&self) -> carminedesktop_core::Result<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute_batch("DELETE FROM items; DELETE FROM delta_tokens; DELETE FROM sync_state;")
+        conn.execute_batch(
+            "DELETE FROM items; DELETE FROM delta_tokens; DELETE FROM sync_state; DELETE FROM tombstones;",
+        )
             .map_err(|e| carminedesktop_core::Error::Cache(format!("clear failed: {e}")))?;
         Ok(())
     }
@@ -312,6 +426,30 @@ impl SqliteStore {
             .map_err(|e| carminedesktop_core::Error::Cache(format!("transaction failed: {e}")))?;
 
         for (inode, item, parent_inode) in items {
+            // Skip resurrection of items the user just deleted locally. The
+            // check runs inside this transaction so it's atomic with the
+            // INSERT — a tombstone inserted (via delete_with_tombstone) before
+            // this transaction started is guaranteed to be seen here.
+            let tombstoned: Option<i64> = tx
+                .query_row(
+                    "SELECT 1 FROM tombstones WHERE item_id = ?1",
+                    params![item.id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| {
+                    carminedesktop_core::Error::Cache(format!(
+                        "tombstone check in delta failed: {e}"
+                    ))
+                })?;
+            if tombstoned.is_some() {
+                tracing::debug!(
+                    item_id = %item.id,
+                    "apply_delta: skipping upsert for tombstoned item"
+                );
+                continue;
+            }
+
             let json = serde_json::to_string(item)
                 .map_err(|e| carminedesktop_core::Error::Cache(format!("serialize failed: {e}")))?;
 
@@ -348,6 +486,13 @@ impl SqliteStore {
             tx.execute("DELETE FROM items WHERE item_id = ?1", params![id])
                 .map_err(|e| {
                     carminedesktop_core::Error::Cache(format!("delete in delta failed: {e}"))
+                })?;
+            // Server-confirmed deletion — tombstone is no longer needed.
+            tx.execute("DELETE FROM tombstones WHERE item_id = ?1", params![id])
+                .map_err(|e| {
+                    carminedesktop_core::Error::Cache(format!(
+                        "tombstone cleanup in delta failed: {e}"
+                    ))
                 })?;
         }
 

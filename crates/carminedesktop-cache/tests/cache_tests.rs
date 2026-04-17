@@ -343,6 +343,186 @@ fn test_sqlite_store_apply_delta() -> carminedesktop_core::Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_sqlite_store_delete_with_tombstone_roundtrip() -> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_sqlite_delete_with_tombstone.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let store = SqliteStore::open(&db_path)?;
+    let item = test_drive_item("item1", "file.txt", false);
+    store.upsert_item(1, "drive1", &item, None)?;
+
+    assert!(!store.is_tombstoned("item1")?);
+
+    store.delete_with_tombstone("drive1", "item1")?;
+
+    assert!(store.get_item_by_id("item1")?.is_none());
+    assert!(store.is_tombstoned("item1")?);
+
+    Ok(())
+}
+
+#[test]
+fn test_sqlite_store_purge_tombstones() -> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_sqlite_purge_tombstones.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let store = SqliteStore::open(&db_path)?;
+    store.delete_with_tombstone("drive1", "item1")?;
+    assert!(store.is_tombstoned("item1")?);
+
+    // Purge everything older than -1 second (i.e., nothing should be purged)
+    // Using 0 instead: purge tombstones older than now = immediate purge
+    std::thread::sleep(Duration::from_secs(1));
+    let removed = store.purge_tombstones_older_than(0)?;
+    assert_eq!(removed, 1);
+    assert!(!store.is_tombstoned("item1")?);
+
+    Ok(())
+}
+
+#[test]
+fn test_sqlite_store_remove_tombstone_explicitly() -> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_sqlite_remove_tombstone.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let store = SqliteStore::open(&db_path)?;
+    store.delete_with_tombstone("drive1", "item1")?;
+    assert!(store.is_tombstoned("item1")?);
+
+    store.remove_tombstone("item1")?;
+    assert!(!store.is_tombstoned("item1")?);
+
+    Ok(())
+}
+
+#[test]
+fn test_sqlite_apply_delta_skips_tombstoned_upserts() -> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_sqlite_apply_delta_skip_tombstone.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let store = SqliteStore::open(&db_path)?;
+
+    // Simulate: user just deleted item1 locally (tombstone in place, row gone)
+    let item1 = test_drive_item("item1", "file1.txt", false);
+    store.upsert_item(1, "drive1", &item1, None)?;
+    store.delete_with_tombstone("drive1", "item1")?;
+    assert!(store.get_item_by_id("item1")?.is_none());
+    assert!(store.is_tombstoned("item1")?);
+
+    // Delta response arrives containing item1 as an upsert (stale feed)
+    let item1_from_delta = test_drive_item("item1", "file1.txt", false);
+    let items_to_add = vec![(1, item1_from_delta, None)];
+    store.apply_delta("drive1", &items_to_add, &[], "token-next")?;
+
+    // The tombstone must block the resurrection
+    assert!(
+        store.get_item_by_id("item1")?.is_none(),
+        "tombstoned item must not be resurrected by apply_delta"
+    );
+    assert!(
+        store.is_tombstoned("item1")?,
+        "tombstone must persist when the upsert was skipped"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_sqlite_apply_delta_clears_tombstone_on_confirmed_deletion()
+-> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_sqlite_apply_delta_clears_tombstone.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let store = SqliteStore::open(&db_path)?;
+
+    store.delete_with_tombstone("drive1", "item1")?;
+    assert!(store.is_tombstoned("item1")?);
+
+    // Delta confirms the deletion
+    let deleted = vec!["item1".to_string()];
+    store.apply_delta("drive1", &[], &deleted, "token-next")?;
+
+    assert!(
+        !store.is_tombstoned("item1")?,
+        "tombstone must be cleared once Graph confirms the deletion"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_sqlite_upsert_item_skips_tombstoned() -> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_sqlite_upsert_skips_tombstoned.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let store = SqliteStore::open(&db_path)?;
+
+    store.delete_with_tombstone("drive1", "item1")?;
+    assert!(store.is_tombstoned("item1")?);
+    assert!(store.get_item_by_id("item1")?.is_none());
+
+    // Graph fallback (list_children / find_child / open_file refresh) tries to
+    // resurrect the tombstoned item via upsert_item — must be silently skipped.
+    let stale_item = test_drive_item("item1", "file1.txt", false);
+    store.upsert_item(1, "drive1", &stale_item, None)?;
+
+    assert!(
+        store.get_item_by_id("item1")?.is_none(),
+        "tombstoned item must not be resurrected by upsert_item"
+    );
+    assert!(
+        store.is_tombstoned("item1")?,
+        "tombstone must persist after skipped upsert"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_sqlite_upsert_item_allows_non_tombstoned() -> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_sqlite_upsert_allows_non_tombstoned.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let store = SqliteStore::open(&db_path)?;
+    let item = test_drive_item("item1", "file1.txt", false);
+
+    store.upsert_item(1, "drive1", &item, None)?;
+
+    let stored = store.get_item_by_id("item1")?;
+    assert!(stored.is_some(), "non-tombstoned upsert must succeed");
+    assert_eq!(stored.unwrap().1.name, "file1.txt");
+
+    Ok(())
+}
+
+#[test]
+fn test_sqlite_upsert_item_works_after_tombstone_purge() -> carminedesktop_core::Result<()> {
+    let db_path = std::env::temp_dir().join("test_sqlite_upsert_after_tombstone_purge.db");
+    let _ = std::fs::remove_file(&db_path);
+
+    let store = SqliteStore::open(&db_path)?;
+
+    store.delete_with_tombstone("drive1", "item1")?;
+    assert!(store.is_tombstoned("item1")?);
+
+    std::thread::sleep(Duration::from_secs(1));
+    let removed = store.purge_tombstones_older_than(0)?;
+    assert_eq!(removed, 1);
+
+    // Once the tombstone is purged, Graph-ingested data for that id is allowed
+    // back in — covers the case where a deletion never took effect server-side.
+    let item = test_drive_item("item1", "file1.txt", false);
+    store.upsert_item(1, "drive1", &item, None)?;
+
+    assert!(
+        store.get_item_by_id("item1")?.is_some(),
+        "upsert_item must succeed once the tombstone is purged"
+    );
+
+    Ok(())
+}
+
 // ============================================================================
 // DISK CACHE TESTS
 // ============================================================================
