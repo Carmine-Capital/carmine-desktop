@@ -1,6 +1,6 @@
 use carminedesktop_core::types::{
-    ActivityEntry, CacheManagerStats, CacheStatsResponse, DashboardError, DashboardStatus,
-    DriveStatus, ObsEvent, PinHealthInfo, UploadQueueInfo, WritebackEntry,
+    ActivityEntry, ActivityKind, ActivitySource, CacheManagerStats, CacheStatsResponse,
+    DashboardError, DashboardStatus, DriveStatus, ObsEvent, PinHealthInfo, UploadQueueInfo,
 };
 
 #[test]
@@ -30,18 +30,66 @@ fn test_obs_event_error_serializes_with_type_error() {
 
 #[test]
 fn test_obs_event_activity_serializes_with_type_activity() {
-    let event = ObsEvent::Activity {
+    let event = ObsEvent::Activity(ActivityEntry {
+        id: "01HV000001".into(),
         drive_id: "drive-1".into(),
-        file_path: "/Documents/Reports/Q4.xlsx".into(),
-        activity_type: "synced".into(),
         timestamp: "2026-03-18T12:00:00Z".into(),
-    };
+        file_path: "/Documents/Reports/Q4.xlsx".into(),
+        file_name: "Q4.xlsx".into(),
+        is_folder: false,
+        source: ActivitySource::Remote,
+        kind: ActivityKind::Modified,
+        size_bytes: Some(4096),
+        group_id: None,
+    });
     let json = serde_json::to_value(&event).unwrap();
     assert_eq!(json["type"], "activity");
+    assert_eq!(json["id"], "01HV000001");
     assert_eq!(json["driveId"], "drive-1");
     assert_eq!(json["filePath"], "/Documents/Reports/Q4.xlsx");
-    assert_eq!(json["activityType"], "synced");
+    assert_eq!(json["fileName"], "Q4.xlsx");
+    assert_eq!(json["isFolder"], false);
+    assert_eq!(json["source"], "remote");
+    assert_eq!(json["kind"]["op"], "modified");
+    assert_eq!(json["sizeBytes"], 4096);
+    assert_eq!(json["groupId"], serde_json::Value::Null);
     assert_eq!(json["timestamp"], "2026-03-18T12:00:00Z");
+}
+
+#[test]
+fn test_activity_kind_renamed_carries_from_field() {
+    let kind = ActivityKind::Renamed {
+        from: "old.xlsx".into(),
+    };
+    let json = serde_json::to_value(&kind).unwrap();
+    assert_eq!(json["op"], "renamed");
+    assert_eq!(json["from"], "old.xlsx");
+}
+
+#[test]
+fn test_activity_kind_conflict_uses_camel_case_field() {
+    let kind = ActivityKind::Conflict {
+        conflict_name: "doc.conflict.xlsx".into(),
+    };
+    let json = serde_json::to_value(&kind).unwrap();
+    assert_eq!(json["op"], "conflict");
+    assert_eq!(json["conflictName"], "doc.conflict.xlsx");
+}
+
+#[test]
+fn test_activity_source_serializes_camel_case() {
+    assert_eq!(
+        serde_json::to_value(ActivitySource::Local).unwrap(),
+        serde_json::json!("local"),
+    );
+    assert_eq!(
+        serde_json::to_value(ActivitySource::Remote).unwrap(),
+        serde_json::json!("remote"),
+    );
+    assert_eq!(
+        serde_json::to_value(ActivitySource::System).unwrap(),
+        serde_json::json!("system"),
+    );
 }
 
 #[test]
@@ -157,11 +205,6 @@ fn test_cache_stats_response_serializes_camel_case() {
             pinned_at: "2026-03-18T10:00:00Z".into(),
             expires_at: "2026-03-25T10:00:00Z".into(),
         }],
-        writeback_queue: vec![WritebackEntry {
-            drive_id: "drive-1".into(),
-            item_id: "item-xyz".into(),
-            file_name: Some("draft.docx".into()),
-        }],
     };
     let json = serde_json::to_value(&stats).unwrap();
     assert_eq!(json["diskUsedBytes"], 2_200_000_000u64);
@@ -177,25 +220,32 @@ fn test_cache_stats_response_serializes_camel_case() {
     assert_eq!(pin["cachedFiles"], 52);
     assert_eq!(pin["pinnedAt"], "2026-03-18T10:00:00Z");
     assert_eq!(pin["expiresAt"], "2026-03-25T10:00:00Z");
-
-    let wb = &json["writebackQueue"][0];
-    assert_eq!(wb["driveId"], "drive-1");
-    assert_eq!(wb["itemId"], "item-xyz");
-    assert_eq!(wb["fileName"], "draft.docx");
 }
 
 #[test]
 fn test_activity_entry_serializes_camel_case() {
     let entry = ActivityEntry {
+        id: "01HV000002".into(),
         drive_id: "drive-1".into(),
-        file_path: "/Documents/Reports/Q4.xlsx".into(),
-        activity_type: "uploaded".into(),
         timestamp: "2026-03-18T12:00:00Z".into(),
+        file_path: "/Documents/Reports/Q4.xlsx".into(),
+        file_name: "Q4.xlsx".into(),
+        is_folder: false,
+        source: ActivitySource::Local,
+        kind: ActivityKind::Created,
+        size_bytes: Some(2048),
+        group_id: Some("grp-01HV".into()),
     };
     let json = serde_json::to_value(&entry).unwrap();
+    assert_eq!(json["id"], "01HV000002");
     assert_eq!(json["driveId"], "drive-1");
     assert_eq!(json["filePath"], "/Documents/Reports/Q4.xlsx");
-    assert_eq!(json["activityType"], "uploaded");
+    assert_eq!(json["fileName"], "Q4.xlsx");
+    assert_eq!(json["isFolder"], false);
+    assert_eq!(json["source"], "local");
+    assert_eq!(json["kind"]["op"], "created");
+    assert_eq!(json["sizeBytes"], 2048);
+    assert_eq!(json["groupId"], "grp-01HV");
     assert_eq!(json["timestamp"], "2026-03-18T12:00:00Z");
 }
 
