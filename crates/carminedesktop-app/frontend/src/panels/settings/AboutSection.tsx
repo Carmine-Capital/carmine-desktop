@@ -1,10 +1,9 @@
 import { Show, type JSX } from 'solid-js';
 
-import { settings } from '../store/settings';
+import { settings } from '../../store/settings';
 
-export const About = (): JSX.Element => (
+export const AboutSection = (): JSX.Element => (
   <>
-    <p class="section-heading">À propos</p>
     <div class="setting-row">
       <div class="setting-label">
         <div class="label-text">Carmine Desktop</div>

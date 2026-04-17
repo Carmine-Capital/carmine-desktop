@@ -26,18 +26,21 @@ import { ConfirmModal } from './components/ConfirmModal';
 import { confirm } from './store/confirm';
 import { pushToast } from './store/toasts';
 import {
-  AboutIcon,
   DashboardIcon,
   DrivesIcon,
   GearIcon,
   OfflineIcon,
 } from './components/Icons';
 import { Dashboard } from './panels/Dashboard';
-import { General } from './panels/General';
 import { Mounts } from './panels/Mounts';
 import { Offline } from './panels/Offline';
-import { About } from './panels/About';
+import { Settings } from './panels/Settings';
 import type { PanelId } from './bindings';
+
+// Superset of the Rust-emitted `PanelId` (tray/navigation contract) with an
+// extra UI-only view for the settings area. Rust never emits `"settings"`, so
+// the bindings type stays untouched.
+type ViewId = PanelId | 'settings';
 
 interface NavTab {
   id: PanelId;
@@ -47,20 +50,19 @@ interface NavTab {
 
 const TABS: NavTab[] = [
   { id: 'dashboard', label: 'Tableau de bord', icon: DashboardIcon },
-  { id: 'general', label: 'Général', icon: GearIcon },
   { id: 'mounts', label: 'Lecteurs', icon: DrivesIcon },
   { id: 'offline', label: 'Hors-ligne', icon: OfflineIcon },
-  { id: 'about', label: 'À propos', icon: AboutIcon },
 ];
 
-function initialPanel(): PanelId {
+function initialPanel(): ViewId {
   const raw = new URLSearchParams(window.location.search).get('panel');
+  if (raw === 'settings') return 'settings';
   if (raw && TABS.some((t) => t.id === raw)) return raw as PanelId;
   return 'dashboard';
 }
 
 export const App = (): JSX.Element => {
-  const [active, setActive] = createSignal<PanelId>(initialPanel());
+  const [active, setActive] = createSignal<ViewId>(initialPanel());
   const [signingOut, setSigningOut] = createSignal(false);
   let panelRef: HTMLElement | undefined;
 
@@ -145,6 +147,21 @@ export const App = (): JSX.Element => {
             </button>
           ))}
         </nav>
+        <div class="sidebar-tools">
+          <button
+            type="button"
+            role="tab"
+            class="nav-item"
+            classList={{ active: active() === 'settings' }}
+            id="tab-settings"
+            aria-selected={active() === 'settings'}
+            aria-label="Paramètres"
+            onClick={() => setActive('settings')}
+          >
+            <GearIcon size={16} />
+            Paramètres
+          </button>
+        </div>
         <div class="sidebar-footer">
           <p class="account-email">{accountLabel()}</p>
           <button
@@ -170,17 +187,14 @@ export const App = (): JSX.Element => {
             <Match when={active() === 'dashboard'}>
               <Dashboard />
             </Match>
-            <Match when={active() === 'general'}>
-              <General />
-            </Match>
             <Match when={active() === 'mounts'}>
               <Mounts />
             </Match>
             <Match when={active() === 'offline'}>
               <Offline />
             </Match>
-            <Match when={active() === 'about'}>
-              <About />
+            <Match when={active() === 'settings'}>
+              <Settings />
             </Match>
           </Switch>
         </section>

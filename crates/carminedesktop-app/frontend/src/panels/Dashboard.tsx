@@ -6,7 +6,6 @@ import { CacheSection } from '../components/CacheSection';
 import { DriveList } from '../components/DriveList';
 import { ErrorFeed } from '../components/ErrorFeed';
 import { QuickStats, type QuickStat } from '../components/QuickStats';
-import { UploadBanner } from '../components/UploadBanner';
 import { Skeleton } from '../components/Skeleton';
 import { Tab, TabList, TabPanel, Tabs } from '../components/Tabs';
 import { bootstrapCache, cache } from '../store/cache';
@@ -76,7 +75,6 @@ export const Dashboard = (): JSX.Element => {
           >
             <DriveList />
           </Show>
-          <UploadBanner />
           <QuickStats items={stats()} />
         </TabPanel>
 

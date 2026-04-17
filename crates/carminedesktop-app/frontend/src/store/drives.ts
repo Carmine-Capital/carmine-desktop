@@ -99,21 +99,6 @@ export function setDriveUploadQueue(
   );
 }
 
-export interface UploadAggregate {
-  inFlight: number;
-  queued: number;
-}
-
-export function aggregateUploadQueue(list: DriveView[]): UploadAggregate {
-  let inFlight = 0;
-  let queued = 0;
-  for (const d of list) {
-    inFlight += d.uploadQueue.inFlight;
-    queued += d.uploadQueue.queueDepth;
-  }
-  return { inFlight, queued };
-}
-
 let wired = false;
 export function attachDriveEvents(): void {
   if (wired) return;

@@ -36,11 +36,29 @@ export interface DashboardError {
   timestamp: string;
 }
 
+export type ActivitySource = 'local' | 'remote' | 'system';
+
+export type ActivityKind =
+  | { op: 'created' }
+  | { op: 'modified' }
+  | { op: 'deleted' }
+  | { op: 'renamed'; from: string }
+  | { op: 'moved'; from: string }
+  | { op: 'conflict'; conflictName: string }
+  | { op: 'pinned' }
+  | { op: 'unpinned' };
+
 export interface ActivityEntry {
+  id: string;
   driveId: string;
-  filePath: string;
-  activityType: string;
   timestamp: string;
+  filePath: string;
+  fileName: string;
+  isFolder: boolean;
+  source: ActivitySource;
+  kind: ActivityKind;
+  sizeBytes: number | null;
+  groupId: string | null;
 }
 
 export interface CacheStatsResponse {
@@ -48,7 +66,6 @@ export interface CacheStatsResponse {
   diskMaxBytes: number;
   memoryEntryCount: number;
   pinnedItems: PinHealthInfo[];
-  writebackQueue: WritebackEntry[];
 }
 
 export type PinStatus = 'downloaded' | 'partial' | 'stale' | 'analyzing' | 'expired' | 'unknown';
@@ -62,12 +79,6 @@ export interface PinHealthInfo {
   cachedFiles: number;
   pinnedAt: string;
   expiresAt: string;
-}
-
-export interface WritebackEntry {
-  driveId: string;
-  itemId: string;
-  fileName: string | null;
 }
 
 export interface OfflinePinInfo {
