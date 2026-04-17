@@ -59,7 +59,7 @@ type UnlistenFn = () => void;
 
 interface Selection {
   onedrive: boolean;
-  libraries: Set<string>;
+  libraries: Record<string, boolean>;
 }
 
 export const WizardApp = (): JSX.Element => {
@@ -79,7 +79,7 @@ export const WizardApp = (): JSX.Element => {
 
   const [selection, setSelection] = createStore<Selection>({
     onedrive: true,
-    libraries: new Set<string>(),
+    libraries: {},
   });
 
   const [finalizing, setFinalizing] = createSignal(false);
@@ -274,10 +274,10 @@ export const WizardApp = (): JSX.Element => {
   const toggleLibrary = (driveId: string): void => {
     setSelection(
       produce((s) => {
-        if (s.libraries.has(driveId)) {
-          s.libraries.delete(driveId);
+        if (s.libraries[driveId]) {
+          delete s.libraries[driveId];
         } else {
-          s.libraries.add(driveId);
+          s.libraries[driveId] = true;
         }
       }),
     );
@@ -285,7 +285,7 @@ export const WizardApp = (): JSX.Element => {
 
   const hasSelection = (): boolean => {
     const oneDrive = selection.onedrive && driveInfo() !== null;
-    return oneDrive || selection.libraries.size > 0;
+    return oneDrive || Object.keys(selection.libraries).length > 0;
   };
 
   const getStarted = async (): Promise<void> => {
@@ -313,7 +313,7 @@ export const WizardApp = (): JSX.Element => {
 
     const site = primarySite();
     for (const lib of libraries()) {
-      if (!selection.libraries.has(lib.id)) continue;
+      if (!selection.libraries[lib.id]) continue;
       const mountPoint = `${mountRoot}/${sanitizePath(lib.name)}/`;
       try {
         await api.addMount({
@@ -370,7 +370,7 @@ export const WizardApp = (): JSX.Element => {
     setSelection(
       produce((s) => {
         s.onedrive = true;
-        s.libraries = new Set<string>();
+        s.libraries = {};
       }),
     );
     setAuthUrl('');
@@ -543,9 +543,9 @@ export const WizardApp = (): JSX.Element => {
                       <button
                         type="button"
                         class="lib-row"
-                        classList={{ selected: selection.libraries.has(lib.id) }}
+                        classList={{ selected: !!selection.libraries[lib.id] }}
                         onClick={() => toggleLibrary(lib.id)}
-                        aria-pressed={selection.libraries.has(lib.id)}
+                        aria-pressed={!!selection.libraries[lib.id]}
                       >
                         <div class="lib-check">✓</div>
                         <div class="lib-info">

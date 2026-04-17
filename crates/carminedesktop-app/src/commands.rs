@@ -13,8 +13,6 @@ use carminedesktop_core::types::{
     PinHealthInfo, UploadQueueInfo, WritebackEntry,
 };
 
-use std::collections::HashMap;
-
 use crate::AppState;
 
 #[derive(Serialize)]
@@ -1122,113 +1120,6 @@ pub fn get_default_mount_root(app: AppHandle) -> Result<String, String> {
         .into_owned())
 }
 
-// ---------------------------------------------------------------------------
-// File handler overrides
-// ---------------------------------------------------------------------------
-
-use crate::shell_integration::OFFICE_EXTENSIONS;
-
-#[derive(Serialize)]
-pub struct FileHandlerInfo {
-    pub extension: String,
-    pub handler_name: String,
-    pub handler_id: String,
-    /// One of: "override", "none"
-    pub source: String,
-}
-
-/// Return handler info for all managed extensions.
-///
-/// Carmine Desktop no longer intercepts Office double-clicks by default, so
-/// the only handler info we surface is the per-extension override the user
-/// has explicitly saved in config. Everything else reports `"none"`.
-#[tauri::command]
-pub fn get_file_handlers(app: AppHandle) -> Result<Vec<FileHandlerInfo>, String> {
-    let state = app.state::<AppState>();
-    let overrides: HashMap<String, String> = {
-        let config = state.effective_config.lock().map_err(|e| e.to_string())?;
-        config.file_handler_overrides.clone()
-    };
-
-    let mut results = Vec::with_capacity(OFFICE_EXTENSIONS.len());
-
-    for &ext in OFFICE_EXTENSIONS {
-        if let Some(handler_id) = overrides.get(ext) {
-            results.push(FileHandlerInfo {
-                extension: ext.to_string(),
-                handler_name: handler_id.clone(),
-                handler_id: handler_id.clone(),
-                source: "override".to_string(),
-            });
-        } else {
-            results.push(FileHandlerInfo {
-                extension: ext.to_string(),
-                handler_name: String::new(),
-                handler_id: String::new(),
-                source: "none".to_string(),
-            });
-        }
-    }
-
-    Ok(results)
-}
-
-/// Save a per-extension handler override to config.
-#[tauri::command]
-pub fn save_file_handler_override(
-    app: AppHandle,
-    extension: String,
-    handler_id: String,
-) -> Result<(), String> {
-    let state = app.state::<AppState>();
-
-    {
-        let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
-        let general = user_config.general.get_or_insert_with(Default::default);
-        let overrides = general
-            .file_handler_overrides
-            .get_or_insert_with(HashMap::new);
-        overrides.insert(extension.clone(), handler_id.clone());
-
-        let cfg_path = config_file_path().map_err(|e| e.to_string())?;
-        user_config
-            .save_to_file(&cfg_path)
-            .map_err(|e| e.to_string())?;
-    }
-
-    rebuild_effective_config(&app)?;
-    tracing::info!("saved handler override for {extension}: {handler_id}");
-    Ok(())
-}
-
-/// Remove a per-extension handler override from config.
-#[tauri::command]
-pub fn clear_file_handler_override(app: AppHandle, extension: String) -> Result<(), String> {
-    let state = app.state::<AppState>();
-
-    {
-        let mut user_config = state.user_config.lock().map_err(|e| e.to_string())?;
-        if let Some(ref mut general) = user_config.general
-            && let Some(ref mut overrides) = general.file_handler_overrides
-        {
-            overrides.remove(&extension);
-            // Clean up empty map
-            if overrides.is_empty() {
-                general.file_handler_overrides = None;
-            }
-        }
-
-        let cfg_path = config_file_path().map_err(|e| e.to_string())?;
-        user_config
-            .save_to_file(&cfg_path)
-            .map_err(|e| e.to_string())?;
-    }
-
-    rebuild_effective_config(&app)?;
-    tracing::info!("cleared handler override for {extension}");
-    Ok(())
-}
-
 fn rebuild_effective_config(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let user_config = state.user_config.lock().map_err(|e| e.to_string())?;
@@ -1540,7 +1431,7 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
             && cache.disk.has(drive_id, &item.id)
         {
             let ext = dotted_extension(&path);
-            match open_cached_offline(&state, &path, &ext) {
+            match open_cached_offline(&path, &ext) {
                 Ok(()) => {
                     tracing::info!("open_file: opened cached file offline via progid");
                     return Ok(());
@@ -1564,26 +1455,15 @@ pub async fn open_file(app: AppHandle, path: String) -> Result<(), String> {
 /// Launch a locally cached file in its native application without going
 /// through Carmine's own default-handler registration.
 ///
-/// Tries, in order: user override (`file_handler_overrides`), a non-Carmine
-/// ProgID from `HKCR\<ext>\OpenWithProgids`, then a hard-coded Office 2013+
-/// fallback. Each attempt uses `ShellExecuteEx` with `SEE_MASK_CLASSNAME`.
-fn open_cached_offline(state: &AppState, path: &str, ext: &str) -> carminedesktop_core::Result<()> {
+/// Tries, in order: a non-Carmine ProgID from `HKCR\<ext>\OpenWithProgids`,
+/// then a hard-coded Office 2013+ fallback. Each attempt uses
+/// `ShellExecuteEx` with `SEE_MASK_CLASSNAME`.
+fn open_cached_offline(path: &str, ext: &str) -> carminedesktop_core::Result<()> {
     use crate::shell_integration::{
         default_office_progid, find_non_carmine_progid, open_with_progid,
     };
 
     let path_obj = std::path::Path::new(path);
-
-    let override_progid = state
-        .effective_config
-        .lock()
-        .ok()
-        .and_then(|c| c.file_handler_overrides.get(ext).cloned())
-        .filter(|s| !s.is_empty());
-
-    if let Some(progid) = override_progid {
-        return open_with_progid(path_obj, &progid);
-    }
 
     if let Some(progid) = find_non_carmine_progid(ext) {
         return open_with_progid(path_obj, &progid);

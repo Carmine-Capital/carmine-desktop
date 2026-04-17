@@ -613,9 +613,6 @@ fn run_desktop(user_config: UserConfig, effective: EffectiveConfig, overrides: R
             commands::get_default_mount_root,
             commands::open_online,
             commands::open_file,
-            commands::get_file_handlers,
-            commands::save_file_handler_override,
-            commands::clear_file_handler_override,
             commands::prompt_set_default_handler,
             commands::list_offline_pins,
             commands::remove_offline_pin,
@@ -911,8 +908,8 @@ async fn handle_deep_link_url(app: &tauri::AppHandle, url: url::Url) {
                     WebviewUrl::App("settings.html?panel=offline".into()),
                 )
                 .title("Settings")
-                .inner_size(800.0, 600.0)
-                .min_inner_size(640.0, 480.0)
+                .inner_size(1280.0, 720.0)
+                .min_inner_size(1024.0, 576.0)
                 .center()
                 .build();
             }

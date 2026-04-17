@@ -16,20 +16,13 @@ import {
   oneDriveMount,
   removeMount,
 } from '../store/mounts';
+import type { DriveInfo } from '../bindings';
 
-interface CardItem {
-  kind: 'onedrive' | 'sharepoint';
-  key: string;
-  name: string;
-  driveId: string;
-  mountId: string | null;
-  mountPoint: string | null;
-  isMounted: boolean;
-}
-
-/** Mounts panel — activates/deactivates libraries.  The bootstrap and library
- *  fetches live in the store; this component just reads from it and wires up
- *  toggle handlers.  Cards use auto-animate for add/remove transitions. */
+/** Mounts panel — activates/deactivates libraries. Renders a stable `<For>` over
+ *  the store's library list; each row resolves its own mount state reactively
+ *  so toggling a library updates only that card's pill/path instead of
+ *  remounting every sibling (which used to replay the `.mount-card` fade-in and
+ *  felt like a hard refresh). */
 export const Mounts = (): JSX.Element => {
   onMount(() => {
     // `list_mounts` is cheap and local; running it on every tab visit keeps
@@ -38,92 +31,54 @@ export const Mounts = (): JSX.Element => {
     void loadLibraries();
   });
 
-  const oneDriveCard = createMemo<CardItem | null>(() => {
-    const od = oneDriveMount();
-    const info = mounts.driveInfo;
-    if (!od && !info) return null;
-    return {
-      kind: 'onedrive',
-      key: 'onedrive',
-      name: 'OneDrive',
-      driveId: info?.id ?? od?.drive_id ?? '',
-      mountId: od?.id ?? null,
-      mountPoint: od?.mount_point ?? null,
-      isMounted: !!od,
-    };
-  });
-
-  const sharepointCards = createMemo<CardItem[]>(() =>
-    mounts.libraries.map((lib) => {
-      const existing = mountForDrive(lib.id);
-      return {
-        kind: 'sharepoint',
-        key: `sp:${lib.id}`,
-        name: lib.name,
-        driveId: lib.id,
-        mountId: existing?.id ?? null,
-        mountPoint: existing?.mount_point ?? null,
-        isMounted: !!existing,
-      };
-    }),
-  );
-
-  const onToggle = async (card: CardItem, next: boolean) => {
-    if (next) {
-      const mountRoot = await api.getDefaultMountRoot();
-      if (card.kind === 'sharepoint') {
-        const site = mounts.primarySite;
-        await addMount({
-          mountType: 'sharepoint',
-          mountPoint: `${mountRoot}/${sanitizePath(card.name)}`,
-          driveId: card.driveId,
-          siteId: site?.site_id ?? null,
-          siteName: site?.site_name ?? null,
-          libraryName: card.name,
-        });
-      } else {
-        await addMount({
-          mountType: 'drive',
-          mountPoint: `${mountRoot}/OneDrive`,
-          driveId: card.driveId,
-        });
-      }
-      showStatus(`${card.name} activé`, 'success');
-    } else if (card.mountId) {
-      const ok = await confirm({
-        title: 'Retirer ce lecteur ?',
-        message:
-          'Les fichiers locaux de ce lecteur seront supprimés. Les fichiers distants restent intacts.',
-        confirmLabel: 'Retirer',
-        danger: true,
-      });
-      if (!ok) {
-        // Re-throw a sentinel so MountCard's try/catch flips the toggle back.
-        throw new Error('__cancelled__');
-      }
-      await removeMount(card.mountId);
-      showStatus(`${card.name} désactivé`, 'success');
-    }
+  const addSharepoint = async (lib: DriveInfo) => {
+    const mountRoot = await api.getDefaultMountRoot();
+    const site = mounts.primarySite;
+    await addMount({
+      mountType: 'sharepoint',
+      mountPoint: `${mountRoot}/${sanitizePath(lib.name)}`,
+      driveId: lib.id,
+      siteId: site?.site_id ?? null,
+      siteName: site?.site_name ?? null,
+      libraryName: lib.name,
+    });
   };
 
-  const hasAny = createMemo(
-    () => oneDriveCard() !== null || sharepointCards().length > 0,
-  );
+  const addOneDrive = async (driveId: string) => {
+    const mountRoot = await api.getDefaultMountRoot();
+    await addMount({
+      mountType: 'drive',
+      mountPoint: `${mountRoot}/OneDrive`,
+      driveId,
+    });
+  };
+
+  const removeWithConfirm = async (mountId: string) => {
+    const ok = await confirm({
+      title: 'Retirer ce lecteur ?',
+      message:
+        'Les fichiers locaux de ce lecteur seront supprimés. Les fichiers distants restent intacts.',
+      confirmLabel: 'Retirer',
+      danger: true,
+    });
+    if (!ok) {
+      // Sentinel so MountCard's try/catch flips the toggle back.
+      throw new Error('__cancelled__');
+    }
+    await removeMount(mountId);
+  };
+
+  const hasAny = createMemo(() => {
+    const hasOneDrive = !!oneDriveMount() || !!mounts.driveInfo;
+    return hasOneDrive || mounts.libraries.length > 0;
+  });
 
   return (
     <>
       <p class="section-heading">Bibliothèques actives</p>
       <ul class="mount-list" ref={autoAnimateList}>
-        <Show when={oneDriveCard()}>
-          {(card) => (
-            <MountCard
-              kind="onedrive"
-              name={card().name}
-              mountPoint={card().mountPoint}
-              isMounted={card().isMounted}
-              onToggle={(next) => onToggle(card(), next)}
-            />
-          )}
+        <Show when={oneDriveMount() || mounts.driveInfo}>
+          <OneDriveRow addOneDrive={addOneDrive} removeWithConfirm={removeWithConfirm} />
         </Show>
         <Switch>
           <Match when={mounts.librariesStatus === 'loading'}>
@@ -137,14 +92,12 @@ export const Mounts = (): JSX.Element => {
             />
           </Match>
           <Match when={mounts.librariesStatus === 'ready'}>
-            <For each={sharepointCards()}>
-              {(card) => (
-                <MountCard
-                  kind="sharepoint"
-                  name={card.name}
-                  mountPoint={card.mountPoint}
-                  isMounted={card.isMounted}
-                  onToggle={(next) => onToggle(card, next)}
+            <For each={mounts.libraries}>
+              {(lib) => (
+                <SharePointLibraryRow
+                  lib={lib}
+                  addSharepoint={addSharepoint}
+                  removeWithConfirm={removeWithConfirm}
                 />
               )}
             </For>
@@ -159,6 +112,72 @@ export const Mounts = (): JSX.Element => {
         </Switch>
       </ul>
     </>
+  );
+};
+
+interface SharePointLibraryRowProps {
+  lib: DriveInfo;
+  addSharepoint: (lib: DriveInfo) => Promise<void>;
+  removeWithConfirm: (mountId: string) => Promise<void>;
+}
+
+const SharePointLibraryRow = (props: SharePointLibraryRowProps): JSX.Element => {
+  const mount = createMemo(() => mountForDrive(props.lib.id));
+
+  const onToggle = async (next: boolean) => {
+    if (next) {
+      await props.addSharepoint(props.lib);
+      showStatus(`${props.lib.name} activé`, 'success');
+    } else {
+      const current = mount();
+      if (!current) return;
+      await props.removeWithConfirm(current.id);
+      showStatus(`${props.lib.name} désactivé`, 'success');
+    }
+  };
+
+  return (
+    <MountCard
+      kind="sharepoint"
+      name={props.lib.name}
+      mountPoint={mount()?.mount_point ?? null}
+      isMounted={!!mount()}
+      onToggle={onToggle}
+    />
+  );
+};
+
+interface OneDriveRowProps {
+  addOneDrive: (driveId: string) => Promise<void>;
+  removeWithConfirm: (mountId: string) => Promise<void>;
+}
+
+const OneDriveRow = (props: OneDriveRowProps): JSX.Element => {
+  const mount = createMemo(() => oneDriveMount());
+  const driveId = createMemo(() => mounts.driveInfo?.id ?? mount()?.drive_id ?? '');
+
+  const onToggle = async (next: boolean) => {
+    if (next) {
+      const id = driveId();
+      if (!id) return;
+      await props.addOneDrive(id);
+      showStatus('OneDrive activé', 'success');
+    } else {
+      const current = mount();
+      if (!current) return;
+      await props.removeWithConfirm(current.id);
+      showStatus('OneDrive désactivé', 'success');
+    }
+  };
+
+  return (
+    <MountCard
+      kind="onedrive"
+      name="OneDrive"
+      mountPoint={mount()?.mount_point ?? null}
+      isMounted={!!mount()}
+      onToggle={onToggle}
+    />
   );
 };
 

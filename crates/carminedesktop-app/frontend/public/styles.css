@@ -1034,7 +1034,6 @@ input:focus, select:focus {
   border-radius: var(--radius-lg);
   transition: all 0.3s var(--easing);
   box-shadow: var(--glass-highlight), var(--shadow-sm);
-  animation: fadeIn 0.4s var(--easing);
 }
 
 .mount-card:hover {

@@ -140,8 +140,8 @@ pub fn open_or_focus_wizard(app: &AppHandle) {
     } else {
         let _ = WebviewWindowBuilder::new(app, "wizard", WebviewUrl::App("wizard.html".into()))
             .title("Setup")
-            .inner_size(800.0, 600.0)
-            .min_inner_size(640.0, 480.0)
+            .inner_size(1280.0, 720.0)
+            .min_inner_size(1024.0, 576.0)
             .center()
             .build();
     }
@@ -158,8 +158,8 @@ pub fn open_or_focus_window(app: &AppHandle, label: &str, title: &str, url: &str
     } else {
         let _ = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
             .title(title)
-            .inner_size(800.0, 600.0)
-            .min_inner_size(640.0, 480.0)
+            .inner_size(1280.0, 720.0)
+            .min_inner_size(1024.0, 576.0)
             .center()
             .build();
     }

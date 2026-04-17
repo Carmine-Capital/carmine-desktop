@@ -284,8 +284,7 @@ fn notify_shell_change() {
 
 /// Fallback ProgID for Office 2013+ documents, keyed by dotted extension.
 ///
-/// Used when the user hasn't set a `file_handler_overrides` entry and the
-/// system's `OpenWithProgids` list yields nothing usable.
+/// Used when the system's `OpenWithProgids` list yields nothing usable.
 #[cfg(target_os = "windows")]
 pub fn default_office_progid(ext: &str) -> Option<&'static str> {
     match ext.to_ascii_lowercase().as_str() {

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_CACHE_MAX_SIZE: &str = "5Go";
@@ -73,7 +72,6 @@ impl UserConfig {
                 "notifications" => g.notifications = None,
                 "root_dir" => g.root_dir = None,
                 "register_file_associations" => g.register_file_associations = None,
-                "file_handler_overrides" => g.file_handler_overrides = None,
                 "explorer_nav_pane" => g.explorer_nav_pane = None,
                 "offline_ttl_secs" => g.offline_ttl_secs = None,
                 "offline_max_folder_size" => g.offline_max_folder_size = None,
@@ -206,11 +204,6 @@ pub struct UserGeneralSettings {
     /// Carmine Desktop, which redirects to SharePoint Online for co-authoring.
     #[serde(default)]
     pub register_file_associations: Option<bool>,
-    /// Per-extension handler overrides. Keys are extensions (e.g. ".docx"),
-    /// values are handler identifiers (ProgID on Windows, .desktop name on
-    /// Linux, bundle ID on macOS).
-    #[serde(default)]
-    pub file_handler_overrides: Option<HashMap<String, String>>,
     /// Show Carmine Desktop in the Windows Explorer navigation pane.
     /// Default: true on Windows, false on other platforms.
     #[serde(default)]
@@ -278,10 +271,6 @@ pub struct EffectiveConfig {
     /// Register Carmine Desktop as the handler for Office file types on Windows.
     /// Default: true on Windows, false on other platforms.
     pub register_file_associations: bool,
-    /// Per-extension handler overrides. Keys are extensions (e.g. ".docx"),
-    /// values are handler identifiers (ProgID on Windows, .desktop name on
-    /// Linux, bundle ID on macOS). Default: empty.
-    pub file_handler_overrides: HashMap<String, String>,
     /// Show Carmine Desktop in Windows Explorer navigation pane.
     /// Default: true on Windows, false on other platforms.
     pub explorer_nav_pane: bool,
@@ -323,10 +312,6 @@ impl EffectiveConfig {
             .and_then(|g| g.register_file_associations)
             .unwrap_or(true);
 
-        let file_handler_overrides = user_general
-            .and_then(|g| g.file_handler_overrides.clone())
-            .unwrap_or_default();
-
         let explorer_nav_pane = user_general
             .and_then(|g| g.explorer_nav_pane)
             .unwrap_or(true);
@@ -352,7 +337,6 @@ impl EffectiveConfig {
             mounts: user.mounts.clone(),
             accounts: user.accounts.clone(),
             register_file_associations,
-            file_handler_overrides,
             explorer_nav_pane,
             offline_ttl_secs,
             offline_max_folder_size,
